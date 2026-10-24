@@ -33,6 +33,13 @@ fn config() -> Config {
         burst_ms: 3000,
         media_max_bytes: 20971520,
         media_retention_days: 30,
+        admin_username: "admin".into(),
+        admin_password: Some("test-only-password".into()),
+        admin_cookie_secure: false,
+        hermes_url: None,
+        hermes_api_key: None,
+        hermes_model: "hermes-agent".into(),
+        hermes_timeout_seconds: 5,
     }
 }
 

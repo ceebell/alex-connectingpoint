@@ -7,7 +7,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, Query, Request, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -22,6 +22,19 @@ pub async fn authorize(
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
+    if super::session::valid_cookie(&state, request.headers()) {
+        if !matches!(
+            *request.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD
+        ) {
+            super::session::require_browser_header(request.headers())?;
+        }
+        let mut response = next.run(request).await;
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return Ok(response);
+    }
     let token = request
         .headers()
         .get(header::AUTHORIZATION)

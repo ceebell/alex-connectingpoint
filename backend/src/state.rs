@@ -11,6 +11,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub db: Database,
     pub http: reqwest::Client,
+    pub login_attempts: Arc<tokio::sync::Mutex<(u32, std::time::Instant)>>,
 }
 
 impl AppState {
@@ -40,6 +41,7 @@ impl AppState {
             config: Arc::new(config),
             db,
             http,
+            login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
         })
     }
 

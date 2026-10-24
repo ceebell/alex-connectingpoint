@@ -17,6 +17,13 @@ pub struct Config {
     pub burst_ms: i64,
     pub media_max_bytes: usize,
     pub media_retention_days: i64,
+    pub admin_username: String,
+    pub admin_password: Option<String>,
+    pub admin_cookie_secure: bool,
+    pub hermes_url: Option<String>,
+    pub hermes_api_key: Option<String>,
+    pub hermes_model: String,
+    pub hermes_timeout_seconds: u64,
 }
 
 impl Config {
@@ -36,12 +43,23 @@ impl Config {
             burst_ms: number("LINE_BURST_WINDOW_MS", 3000, 100, 60000)?,
             media_max_bytes: number("LINE_MEDIA_MAX_BYTES", 20971520, 1024, 52428800)? as usize,
             media_retention_days: number("LINE_MEDIA_RETENTION_DAYS", 30, 1, 3650)?,
+            admin_username: env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".into()),
+            admin_password: optional("ADMIN_PASSWORD"),
+            admin_cookie_secure: env::var("ADMIN_COOKIE_SECURE").is_ok_and(|v| v == "true"),
+            hermes_url: optional("HERMES_API_URL"),
+            hermes_api_key: optional("HERMES_API_KEY"),
+            hermes_model: env::var("HERMES_MODEL").unwrap_or_else(|_| "hermes-agent".into()),
+            hermes_timeout_seconds: number("HERMES_TIMEOUT_SECONDS", 120, 5, 180)? as u64,
         })
     }
 
     pub fn http_timeout(&self) -> Duration {
         Duration::from_secs(30)
     }
+}
+
+fn optional(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
 fn required(name: &str) -> Result<String, AppError> {

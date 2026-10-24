@@ -15,6 +15,7 @@ pub async fn persist(state: &AppState, event: &LineEvent) -> Result<bool, AppErr
     let mut record = filter.clone();
     record.extend(doc! {"_id": ObjectId::new(), "payload": bson::to_document(event).map_err(|_| AppError::Data)?,
         "message_id": event.message.as_ref().and_then(|m| m["id"].as_str()),
+        "conversation_key": event.conversation_key(),
         "event_at": DateTime::from_millis(event.timestamp), "received_at": now,
         "created_at": now, "updated_at": now, "available_at": now,
         "status": "PENDING", "attempts": 0_i32});

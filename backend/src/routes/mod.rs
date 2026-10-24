@@ -1,4 +1,6 @@
 mod admin;
+mod drafts;
+mod session;
 mod users;
 pub(crate) mod webhook;
 
@@ -13,6 +15,14 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub fn router(state: AppState) -> Result<Router, AppError> {
     let admin = Router::new()
+        .route(
+            "/api/admin/session",
+            get(session::info).delete(session::logout),
+        )
+        .route("/api/inquiries/{id}/drafts", get(drafts::list))
+        .route("/api/inquiries/{id}/prepare", post(drafts::prepare))
+        .route("/api/inquiries/{id}/draft", post(drafts::revise))
+        .route("/api/draft-requests/{id}", get(drafts::job))
         .route("/api/inquiries", get(admin::list))
         .route("/api/inquiries/{id}/context", get(admin::context))
         .route("/api/conversations/{id}/inquiries", post(admin::create))
@@ -28,6 +38,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             admin::authorize,
         ));
     let mut router = Router::new()
+        .route("/api/admin/login", post(session::login))
         .route(
             "/api/health",
             get(|| async { Json(serde_json::json!({"status":"ok"})) }),

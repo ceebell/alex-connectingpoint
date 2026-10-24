@@ -29,6 +29,20 @@ pub enum AppError {
     Media(&'static str),
     #[error("Invalid stored data")]
     Data,
+    #[error("{0}")]
+    Validation(&'static str),
+    #[error("Draft changed or another preparation is in progress")]
+    DraftConflict,
+    #[error("Admin login is not configured")]
+    AdminUnavailable,
+    #[error("Too many login attempts; try again in one minute")]
+    LoginLimited,
+    #[error("Hermes is not configured")]
+    HermesUnavailable,
+    #[error("Hermes did not return a valid completed draft")]
+    HermesFailed,
+    #[error("New or withdrawn messages require preparing a fresh draft")]
+    ContextChanged,
 }
 
 impl AppError {
@@ -39,6 +53,13 @@ impl AppError {
             Self::NotFound => "NOT_FOUND",
             Self::MethodNotAllowed => "METHOD_NOT_ALLOWED",
             Self::Conflict => "INQUIRY_SELECTION_REQUIRED",
+            Self::Validation(_) => "VALIDATION_ERROR",
+            Self::DraftConflict => "DRAFT_CONFLICT",
+            Self::AdminUnavailable => "ADMIN_NOT_CONFIGURED",
+            Self::LoginLimited => "LOGIN_RATE_LIMITED",
+            Self::HermesUnavailable => "HERMES_NOT_CONFIGURED",
+            Self::HermesFailed => "HERMES_FAILED",
+            Self::ContextChanged => "CONTEXT_CHANGED",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -54,6 +75,11 @@ impl IntoResponse for AppError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict => StatusCode::CONFLICT,
+            Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::DraftConflict | Self::ContextChanged => StatusCode::CONFLICT,
+            Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
+            Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::HermesFailed => StatusCode::BAD_GATEWAY,
             Self::Database(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

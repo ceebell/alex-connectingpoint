@@ -4,6 +4,19 @@
 
 <!-- entries -->
 
+## 2026-10-24 23:44 — เพิ่มภาพ infographic Step 2 ในเอกสาร workflow
+- **คำอธิบาย:** ผู้ใช้ส่งภาพสรุป Step 2 (จากแชทและสรุปแอดมิน → ร่างออเดอร์) ให้วางในหัวข้อ 5 จึงแปลง PNG 2.5 MB เป็น JPEG คุณภาพ 88 (≈573 KB, 887×1774) แล้วฝังแบบ base64 ตามรูปแบบภาพเดิมในไฟล์ เพื่อให้ HTML ยังเป็นไฟล์เดียวเปิดได้ทันที
+- **โฟลเดอร์ `./` (root)**
+  - `alex-line-hermes-mcp-workflow.html` — แก้: เพิ่ม `<figure id="step2-overview-diagram">` พร้อม alt และ figcaption ภาษาไทย ใต้ Input/เจ้าของงานหลักของหัวข้อ 5 ก่อนหัวข้อ 5.1
+
+## 2026-10-24 20:05 — แก้ server pull ติดไฟล์ diagnostic ที่ยังไม่ tracked
+- **คำอธิบาย:** loadgit.sh รุ่นเก่าบน Ubuntu หยุดเมื่อพบ diagnose-line.sh และ scripts/diagnose-line.py ที่ agent เคยวางไว้ก่อนมีไฟล์ใน Git จึงย้ายเฉพาะสองไฟล์ที่ตรวจแล้วว่า untracked ไปสำรองนอก repository โดยไม่ใช้ FORCE/reset แล้วรัน pull ตามปกติ
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `diagnose-line.sh`, `scripts/diagnose-line.py` — สำรอง: เก็บไฟล์เดิมใน /home/ubuntu/alex-before-pull-ec1re0km โดยรักษาโครงสร้าง relative path จากนั้นใช้ไฟล์ tracked ที่ pull จาก Git
+  - ไฟล์ tracked และ compiled release — อัปเดต: fast-forward จาก 7174d78 เป็น d5a2d14 ด้วย bash ./loadgit.sh main; ได้ loadgit.sh รุ่นใหม่และ Linux compiled backend ที่ผู้ใช้ push ไว้แล้ว
+- **ผลตรวจสอบ:** รัน loadgit.sh ซ้ำสำเร็จและรายงาน Already up to date; git status บน server สะอาด; sha256sum -c backend.sha256 ผ่าน; ตรวจ hash .env ก่อน/หลังตรงกันโดยไม่พิมพ์ค่า config หรือ secret
+- **ขอบเขต:** ไม่มีการ compile/build โปรแกรมบน Ubuntu ไม่มีการ build image/deploy/change service หรือ commit/push โดย agent ผู้ใช้รัน sudo bash ./docker-build.sh และ sudo bash ./docker-deploy.sh ต่อเองตามสิทธิ์ Docker ของ server
+
 ## 2026-10-24 18:54 — เพิ่ม BAT สำหรับ compile backend และ build frontend บน local
 - **คำอธิบาย:** แยกคำสั่ง build ที่เรียกง่ายบน Windows ทั้งสองส่วน โดย compile เป็น Linux/amd64 บน Docker Desktop ของเครื่อง local เท่านั้น Ubuntu pull compiled objects จาก Git แล้วสร้าง runtime Docker image โดยไม่ compile โปรแกรม
 - **โฟลเดอร์ `./` (root)**
