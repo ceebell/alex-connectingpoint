@@ -156,22 +156,31 @@ LINE แนะนำการประมวลผล webhook แบบ asynchro
 
 <a id="step1-server-deploy"></a>
 
-### 4.2 Build บน local แล้ว deploy Linux release บน Ubuntu
+### 4.2 Server pull จาก Git แล้วสร้าง Docker จาก compiled object
 
-**ผู้พัฒนา:** compile/build โปรแกรมบนเครื่อง local เท่านั้น เปิด Docker Desktop (Linux containers) แล้วรัน `build-line.bat` เพื่อสร้าง Linux/amd64 binary ใน `dist/line-linux/` และ archive `dist/line-rel-<เวลา UTC>-<hash>.tar.gz` สำหรับส่งมอบ ไม่ใช้ Windows `.exe` กับ Ubuntu
+**ผู้พัฒนา:** compile Linux/amd64 บน local ด้วย `build-backend.bat` (`build-line.bat` เดิม) แล้วใช้ `rungit.bat "Update Linux release"` commit/push โค้ดและไฟล์ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` ให้เป็นรุ่นเดียวกัน Windows output/archives และ `.env` ยังถูก ignore
 
-**ผู้ดูแลระบบ:** รับและแตก archive ลง `/home/ubuntu/alex-order-connector` ตั้ง `.env` ของ server แล้วรัน:
+สำหรับ frontend ใช้ `build-frontend.bat` เมื่อเพิ่ม frontend application แล้ว สคริปต์สร้าง Linux standalone ใน `dist/frontend-linux/` พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน [คู่มือ build local](docs/build-local.md)
+
+**ผู้ดูแลระบบ:** บน Ubuntu ให้ทำตามลำดับ:
 
 ```sh
-cd /home/ubuntu/alex-order-connector
-sudo bash ./deploy-line.sh --init-swarm
+cd ~/alex-connectingpoint
+# 1. Pull scripts and compiled objects.
+bash ./loadgit.sh main
+# 2. Package the compiled Linux binary into a Docker image.
+sudo bash ./docker-build.sh
+# 3. Deploy the already-built image.
+sudo bash ./docker-deploy.sh
 ```
 
-สคริปต์ตรวจ checksum/ชนิด binary แล้ว COPY release ที่ build มาแล้วเข้า Docker runtime image จากนั้น deploy backend และ MongoDB ด้วย `docker-stack.line.yml` **ไม่มีการ compile Rust หรือ build frontend บน Ubuntu** ถ้า release ขาดจะหยุดให้ผู้พัฒนาสร้างบน local ก่อน
+ครั้งแรกที่ยังไม่เปิด Swarm เพิ่ม `--init-swarm` ในคำสั่ง docker-deploy.sh เก็บ config จริงใน `/home/ubuntu/alex-connectingpoint/.env` สิทธิ์ 600 และไม่ส่งขึ้น Git
 
-ครั้งถัดไปส่ง archive รุ่นใหม่แล้วรัน `sudo bash ./deploy-line.sh` เมื่อเห็น `[OK] Backend is healthy` จึงตั้ง LINE Webhook URL เป็น `https://hermes.salepie.online/api/line/webhook` กด Verify และเปิด Use webhook เส้นทาง Caddy นี้ส่งต่อ backend พอร์ต 18080 ส่วนเส้นทางอื่นใช้ Hermes เดิมพอร์ต 8646
+Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime image ไม่มีการ compile Rust หรือ build frontend บน server หาก binary ขาด ให้ build/push จาก local แล้ว pull ใหม่ `loadgit.sh` เก็บ tracked server edits ใน stash ก่อน pull ส่วน `docker-deploy.sh` ตรวจ image ตรงกับ releaseและไม่ build image ซ้ำ
 
-ดูคำสั่ง build local, ส่งไฟล์, config, Caddy และตรวจรับใน [คู่มือส่ง release ไป deploy บน server](docs/deploy-line-server.md) หลัง deploy ไม่ต้องเปิดคอม local หรือ SSH tunnel ค้างไว้ `runall.bat` ใช้พัฒนา/ทดสอบบน Windows
+หาก backend ล้มด้วย `Database unavailable` แล้ว service กลับไปใช้ image/constraint เก่า ให้ตรวจ `sudo bash ./diagnose-line.sh` เพื่อแยกปัญหาการเชื่อมฐานข้อมูลออกจาก rollback ผลตรวจไม่แสดง password/token และบันทึกใน `data/line-diagnostics-latest.txt` การแก้ไฟล์ YAML อย่างเดียวยังไม่เปลี่ยน service ที่ deploy อยู่
+
+เมื่อ health ผ่าน ตั้ง LINE Webhook URL เป็น `https://hermes.salepie.online/api/line/webhook` เส้นทางนี้ผ่าน Caddy ไป backend พอร์ต 18080 ส่วนเส้นทางอื่นไป Hermes เดิมพอร์ต 8646 ดู config/ตรวจรับใน [คู่มือ deploy](docs/deploy-line-server.md) หลัง deploy ไม่ต้องเปิด local หรือ SSH tunnel ค้างไว้
 
 ## 5. Step 2 — รวมสรุปแอดมินและสกัดร่างออเดอร์
 

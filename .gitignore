@@ -13,14 +13,30 @@ frontend/out/
 frontend/next-env.d.ts
 *.tsbuildinfo
 
-# Build output from build.bat
-dist/
+# Keep the Linux release objects required by server-side Docker packaging.
+# Windows output, archives and other build files remain local.
+dist/*
+!dist/line-linux/
+dist/line-linux/*
+!dist/line-linux/backend
+!dist/line-linux/backend.sha256
+!dist/line-linux/release.tag
+!dist/line-linux/release.json
+!dist/frontend-linux/
+!dist/frontend-linux/**
+dist/frontend-linux/**/.env
+dist/frontend-linux/**/.env.*
+dist/frontend-linux/**/.git/
 
 # Local MongoDB data (runall.bat)
 data/
 
 # Legacy reference application has its own repository and local configuration.
 billing_wth_text/
+
+# Python deployment diagnostics
+__pycache__/
+*.py[cod]
 
 # Logs / OS / editors
 *.log

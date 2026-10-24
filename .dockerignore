@@ -12,7 +12,6 @@
 **/.next
 dist/*
 !dist/line-linux/
-!dist/frontend-linux/
 data
 billing_wth_text
 
@@ -22,3 +21,9 @@ billing_wth_text
 prompts
 docker-stack.yml
 *.log
+
+# Standalone output includes its traced runtime dependencies and static files.
+!dist/frontend-linux/
+!dist/frontend-linux/**
+dist/frontend-linux/**/.env
+dist/frontend-linux/**/.env.*

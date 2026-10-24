@@ -90,12 +90,12 @@
   <div class="owner-grid">
     <article class="owner-card developer" data-owner="dev">
       <span class="role-badge dev">ผู้พัฒนา</span><h3>พัฒนา ทดสอบ และ build บน local</h3>
-      <ul><li>รัน <code>build-line.bat</code> บน local ส่ง Linux release archive ให้ผู้ดูแลระบบ</li><li>ทดสอบ webhook, การแยกร้าน/ผู้ใช้, ข้อมูลซ้ำ และ unsend</li><li>ต่อคิว <code>analysis_jobs</code> ให้เรียก Hermes และสร้างร่างออเดอร์</li><li>ทำ Alex adapter/MCP สำหรับค้นสินค้า เช็คคิว และ submit</li><li>ทำหน้าจอแชท/ตรวจร่าง/ยืนยัน พร้อมสิทธิ์และประวัติการแก้ไข</li></ul>
+      <ul><li>รัน <code>build-backend.bat</code> บน local แล้ว commit/push Linux release เข้า Git</li><li>ทดสอบ webhook, การแยกร้าน/ผู้ใช้, ข้อมูลซ้ำ และ unsend</li><li>ต่อคิว <code>analysis_jobs</code> ให้เรียก Hermes และสร้างร่างออเดอร์</li><li>ทำ Alex adapter/MCP สำหรับค้นสินค้า เช็คคิว และ submit</li><li>ทำหน้าจอแชท/ตรวจร่าง/ยืนยัน พร้อมสิทธิ์และประวัติการแก้ไข</li></ul>
       <a class="inline-action" href="#s-action-dev">ดูงานที่ต้องพัฒนาต่อ →</a>
     </article>
     <article class="owner-card operator" data-owner="ops">
       <span class="role-badge ops">ผู้ดูแลระบบ</span><h3>ตั้งค่า เปิดบริการ และดูแลข้อมูล</h3>
-      <ul><li>ตั้ง DNS/HTTPS และเส้นทาง Caddy ของโดเมน</li><li>กรอก LINE/Mongo/admin token ใน <code>.env</code> ของ server</li><li>รับ release ที่ build แล้ว ใส่ binary ใน Docker และ deploy ด้วย <code>sudo</code></li><li>ตั้ง LINE webhook, ทดสอบข้อความจริง และดูแล log/backup</li></ul>
+      <ul><li>ตั้ง DNS/HTTPS และเส้นทาง Caddy ของโดเมน</li><li>กรอก LINE/Mongo/admin token ใน <code>.env</code> ของ server</li><li>pull จาก Git แล้วสร้าง Docker จาก compiled object และ deploy ด้วย <code>sudo</code></li><li>ตั้ง LINE webhook, ทดสอบข้อความจริง และดูแล log/backup</li></ul>
       <a class="inline-action" href="#s-action-config">ดู config และคำสั่งที่ต้องรัน →</a>
     </article>
   </div>
@@ -104,7 +104,7 @@
 <section class="doc-section action-section" id="s-action-config" data-owner="ops">
   <div class="section-heading"><span class="step-label">ต้อง config</span><span class="role-badge ops">ผู้ดูแลระบบ</span></div>
   <h2>3. ตรวจค่าเหล่านี้บน server ให้ครบ</h2>
-  <p><strong>ไฟล์:</strong> <code>/home/ubuntu/alex-order-connector/.env</code> ตรวจค่าที่เตรียมไว้และเติมเฉพาะค่าที่ขาด เก็บ secret ในไฟล์สิทธิ์ <code>600</code></p>
+  <p><strong>ไฟล์:</strong> <code>/home/ubuntu/alex-connectingpoint/.env</code> ตรวจค่าที่เตรียมไว้และเติมเฉพาะค่าที่ขาด เก็บ secret ในไฟล์สิทธิ์ <code>600</code></p>
   <table><thead><tr><th>ตั้งค่าตรงไหน</th><th>ต้องลงมือจัดการ</th><th>ค่าหรือแหล่งที่มา</th></tr></thead><tbody>
     <tr><td><code>LINE_CHANNEL_ID</code><br><code>LINE_CHANNEL_SECRET</code><br><code>LINE_CHANNEL_ACCESS_TOKEN</code></td><td>เลือก Messaging API channel ของ OA ให้ถูกตัว แล้วกรอกทั้งสามค่า</td><td>LINE Developers → Basic settings / Messaging API<br><a href="#s04-setup">เปิดภาพและขั้นตอนหาค่า</a></td></tr>
     <tr><td><code>LINE_DESTINATION_ID</code></td><td>ใส่ bot user ID ของ OA</td><td>ค่า <code>userId</code> จาก <code>GET /v2/bot/info</code><br>มีรูปแบบ <code>U…</code></td></tr>
@@ -131,37 +131,33 @@
 </section>
 
 <section class="doc-section action-section" id="s-action-deploy" data-owner="shared">
-  <div class="section-heading"><span class="step-label">ต้องลงมือทำ</span><span class="role-badge shared">ส่งต่องานระหว่างสองฝ่าย</span></div>
-  <h2>4. Build ที่ local → ส่ง release → deploy บน Ubuntu</h2>
-  <p class="location-note"><strong>โปรแกรม compile บน local เท่านั้น</strong> Ubuntu ใช้ไฟล์ Linux release ที่เสร็จแล้วใส่ Docker และเปิดบริการ</p>
-  <article class="owner-card developer" data-owner="dev"><span class="role-badge dev">ผู้พัฒนา · เครื่อง local</span>
-    <h3>เปิด Docker Desktop แบบ Linux containers แล้ว build</h3>
-    <pre><code class="language-bat">build-line.bat</code></pre>
-    <p>ได้ <code>dist/line-linux/backend</code> และ <code>dist/line-rel-&lt;เวลา UTC&gt;-&lt;hash&gt;.tar.gz</code> เป็น Linux/amd64 สำหรับ server นี้ พร้อม checksum และไฟล์ deploy</p>
-    <pre><code class="language-powershell">scp "dist/line-rel-&lt;เวลา UTC&gt;-&lt;hash&gt;.tar.gz" Hermes:/home/ubuntu/</code></pre>
-    <p>แทนชื่อ archive ตามผล build จริง <code>Hermes</code> คือ SSH alias ของ server; <code>build.bat</code> เดิมสร้าง Windows release</p>
-  </article>
-  <article class="owner-card operator" data-owner="ops"><span class="role-badge ops">ผู้ดูแลระบบ · Ubuntu server</span>
-    <h3>แตก release ตั้ง .env แล้วเปิดบริการ</h3>
-    <pre><code class="language-bash">mkdir -p /home/ubuntu/alex-order-connector
-cd /home/ubuntu/alex-order-connector
-tar -xzf /home/ubuntu/line-rel-&lt;เวลา UTC&gt;-&lt;hash&gt;.tar.gz
+<div class="section-heading"><span class="step-label">ต้องลงมือทำ</span><span class="role-badge shared">ส่งต่องานระหว่างสองฝ่าย</span></div>
+<h2>4. Server: pull Git → สร้าง Docker จาก compiled object</h2>
+<p class="location-note">ผู้พัฒนา compile บน local และ push Linux release เข้า Git ผู้ดูแลระบบ pull แล้วนำ binary ที่เสร็จแล้วใส่ Docker บน Ubuntu</p>
+<article class="owner-card developer" data-owner="dev"><span class="role-badge dev">ผู้พัฒนา · local</span><h3>Build และส่งรุ่นขึ้น Git</h3>
+<pre><code class="language-bat">build-backend.bat
+rungit.bat "Update Linux release"</code></pre><p>Frontend ใช้ <code>build-frontend.bat</code> เมื่อมีซอร์ส frontend แล้ว ได้ Linux standalone ใน <code>dist/frontend-linux/</code> ดู <a href="docs/build-local.md">คู่มือ build local</a></p>
+<p>Git เก็บเฉพาะ binary, checksum, tag และ manifest ใน <code>dist/line-linux/</code> พร้อมโค้ดรุ่นเดียวกัน ส่วน <code>.env</code> และ Windows output ถูก ignore</p></article>
+<article class="owner-card operator" data-owner="ops"><span class="role-badge ops">ผู้ดูแลระบบ · Ubuntu</span><h3>1. Pull จาก Git</h3>
+<pre><code class="language-bash">cd ~/alex-connectingpoint
+bash ./loadgit.sh main</code></pre>
+<h3>2. สร้าง Docker จาก compiled object</h3>
+<pre><code class="language-bash">sudo bash ./docker-build.sh</code></pre>
+<p>ตรวจ checksum และ ELF แล้ว COPY binary เข้า image ไม่มี compile โปรแกรมบน server และไม่ต้องมี frontend</p>
+<h3>3. เปิด/อัปเดตบริการจาก image ที่สร้างแล้ว</h3>
+<pre><code class="language-bash">sudo bash ./docker-deploy.sh</code></pre>
+<p>ครั้งแรกที่ยังไม่ได้เปิด Swarm เพิ่ม <code>--init-swarm</code> ในคำสั่ง deploy คำสั่งนี้ตรวจ image ตรงกับ release แล้วเปิด backend + MongoDB โดยไม่ build image ซ้ำ</p>
+<details class="inline-details"><summary>ครั้งแรก: clone และเตรียม config</summary>
+<pre><code class="language-bash">cd ~
+git clone https://github.com/ceebell/alex-connectingpoint.git
+cd alex-connectingpoint
 # Configure the server .env before deploying.
-chmod 600 .env
-sudo bash ./deploy-line.sh --init-swarm</code></pre>
-    <p>สคริปต์ตรวจ checksum และชนิด binary แล้ว COPY เข้า runtime image ก่อน deploy ไม่มี compile บน server ถ้าขาด release จะหยุดให้ build จาก local ก่อน</p>
-    <details class="inline-details"><summary>ครั้งแรก: ติดตั้ง Docker หากยังไม่มี</summary>
-      <pre><code class="language-bash">sudo apt-get update
-sudo apt-get install -y docker.io
-sudo systemctl enable --now docker</code></pre>
-    </details>
-    <p>รอ <code>[OK] Backend is healthy</code> จากนั้น LINE Developers → Messaging API → Webhook URL:</p>
-    <pre><code>https://hermes.salepie.online/api/line/webhook</code></pre>
-    <p>กด <strong>Verify</strong> ให้ Success เปิด <strong>Use webhook</strong> แล้วส่งข้อความจริงเข้า OA ตรวจผลตามข้อ 6</p>
-  </article>
-  <p class="action-note">อัปเดตรุ่นใหม่: ผู้พัฒนา build บน local และส่ง archive ใหม่ → ผู้ดูแลระบบแตกไฟล์แล้วรัน <code>sudo bash ./deploy-line.sh</code> หลัง deploy บริการทำงานต่อบน server ปิดเครื่อง local และ SSH ได้</p>
-  <a href="docs/deploy-line-server.md">อ่านขั้นตอนส่งมอบ release และ deploy →</a>
-</section>
+chmod 600 .env</code></pre><p>ติดตั้ง Docker หากยังไม่มี และกรอก config ตามข้อ 3; loadgit เก็บ tracked server edits ไว้ใน stash ก่อน pull</p></details>
+<p>รอ <code>[OK] Backend is healthy</code> แล้ว LINE Developers → Messaging API → Webhook URL:</p>
+<pre><code>https://hermes.salepie.online/api/line/webhook</code></pre>
+<p>กด Verify ให้ Success เปิด Use webhook และส่งข้อความจริงเข้า OA ตรวจตามข้อ 6</p></article>
+<p class="action-note">รุ่นถัดไป: local build/push → server pull → สร้าง Docker → deploy หลัง deploy ปิด local และ SSH ได้</p>
+<a href="docs/deploy-line-server.md">ดู config และวิธีตรวจรับ →</a></section>
 
 <section class="doc-section action-section" id="s-action-dev" data-owner="dev">
   <div class="section-heading"><span class="step-label">ต้องพัฒนาต่อ</span><span class="role-badge dev">ผู้พัฒนา</span></div>
@@ -190,7 +186,7 @@ sudo systemctl enable --now docker</code></pre>
   </tbody></table>
   <details class="inline-details"><summary>เปิดวิธีดู user ID และแชทจาก Ubuntu</summary>
     <p>อ่าน token จาก <code>.env</code> ของ server แล้วดูรายการผู้ใช้:</p>
-    <pre><code class="language-bash">cd /home/ubuntu/alex-order-connector
+    <pre><code class="language-bash">cd /home/ubuntu/alex-connectingpoint
 . ./.env
 curl --noproxy '*' -H "Authorization: Bearer $INQUIRY_ADMIN_TOKEN" http://127.0.0.1:18080/api/line/users</code></pre>
     <p>นำ <code>line_user_id</code> ที่พบมาแทนค่าในบรรทัดแรกเพื่อดูประวัติ:</p>
@@ -203,6 +199,8 @@ sudo docker service logs --tail 50 alex-line_backend
 sudo docker service ps --no-trunc alex-line_mongo</code></pre>
     <table><thead><tr><th>อาการ</th><th>เจ้าของงาน</th><th>สิ่งที่ต้องจัดการ</th></tr></thead><tbody>
       <tr><td>Missing configuration</td><td>ผู้ดูแลระบบ</td><td>เติมชื่อตัวแปรที่แจ้งใน <code>.env</code> ของเครื่องที่รันจริง</td></tr>
+      <tr><td>Database unavailable แล้วกลับไปใช้ image เก่า</td><td>ผู้ดูแลระบบ + ผู้พัฒนา</td><td>รัน <code>sudo bash ./diagnose-line.sh</code> แยก MongoDB authentication/DNS/เครือข่ายและ rollback ผลตรวจไม่แสดง password/token; การแก้ YAML ยังต้อง deploy จึงเปลี่ยน service จริง</td></tr>
+      <tr><td>Service Pending / no suitable node</td><td>ผู้ดูแลระบบ + ผู้พัฒนา</td><td>ตรวจ node เป็น ready/active และใช้ stack ที่แก้ตัวแปรแล้ว หาก image tag หรือ node ID เป็น <code>line.sh</code> ให้ใช้ไฟล์แก้ไขและรัน <code>sudo bash ./deploy-line.sh</code> อีกครั้ง</td></tr>
       <tr><td>Docker permission denied</td><td>ผู้ดูแลระบบ</td><td>ใช้ <code>sudo</code> กับคำสั่ง Docker/deploy ตามคู่มือนี้</td></tr>
       <tr><td>พอร์ต 18080 เชื่อมต่อไม่ได้ / Empty reply</td><td>ผู้ดูแลระบบ</td><td>ตรวจ <code>sudo ss -ltnp 'sport = :18080'</code> และ service backend บน server; ยกเลิก tunnel เก่าที่ชี้กลับคอม</td></tr>
       <tr><td>Nginx เปิดพอร์ต 80/443 ไม่ได้</td><td>ผู้ดูแลระบบ</td><td>server นี้ใช้ Caddy เป็นทางเข้า ให้แก้ route ที่ Caddy</td></tr>
@@ -443,15 +441,22 @@ sudo docker service ps --no-trunc alex-line_mongo</code></pre>
 </code></pre>
 <p>ประวัติรายคนแสดงเฉพาะข้อความและ postback ของคนนั้นที่ระบบได้รับ ทั้งแชทส่วนตัวและข้อความของเขาในกลุ่ม โดยดูแหล่งแชทจาก <code>payload.source</code> ได้ ข้อความที่ยังรอ worker, <code>FAILED</code> หรือ <code>NEEDS_ADMIN</code> ก็ดูได้ ข้อความถูก unsend จะเหลือ metadata พร้อม <code>withdrawn: true</code> และซ่อนเนื้อหา/ลิงก์รูปตั้งแต่รับเหตุการณ์ยกเลิกส่ง ส่วนการอ่านรูปยังผ่าน API ภายในตามสิทธิ์และอายุจัดเก็บเดิม</p>
 <p><strong>ขอบเขตปัจจุบัน:</strong> เริ่มเก็บผู้ใช้จาก webhook ที่ได้รับหลังเปิดใช้โค้ดนี้ ผู้ใช้เก่าจะมีทะเบียนเมื่อส่งเหตุการณ์ใหม่ ส่วนข้อความเดิมที่มี <code>payload.source.userId</code> อยู่แล้วเรียกดูด้วย user ID นั้นได้ ไม่ได้ดึงประวัติแชทเก่าย้อนหลังจาก LINE หรือรวมข้อความที่แอดมินพิมพ์ใน OA Manager ให้อัตโนมัติ และยังไม่มีหน้าจอ inbox ในงานนี้ เหตุการณ์ที่ไม่มี <code>source.userId</code> ยังถูกเก็บไว้ให้ตรวจ แต่ไม่สร้างผู้ใช้สมมติขึ้นมา</p></section>
-<section class="doc-section" id="s04-server"><h3>4.2 Build บน local แล้ว deploy Linux release บน Ubuntu</h3>
-<p><strong>ผู้พัฒนา:</strong> compile/build โปรแกรมบนเครื่อง local เท่านั้น เปิด Docker Desktop (Linux containers) แล้วรัน <code>build-line.bat</code> เพื่อสร้าง Linux/amd64 binary ใน <code>dist/line-linux/</code> และ archive <code>dist/line-rel-&lt;เวลา UTC&gt;-&lt;hash&gt;.tar.gz</code> สำหรับส่งมอบ ไม่ใช้ Windows <code>.exe</code> กับ Ubuntu</p>
-<p><strong>ผู้ดูแลระบบ:</strong> รับและแตก archive ลง <code>/home/ubuntu/alex-order-connector</code> ตั้ง <code>.env</code> ของ server แล้วรัน:</p>
-<pre><code class="language-sh">cd /home/ubuntu/alex-order-connector
-sudo bash ./deploy-line.sh --init-swarm
+<section class="doc-section" id="s04-server"><h3>4.2 Server pull จาก Git แล้วสร้าง Docker จาก compiled object</h3>
+<p><strong>ผู้พัฒนา:</strong> compile Linux/amd64 บน local ด้วย <code>build-backend.bat</code> (<code>build-line.bat</code> เดิม) แล้วใช้ <code>rungit.bat "Update Linux release"</code> commit/push โค้ดและไฟล์ <code>dist/line-linux/backend</code>, <code>backend.sha256</code>, <code>release.tag</code>, <code>release.json</code> ให้เป็นรุ่นเดียวกัน Windows output/archives และ <code>.env</code> ยังถูก ignore</p>
+<p>สำหรับ frontend ใช้ <code>build-frontend.bat</code> เมื่อเพิ่ม frontend application แล้ว สคริปต์สร้าง Linux standalone ใน <code>dist/frontend-linux/</code> พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน <a href="docs/build-local.md">คู่มือ build local</a></p>
+<p><strong>ผู้ดูแลระบบ:</strong> บน Ubuntu ให้ทำตามลำดับ:</p>
+<pre><code class="language-sh">cd ~/alex-connectingpoint
+# 1. Pull scripts and compiled objects.
+bash ./loadgit.sh main
+# 2. Package the compiled Linux binary into a Docker image.
+sudo bash ./docker-build.sh
+# 3. Deploy the already-built image.
+sudo bash ./docker-deploy.sh
 </code></pre>
-<p>สคริปต์ตรวจ checksum/ชนิด binary แล้ว COPY release ที่ build มาแล้วเข้า Docker runtime image จากนั้น deploy backend และ MongoDB ด้วย <code>docker-stack.line.yml</code> <strong>ไม่มีการ compile Rust หรือ build frontend บน Ubuntu</strong> ถ้า release ขาดจะหยุดให้ผู้พัฒนาสร้างบน local ก่อน</p>
-<p>ครั้งถัดไปส่ง archive รุ่นใหม่แล้วรัน <code>sudo bash ./deploy-line.sh</code> เมื่อเห็น <code>[OK] Backend is healthy</code> จึงตั้ง LINE Webhook URL เป็น <code>https://hermes.salepie.online/api/line/webhook</code> กด Verify และเปิด Use webhook เส้นทาง Caddy นี้ส่งต่อ backend พอร์ต 18080 ส่วนเส้นทางอื่นใช้ Hermes เดิมพอร์ต 8646</p>
-<p>ดูคำสั่ง build local, ส่งไฟล์, config, Caddy และตรวจรับใน <a href="docs/deploy-line-server.md">คู่มือส่ง release ไป deploy บน server</a> หลัง deploy ไม่ต้องเปิดคอม local หรือ SSH tunnel ค้างไว้ <code>runall.bat</code> ใช้พัฒนา/ทดสอบบน Windows</p></section>
+<p>ครั้งแรกที่ยังไม่เปิด Swarm เพิ่ม <code>--init-swarm</code> ในคำสั่ง docker-deploy.sh เก็บ config จริงใน <code>/home/ubuntu/alex-connectingpoint/.env</code> สิทธิ์ 600 และไม่ส่งขึ้น Git</p>
+<p>Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime image ไม่มีการ compile Rust หรือ build frontend บน server หาก binary ขาด ให้ build/push จาก local แล้ว pull ใหม่ <code>loadgit.sh</code> เก็บ tracked server edits ใน stash ก่อน pull ส่วน <code>docker-deploy.sh</code> ตรวจ image ตรงกับ releaseและไม่ build image ซ้ำ</p>
+<p>หาก backend ล้มด้วย <code>Database unavailable</code> แล้ว service กลับไปใช้ image/constraint เก่า ให้ตรวจ <code>sudo bash ./diagnose-line.sh</code> เพื่อแยกปัญหาการเชื่อมฐานข้อมูลออกจาก rollback ผลตรวจไม่แสดง password/token และบันทึกใน <code>data/line-diagnostics-latest.txt</code> การแก้ไฟล์ YAML อย่างเดียวยังไม่เปลี่ยน service ที่ deploy อยู่</p>
+<p>เมื่อ health ผ่าน ตั้ง LINE Webhook URL เป็น <code>https://hermes.salepie.online/api/line/webhook</code> เส้นทางนี้ผ่าน Caddy ไป backend พอร์ต 18080 ส่วนเส้นทางอื่นไป Hermes เดิมพอร์ต 8646 ดู config/ตรวจรับใน <a href="docs/deploy-line-server.md">คู่มือ deploy</a> หลัง deploy ไม่ต้องเปิด local หรือ SSH tunnel ค้างไว้</p></section>
 <section class="doc-section" id="s04-setup">
 <h2>เริ่มใช้งาน Step 1 — หาค่า LINE และตั้งไฟล์ .env</h2>
 <p><strong>ถ้า runall.bat แจ้ง Missing configuration ให้ทำตามหัวข้อนี้ก่อน</strong> ข้อความนี้หมายถึงยังไม่ได้กรอกค่าที่จำเป็น ไม่ใช่ข้อผิดพลาดของ MongoDB หรือการติดตั้ง Rust คู่มือนี้ใช้กับ backend ของโปรเจกต์ปัจจุบัน ตรวจเอกสาร LINE เมื่อ 22 ตุลาคม 2569</p>

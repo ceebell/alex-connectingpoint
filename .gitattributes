@@ -7,3 +7,10 @@
 *.yaml text eol=lf
 Dockerfile text eol=lf
 *.Dockerfile text eol=lf
+
+# Preserve the exact compiled Linux object and portable release metadata.
+dist/line-linux/backend binary
+dist/line-linux/backend.sha256 text eol=lf
+dist/line-linux/release.tag text eol=lf
+dist/line-linux/release.json text eol=lf
+dist/frontend-linux/** -text

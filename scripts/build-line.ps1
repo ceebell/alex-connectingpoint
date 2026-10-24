@@ -58,8 +58,9 @@ try {
     $packageRoot = Join-Path $stageRoot 'package'
     $files = @('dist/line-linux/backend', 'dist/line-linux/backend.sha256', 'dist/line-linux/release.tag', 'dist/line-linux/release.json',
         'docker/backend.Dockerfile', 'docker/Caddyfile.line.example', 'docker-stack.line.yml', 'deploy-line.sh',
-        'scripts/verify-line-release.sh', '.dockerignore', '.env.example', 'docs/deploy-line-server.md',
-        'docs/step-1-line-inquiry.md', 'alex-line-hermes-mcp-workflow.md', 'alex-line-hermes-mcp-workflow.html')
+        'docker-build.sh', 'docker-deploy.sh', 'loadgit.sh', 'diagnose-line.sh', 'scripts/diagnose-line.py',
+        'scripts/verify-line-release.sh', 'scripts/verify-frontend-release.sh', '.dockerignore', '.env.example', 'docs/deploy-line-server.md',
+        'docs/step-1-line-inquiry.md', 'docs/build-local.md', 'alex-line-hermes-mcp-workflow.md', 'alex-line-hermes-mcp-workflow.html')
     foreach ($file in $files) {
         $destination = Join-Path $packageRoot $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
@@ -70,7 +71,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Release archive creation failed.' }
     Write-Host "[OK] Linux release: $releaseDir"
     Write-Host "[OK] Upload this archive: $archive"
-    Write-Host '[server] Extract the archive, configure the server .env, then run: sudo bash ./deploy-line.sh --init-swarm'
+    Write-Host '[local] Commit and push dist/line-linux together with the matching code and scripts using rungit.bat.'
+    Write-Host '[server] 1. bash ./loadgit.sh main'
+    Write-Host '[server] 2. sudo bash ./docker-build.sh'
+    Write-Host '[server] 3. sudo bash ./docker-deploy.sh (first deployment: add --init-swarm)'
 } catch {
     Write-Host ('[ERROR] ' + $_.Exception.Message)
     exit 1

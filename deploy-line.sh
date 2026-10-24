@@ -9,14 +9,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 release_tag="$(bash scripts/verify-line-release.sh)"
 
 init_swarm=0
-if [ "${1:-}" = "--init-swarm" ]; then
-  init_swarm=1
+skip_build=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --init-swarm) init_swarm=1 ;;
+    --skip-build) skip_build=1 ;;
+    *) echo 'Usage: bash deploy-line.sh [--init-swarm] [--skip-build]' >&2; exit 1 ;;
+  esac
   shift
-fi
-if [ "$#" -ne 0 ]; then
-  echo "Usage: bash deploy-line.sh [--init-swarm]" >&2
-  exit 1
-fi
+done
 if [ ! -f .env ]; then
   echo "[ERROR] Create the server .env before deploying." >&2
   exit 1
@@ -69,13 +70,40 @@ if [ "$(docker info --format '{{.Swarm.ControlAvailable}}')" != true ]; then
   exit 1
 fi
 LINE_NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
+if [[ ! "$LINE_NODE_ID" =~ ^[a-z0-9]+$ ]]; then
+  echo "[ERROR] Docker did not return a valid local Swarm node ID." >&2
+  exit 1
+fi
+node_status="$(docker node inspect "$LINE_NODE_ID" --format '{{.Status.State}} {{.Spec.Availability}}')"
+if [ "$node_status" != 'ready active' ]; then
+  echo "[ERROR] The local Swarm node must be ready and active before deployment (current: $node_status)." >&2
+  exit 1
+fi
 export APP_NAME STACK REGISTRY TAG LINE_NODE_ID LINE_HTTP_PORT
 image="${REGISTRY}${APP_NAME}-backend:${TAG}"
 
-# Validate without printing interpolated credentials.
-docker stack config -c docker-stack.line.yml >/dev/null
-echo "==> Packaging precompiled local release $TAG into $image (no compilation)"
-docker build -f docker/backend.Dockerfile -t "$image" .
+# Legacy Swarm interpolation differs from Compose. Verify the rendered values,
+# without printing or saving the configuration that contains credentials.
+rendered_stack="$(docker stack config -c docker-stack.line.yml)"
+node_matches="$(printf '%s\n' "$rendered_stack" | grep -Fc -- "          - node.id == $LINE_NODE_ID" || true)"
+if [ "$node_matches" -ne 2 ] \
+  || ! printf '%s\n' "$rendered_stack" | grep -Fxq -- "    image: $image"; then
+  echo "[ERROR] Rendered stack does not match the local node ID or release image. No deployment was performed." >&2
+  exit 1
+fi
+unset rendered_stack
+echo "==> Verified target node $LINE_NODE_ID and image $image"
+if [ "$skip_build" -eq 0 ]; then
+  bash ./docker-build.sh
+else
+  expected_hash="$(cut -d ' ' -f 1 dist/line-linux/backend.sha256)"
+  image_hash="$(docker image inspect "$image" --format '{{ index .Config.Labels "com.alex.release.sha256" }}' 2>/dev/null || true)"
+  if [ "$image_hash" != "$expected_hash" ]; then
+    echo "[ERROR] The runtime image is missing or does not match this release. Run sudo bash ./docker-build.sh first." >&2
+    exit 1
+  fi
+  echo "==> Using the existing runtime image for release $TAG"
+fi
 if [ -n "$REGISTRY" ]; then
   docker push "$image"
 fi

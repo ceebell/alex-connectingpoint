@@ -29,7 +29,7 @@
 ├─ docker/                backend.Dockerfile · frontend.Dockerfile
 ├─ prompts/               prompt สำเร็จรูปสำหรับสั่งงาน AI
 ├─ data/db/               ข้อมูล MongoDB ตอน dev (อยู่ใน .gitignore)
-├─ dist/                  ผลลัพธ์จาก build.bat (อยู่ใน .gitignore)
+├─ dist/                  Linux release สำหรับ server เข้า Git; Windows output/archives ถูก ignore
 ├─ runall.bat · build.bat · rungit.bat        (Windows)
 ├─ loadgit.sh · docker-build.sh · docker-deploy.sh   (Ubuntu)
 ├─ docker-stack.yml
@@ -43,6 +43,8 @@
 |---|---|---|
 | รัน dev ทั้งหมด (Mongo + backend + frontend) | `runall.bat` | Windows |
 | Build เฉพาะ binary → `dist/` | `build.bat` | Windows |
+| Compile Rust Linux release สำหรับ Ubuntu | `build-backend.bat` (`build-line.bat` เดิม) | Windows + local Docker Desktop |
+| Build frontend Linux standalone | `build-frontend.bat` | Windows + local Docker Desktop |
 | Commit + push | `rungit.bat "ข้อความ commit"` | Windows |
 | Pull โค้ดลง server | `./loadgit.sh [branch]` | Ubuntu |
 | Build Docker image | `./docker-build.sh` | Ubuntu |
@@ -105,9 +107,12 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 ## 8. Docker / Deploy
 
 - **นโยบายผู้ใช้ล่าสุด:** compile/build โปรแกรมบน local เท่านั้น Ubuntu ใช้ precompiled Linux release และ Dockerfile runtime ที่ COPY binary/standalone เข้า image ห้าม compile Rust หรือ npm build บน server
+- **ลำดับบน server:** `bash ./loadgit.sh main` → `sudo bash ./docker-build.sh` สร้าง image จาก compiled object ที่ pull มา → `sudo bash ./docker-deploy.sh` เปิด/อัปเดตบริการ
+- Git เก็บ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` และ Linux frontend standalone ใน `dist/frontend-linux/` เมื่อมี frontend เพื่อให้ pull แล้วนำไปใส่ Docker ได้ทันที; `.env`, Windows output และ archives ยังถูก ignore
+- `build-frontend.bat` สร้าง frontend บน local และเก็บ runtime dependencies/public/static พร้อม checksum และ tag แยก; Ubuntu ใช้ `docker-build.sh --full-stack` / `docker-deploy.sh --full-stack` เมื่อมีทั้งสอง release
 - `build-line.bat` ใช้ Docker Desktop บน local เพื่อสร้าง Linux/amd64 release พร้อม archive; `deploy-line.sh` ตรวจ release และนำเข้า runtime image บน Ubuntu
 - Build context = root ของ repo · ใช้ `-f docker/<name>.Dockerfile`
-- Image tag = release tag จาก local (เวลา UTC + hash ของ binary; `dist/line-linux/release.tag`) — **ห้ามใช้แค่ `latest`** เพราะ Swarm จะไม่ rolling update ถ้า tag เดิม
+- Image tag backend ใช้ `dist/line-linux/release.tag`; frontend ใช้ `dist/frontend-linux/frontend.tag` จาก local เพื่ออัปเดตแยกกัน — **ห้ามใช้แค่ `latest`** เพราะ Swarm จะไม่ rolling update ถ้า tag เดิม
 - `.env` จริงอยู่บน server เท่านั้น ไม่เข้า git และไม่ถูก copy เข้า image
 - `build.bat` สร้าง **Windows** (`.exe`) ส่วน `build-line.bat` compile **Linux** บนเครื่อง local; Dockerfile ที่ deploy บน Ubuntu ต้องไม่มี compiler หรือคำสั่ง build โปรแกรม
 

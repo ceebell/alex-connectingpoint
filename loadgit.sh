@@ -5,6 +5,7 @@
 #   ./loadgit.sh              # pull branch "main"
 #   ./loadgit.sh develop      # pull another branch
 #   FORCE=1 ./loadgit.sh      # discard local changes on the server (git reset --hard origin/<branch>)
+# Default: preserve tracked server edits in a stash before pulling Git versions.
 #
 # First run on a fresh clone:  chmod +x loadgit.sh
 set -euo pipefail
@@ -30,15 +31,15 @@ if ! git show-ref --verify --quiet "refs/remotes/$REMOTE/$BRANCH"; then
   exit 1
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   if [ "${FORCE:-0}" = "1" ]; then
     echo "==> FORCE=1: discarding local changes"
     git reset --hard
   else
-    echo "[ERROR] Local changes found on the server:" >&2
-    git status --short >&2
-    echo "Commit/stash them, or run: FORCE=1 ./loadgit.sh $BRANCH" >&2
-    exit 1
+    echo "==> Saving tracked server edits before pulling the Git version"
+    git -c user.name='Server deploy backup' -c user.email='server-backup@localhost' \
+      stash push -m "server-before-pull-$(date -u +%Y%m%dT%H%M%SZ)"
+    echo "[OK] Server edits are preserved in stash; they will not be reapplied over the release."
   fi
 fi
 
@@ -63,4 +64,5 @@ if [ ! -f .env ]; then
 fi
 
 echo
-echo "Next:  ./docker-build.sh  &&  ./docker-deploy.sh"
+echo "Next: sudo bash ./docker-build.sh"
+echo "Then: sudo bash ./docker-deploy.sh  (first deployment: add --init-swarm)"

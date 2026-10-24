@@ -4,6 +4,82 @@
 
 <!-- entries -->
 
+## 2026-10-24 18:54 — เพิ่ม BAT สำหรับ compile backend และ build frontend บน local
+- **คำอธิบาย:** แยกคำสั่ง build ที่เรียกง่ายบน Windows ทั้งสองส่วน โดย compile เป็น Linux/amd64 บน Docker Desktop ของเครื่อง local เท่านั้น Ubuntu pull compiled objects จาก Git แล้วสร้าง runtime Docker image โดยไม่ compile โปรแกรม
+- **โฟลเดอร์ `./` (root)**
+  - `build-backend.bat` — เพิ่ม: เรียก build-line.bat เดิมและส่งต่อ arguments เพื่อสร้าง Rust release ใน dist/line-linux
+  - `build-frontend.bat` — เพิ่ม: เรียก PowerShell local builder สำหรับ Next.js standalone ใน dist/frontend-linux
+  - `.gitignore`, `.gitattributes`, `.dockerignore` — แก้: รองรับ compiled frontend รวม traced dependencies/static ใน Git และ Docker context โดยรักษา bytes เดิมและกัน .env ออก
+  - `docker-build.sh`, `docker-deploy.sh`, `docker-stack.yml` — แก้: ตรวจ checksum frontend และใช้ frontend tag แยกจาก backend เพื่อรองรับการอัปเดต frontend อย่างเดียว; ตรวจ image SHA256 labels ก่อน full-stack deploy
+  - `AGENTS.md`, `.env.example` — แก้: ระบุคำสั่ง BAT ใหม่และการตั้ง BackendUrl ตอน local frontend build
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: เพิ่มคำสั่ง build แยกส่วนและลิงก์คู่มือ local โดยคงภาพประกอบและตัวกรองบทบาท
+- **โฟลเดอร์ `scripts/`**
+  - `build-frontend.ps1` — เพิ่ม: ตรวจ frontend source/lockfile, บังคับ local Linux builder, สร้าง checksum/tag/manifest, กัน .env, เก็บ release เก่าเป็น backup และแทนที่ output ทั้งโฟลเดอร์เมื่อ build สำเร็จ
+  - `verify-frontend-release.sh` — เพิ่ม: ตรวจไฟล์ release, platform, tag และ SHA256 ก่อนสร้าง image/deploy
+  - `build-line.ps1` — แก้: รวม frontend verifier และคู่มือ local ใน release archive สำรอง
+- **โฟลเดอร์ `docker/`**
+  - `frontend.build.Dockerfile`, `frontend.build.Dockerfile.dockerignore` — เพิ่ม: npm ci/lint/build ภายใน local Linux container และ export standalone พร้อม public/static โดยไม่ส่ง local dependencies หรือ .env เข้า compiler
+- **โฟลเดอร์ `docs/`**
+  - `build-local.md` — เพิ่ม: คำสั่ง BAT, prerequisites, output, BackendUrl และลำดับ Git/server packaging
+  - `deploy-line-server.md` — แก้: ใช้ชื่อ build-backend.bat และเชื่อมคู่มือ frontend/local
+- **โฟลเดอร์ `dist/line-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — อัปเดต: build จริงบน local เป็น rel-20261024115310-65923ac32c6f; binary SHA256 65923ac32c6f1c8fab3ff2925cb2bfadc4b616a26f10ed9bdac9974028db275f
+- **ผลตรวจสอบ:** build-backend.bat ผ่านจริง; cargo fmt --check, cargo clippy -- -D warnings และ cargo test ผ่าน (5 passed, 2 Mongo integration tests ignored); runall.bat -Check ผ่าน; ทดสอบ frontend ด้วย Next.js fixture ใน data/ ที่ถูก ignore ผ่านทั้ง lint/build, runtime Docker, HTTP หน้าเว็บ/public/static, checksum, การกัน .env, Git inclusion และการแทน release พร้อม backup; full-stack runtime image build/tag/label และ stack config ผ่าน โดยจำลองขั้น deploy จึงไม่เปลี่ยน Swarm จริง; PowerShell parse, BAT ASCII/CRLF, Linux files LF, deployment regression, HTML desktop/mobile/filter/search/print และ git diff --check ผ่าน
+- **ข้อจำกัด:** repository ยังไม่มี frontend/package.json จึงยังไม่ได้ build frontend จริงของโปรเจกต์; BAT จะแจ้ง source ที่ขาดและไม่แก้ release เดิม สคริปต์พร้อมใช้งานเมื่อเพิ่ม frontend source แล้ว ไม่มีการ commit/push หรือแก้บริการบน Ubuntu ในงานนี้
+
+## 2026-10-24 18:34 — แยก Database unavailable ออกจากผล rollback ของ backend
+- **คำอธิบาย:** ตรวจประวัติ task ที่ผู้ใช้ส่ง พบ image release ที่ถูกต้องเคยรันและล้มด้วย Database unavailable ก่อนกลับไปเป็น image/constraint เก่า line.sh ซึ่งสอดคล้องกับ failure_action: rollback; MongoDB ปัจจุบันรันอยู่แต่ยังยืนยัน authentication/เส้นทาง Swarm จากสิทธิ์ SSH ของ agent ไม่ได้ จึงไม่สรุปว่าเป็น startup race หรือรหัสผ่านผิดโดยไม่มีผลตรวจ
+- **โฟลเดอร์ `./` (root)**
+  - `diagnose-line.sh` — เพิ่ม: โหลด config บน server และเรียก diagnostic แบบไม่แก้ services เก็บเฉพาะผลที่ตัดข้อมูลลับแล้วใน data/line-diagnostics-latest.txt พร้อมแสดงบน terminal
+  - `.gitignore` — แก้: กัน Python __pycache__/bytecode ของ diagnostic ออกจาก Git
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: เพิ่มการแยกปัญหาฐานข้อมูลกับ rollback และย้ำว่าแก้ YAML อย่างเดียวยังไม่เปลี่ยน service จริง
+- **โฟลเดอร์ `scripts/`**
+  - `diagnose-line.py` — เพิ่ม: ตรวจ image/update state/constraint/network, เปรียบเทียบ URI/credentials กับ .env แบบ boolean และทดสอบ Mongo authentication ผ่าน localhost/service DNS/tasks DNS ภายใน Mongo container; ไม่พิมพ์ env, password/token, URI เต็ม, raw logs หรือข้อความ driver
+  - `build-line.ps1` — แก้: รวมไฟล์ diagnostic ใน archive สำรองของ local build
+- **โฟลเดอร์ `docs/`**
+  - `deploy-line-server.md` — แก้: อธิบายผลตรวจ authentication/Swarm DNS/rollback และข้อจำกัดของ Mongo replicas 1/1 กับ startup ping timeout 5 วินาที
+- **ผลตรวจสอบ:** ทดสอบ Mongo probe จริงใน Docker local ที่มี authentication ทั้ง localhost/service/tasks aliases ผ่าน; ทดสอบ redaction ด้วย mock service/rollback/config แล้วไม่มี password/token/URI หลุด; ทดสอบ Linux release เดิมกับ authenticated MongoDB ผ่านทั้ง health, signed webhook, user/chat, dedup, auth และ restart; Chrome desktop/mobile และ git diff --check ผ่าน ไม่มีการแก้หรือ compile Rust และไม่มีการเปลี่ยน services/volume บน Ubuntu
+- **สถานะ server:** ติดตั้ง diagnose-line.sh และ scripts/diagnose-line.py ใน /home/ubuntu/alex-connectingpoint แล้ว ยืนยัน .env/compiled binary ไม่เปลี่ยน; ต้องให้ผู้ใช้รัน sudo bash ./diagnose-line.sh เพราะ SSH ของ agent ไม่มีสิทธิ์ Docker/sudo แบบไม่ใส่รหัส ณ เวลาบันทึกยังไม่มีรายงานจาก server จึงยังไม่ยืนยันสาเหตุ Database unavailable หรือว่า backend กลับมาทำงานแล้ว
+- **ไฟล์ช่วยตรวจใน `data/` (ignored):** test-line-diagnostics.py, upload-line-diagnostics.py, verify-authenticated-runtime.py และ update-diagnostic-guide.py ใช้ทดสอบ/เตรียมงานนี้ด้วยค่าจำลองและไม่ส่ง secret ขึ้น log
+
+## 2026-10-24 18:24 — ให้ server pull compiled object จาก Git แล้วสร้าง Docker
+- **คำอธิบาย:** ปรับตามลำดับที่ผู้ใช้กำหนด: local compile และ push Linux release พร้อมโค้ด → Ubuntu pull จาก Git → สร้าง Docker image จาก compiled object → deploy image ที่สร้างแล้ว โดยไม่มีการ compile โปรแกรมบน Ubuntu
+- **โฟลเดอร์ `./` (root)**
+  - `.gitignore` — แก้: อนุญาตเฉพาะ backend, backend.sha256, release.tag และ release.json ใน dist/line-linux เข้า Git เพื่อให้ pull แล้ว build image ได้ทันที; Windows output/archives/.env/billing_wth_text ยังถูก ignore
+  - `.gitattributes` — แก้: ระบุ backend เป็น binary ไม่แปลง line endings และบังคับ metadata Linux release เป็น LF
+  - `docker-build.sh` — แก้: ค่าเริ่มต้นสร้างเฉพาะ LINE backend จาก compiled object โดยไม่ต้องมี frontend; ใส่ SHA256 label ให้ image และมี --full-stack สำหรับชุดที่มี frontend
+  - `docker-deploy.sh` — แก้: ค่าเริ่มต้น deploy ชุด LINE ผ่าน --skip-build ไม่สร้าง image ซ้ำ; รองรับ --init-swarm และคงชุดเต็มผ่าน --full-stack
+  - `deploy-line.sh` — แก้: เรียก docker-build.sh สำหรับ build image และเพิ่ม --skip-build ตรวจว่า image ที่มีอยู่ตรง SHA256 ของ release ก่อนใช้ deploy
+  - `loadgit.sh` — แก้: เก็บ tracked server edits ใน stash ก่อน pull โดยไม่ทับไฟล์จาก Git ด้วย stash เก่า; ใช้ identity เฉพาะคำสั่งสำรอง ไม่เปลี่ยน global config; แสดงลำดับ build/deploy หลัง pull
+  - `AGENTS.md`, `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: ระบุ Linux objects ที่เข้า Git และแยกหน้าที่ local build/push กับ server pull/build image/deploy ให้ตรงกัน
+- **โฟลเดอร์ `scripts/`**
+  - `build-line.ps1` — แก้: แสดงคำสั่ง commit/push แล้ว pull/build/deploy บน server; รวม docker-build.sh/docker-deploy.sh/loadgit.sh ใน archive สำรองด้วย
+- **โฟลเดอร์ `docs/`**
+  - `deploy-line-server.md` — แก้: คู่มือหลักเป็น Git workflow พร้อม config, first-time Swarm และการตรวจรับ; archive เป็นผลลัพธ์เสริมของ local build
+- **โฟลเดอร์ `dist/line-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — เตรียม: Linux/amd64 release รุ่น rel-20261024112304-65923ac32c6f จาก local build; binary SHA256 65923ac32c6f1c8fab3ff2925cb2bfadc4b616a26f10ed9bdac9974028db275f พร้อมให้ผู้ใช้ commit/push โดย rungit.bat ยังไม่มีการ stage/commit/push อัตโนมัติ
+- **ผลตรวจสอบ:** real local build-line.bat และ docker-build.sh ผ่าน ตรวจ image SHA256 label ตรง binary; real Git clone/fetch/pull ในโฟลเดอร์ทดสอบบน Ubuntu ผ่าน พร้อมเก็บ server edits ใน stash และรักษา .env/ไฟล์ ignored; mock deploy ผ่านทั้งแยก build/deploy, init Swarm, skip-build และปฏิเสธ image hash ผิด; ยืนยันมีเพียง 4 release files ที่เข้า Git และ Git filters ไม่เปลี่ยน ELF; Bash syntax/LF, git diff --check และ Chrome desktop/mobile filters/search/deep links/print ผ่าน ไม่มีการแก้ Rust หรือ frontend source
+- **สถานะ server:** เตรียมเฉพาะ loadgit.sh ที่รองรับ stash ใน /home/ubuntu/alex-connectingpoint พร้อม backup เพื่อให้ดึงรุ่นใหม่ได้หลังผู้ใช้ push; .env และ binary เดิมไม่เปลี่ยน ยังไม่ได้ pull/build Docker/deploy production ในงานนี้ เนื่องจาก Git รุ่นใหม่ยังรอผู้ใช้ push และผู้ใช้เลือกจะรัน sudo เอง
+- **ไฟล์ช่วยตรวจใน `data/` (ignored):** verify-release-deploy.py, verify-git-docker-workflow.py, verify-server-git-pull.py, bootstrap-server-pull.py และ update-git-release-guide.py ใช้ตรวจ/เตรียมงานโดยไม่ส่ง secret ขึ้น Git หรือ log
+
+## 2026-10-24 18:00 — แก้ Swarm แปลง node ID และ image tag ผิดจน service Pending
+- **คำอธิบาย:** ทำซ้ำด้วย Docker CLI จริงทั้ง local และ Ubuntu พบ `${LINE_NODE_ID:?run deploy-line.sh}` และ `${TAG:?run deploy-line.sh}` ถูก legacy Swarm แปลงเป็น line.sh แม้กำหนดค่าแล้ว ส่งผลให้ทั้งสอง service ไม่มี node ตรง constraint และ backend อ้าง image ผิด
+- **โฟลเดอร์ `./` (root)**
+  - `docker-stack.line.yml` — แก้: ใช้การแทนตัวแปรโดยตรงสำหรับ node ID, tag และค่าจำเป็น โดย deploy script ตรวจค่าก่อนใช้งาน
+  - `deploy-line.sh` — แก้: ตรวจ node ID, สถานะ ready/active และตรวจ config ที่ Docker แปลงแล้วว่า image ตรง release และ constraints ทั้งสองรายการตรง node ก่อนสร้าง runtime image/deploy; ไม่พิมพ์หรือบันทึก config ที่มี credentials
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: ใช้ path /home/ubuntu/alex-connectingpoint ให้ตรงโฟลเดอร์ Git บน server; เพิ่มแนวทางแก้ Pending/no suitable node ใน HTML
+- **โฟลเดอร์ `docs/`**
+  - `deploy-line-server.md` — แก้: ปรับ path และเพิ่มการตรวจ Pending, node state และกรณี image/constraint เป็น line.sh
+- **ผลตรวจสอบ:** actual docker stack config บน local และ Ubuntu ยืนยัน node constraints, release image, LINE/admin และ Mongo credentials ตรงค่าจำลอง; mock deploy ผ่าน รวมกรณี node ID ผิด, drain และ rendered config ผิดต้องหยุดก่อน build/deploy; Bash syntax, git diff --check และ Docker runtime image build บน local ผ่าน; Chrome desktop/mobile role filters/search/deep links/print ผ่าน ไม่มีการแก้หรือ compile Rust
+- **การแก้บน server:** สำรองและเปลี่ยน deploy-line.sh/docker-stack.line.yml ใน /home/ubuntu/alex-connectingpoint และโฟลเดอร์ release เดิมแล้ว ตรวจ .env และ compiled binary ไม่เปลี่ยน; SSH ของ agent ไม่มี sudo แบบไม่ถามรหัส จึงขอให้ผู้ใช้รัน sudo bash ./deploy-line.sh ตามที่เลือกไว้ ณ เวลาบันทึก health พอร์ต 18080 ยังไม่ผ่านและยังไม่ได้ยืนยัน deploy สำเร็จ
+- **ไฟล์ช่วยตรวจใน `data/` (ignored):** apply-swarm-interpolation-fix.py, verify-release-deploy.py และ update-swarm-fix-guide.py ใช้ตรวจ regression/อัปโหลดเฉพาะไฟล์ที่แก้โดยไม่ส่งหรือพิมพ์ secret
+
+## 2026-10-24 14:29 — เติม Linux release ในโฟลเดอร์ Git บน Ubuntu
+- **คำอธิบาย:** แก้ Missing Linux release หลัง clone ไป /home/ubuntu/alex-connectingpoint เพราะ dist/ ไม่ถูกส่งผ่าน Git โดยคัดลอก release ที่ compile บน local และส่งไว้ใน /home/ubuntu/alex-order-connector แล้ว ไปยังโฟลเดอร์ที่ผู้ใช้ deploy จริง
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/dist/line-linux/` บน Ubuntu (ignored)**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — เพิ่ม: precompiled Linux/amd64 release รุ่น rel-20261023183243-65923ac32c6f โดยเตรียมในโฟลเดอร์ชั่วคราวแล้วเปลี่ยนชื่อเข้าปลายทาง ไม่ทับ release ที่มีอยู่
+- **ผลตรวจสอบ:** source Rust/Cargo ของสองโฟลเดอร์ตรงกัน; verify-line-release.sh ผ่านทั้ง checksum/tag/ELF; config ที่จำเป็นครบ .env ไม่เปลี่ยนและสิทธิ์ยัง 600; git check-ignore ยืนยัน release และ .env ถูกกันออก; ไม่มีการ compile โปรแกรมหรือ deploy Docker บน Ubuntu ผู้ใช้ยังรัน Docker/deploy ด้วย sudo เอง
+
 ## 2026-10-24 11:29 — ตั้ง Git และ origin ให้ rungit ใช้งานได้
 - **คำอธิบาย:** แก้ปัญหา rungit แจ้งว่าโฟลเดอร์ไม่ใช่ Git repository โดยสร้าง Git local สาขา main และตั้ง origin เป็น https://github.com/ceebell/alex-connectingpoint.git ตาม URL ที่ผู้ใช้ให้ ตรวจปลายทางแล้วเป็น repository ว่าง ไม่มีประวัติเดิมต้องรวม และยังไม่ได้ stage/commit/push
 - **โฟลเดอร์ `./` (root)**

@@ -1,13 +1,14 @@
 version: "3.9"
 
 # Backend-only deployment on the node that runs the existing host Caddy service.
+# deploy-line.sh validates required values before legacy Swarm interpolation.
 services:
   mongo:
     image: mongo:7
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?set MONGO_USER in .env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     volumes:
       - mongo_data:/data/db
     networks:
@@ -27,7 +28,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.id == ${LINE_NODE_ID:?run deploy-line.sh}
+          - node.id == ${LINE_NODE_ID}
       resources:
         limits:
           memory: 768M
@@ -36,19 +37,19 @@ services:
         delay: 5s
 
   backend:
-    image: ${REGISTRY:-}${APP_NAME:-alex-line}-backend:${TAG:?run deploy-line.sh}
+    image: ${REGISTRY:-}${APP_NAME:-alex-line}-backend:${TAG}
     environment:
       PORT: "8080"
       RUST_LOG: ${RUST_LOG:-info}
       MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
       MONGODB_DB: ${MONGODB_DB:-alex_line}
       CORS_ORIGIN: ${CORS_ORIGIN:-}
-      LINE_SHOP_ID: ${LINE_SHOP_ID:?set LINE_SHOP_ID in .env}
-      LINE_CHANNEL_ID: ${LINE_CHANNEL_ID:?set LINE_CHANNEL_ID in .env}
-      LINE_DESTINATION_ID: ${LINE_DESTINATION_ID:?set LINE_DESTINATION_ID in .env}
-      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:?set LINE_CHANNEL_SECRET in .env}
-      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?set LINE_CHANNEL_ACCESS_TOKEN in .env}
-      INQUIRY_ADMIN_TOKEN: ${INQUIRY_ADMIN_TOKEN:?set INQUIRY_ADMIN_TOKEN in .env}
+      LINE_SHOP_ID: ${LINE_SHOP_ID}
+      LINE_CHANNEL_ID: ${LINE_CHANNEL_ID}
+      LINE_DESTINATION_ID: ${LINE_DESTINATION_ID}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
+      INQUIRY_ADMIN_TOKEN: ${INQUIRY_ADMIN_TOKEN}
       LINE_BURST_WINDOW_MS: ${LINE_BURST_WINDOW_MS:-3000}
       LINE_MEDIA_MAX_BYTES: ${LINE_MEDIA_MAX_BYTES:-20971520}
       LINE_MEDIA_RETENTION_DAYS: ${LINE_MEDIA_RETENTION_DAYS:-30}
@@ -68,7 +69,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.id == ${LINE_NODE_ID:?run deploy-line.sh}
+          - node.id == ${LINE_NODE_ID}
       resources:
         limits:
           memory: 384M

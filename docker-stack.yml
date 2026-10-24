@@ -28,7 +28,7 @@ services:
         condition: on-failure
 
   backend:
-    image: ${REGISTRY:-}${APP_NAME:-myapp}-backend:${TAG:-latest}
+    image: ${REGISTRY:-}${APP_NAME:-myapp}-backend:${TAG}
     environment:
       PORT: "8080"
       RUST_LOG: ${RUST_LOG:-info}
@@ -60,7 +60,7 @@ services:
         delay: 5s
 
   frontend:
-    image: ${REGISTRY:-}${APP_NAME:-myapp}-frontend:${TAG:-latest}
+    image: ${REGISTRY:-}${APP_NAME:-myapp}-frontend:${FRONTEND_TAG}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"   # put a reverse proxy (nginx / traefik / caddy) in front for TLS
     networks:

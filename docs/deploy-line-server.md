@@ -1,60 +1,72 @@
-# ส่ง Linux release จาก local ไป deploy บน Ubuntu
+# Ubuntu: pull จาก Git → สร้าง Docker จาก compiled object
 
-**ผู้พัฒนา compile/build โปรแกรมบนเครื่อง local เท่านั้น** แล้วส่ง Linux release ที่เสร็จแล้วให้ผู้ดูแลระบบ Ubuntu ใช้ Dockerfile ที่ COPY binary เข้า runtime image ไม่มี Rust/Cargo/npm build บน server
+โปรแกรม compile บน local เท่านั้น Git เก็บ Linux release ใน `dist/line-linux/` พร้อมโค้ดและสคริปต์ เพื่อให้ Ubuntu pull แล้วนำ binary เข้า Docker ได้ทันที `.env` เป็น config เฉพาะ server และไม่เข้า Git
 
 ```text
-ผู้พัฒนา: Windows + Docker Desktop → compile Linux/amd64 → release.tar.gz
-ผู้ดูแลระบบ: Ubuntu → รับ release → ตรวจ checksum → ใส่ binary ใน Docker → deploy Swarm
-ใช้งานจริง: LINE → Caddy → backend :18080 → MongoDB
+ผู้พัฒนา: build-backend.bat / build-frontend.bat บน local → rungit.bat เพื่อ commit/push
+ผู้ดูแลระบบ: loadgit.sh → docker-build.sh → docker-deploy.sh
 ```
 
-## 1. ผู้พัฒนา — build บน local
+## ผู้พัฒนา: เตรียม release บน local
 
-เปิด Docker Desktop บน Windows และเลือก Linux containers แล้วรันที่ root ของโปรเจกต์:
+เปิด Docker Desktop แบบ Linux containers แล้วรันใน Windows:
 
 ```bat
-build-line.bat
+build-backend.bat
+rungit.bat "Update Linux release"
 ```
 
-สคริปต์ใช้ builder ที่ผูกกับ Docker Desktop ผ่าน named pipe ของเครื่องนี้เท่านั้น และ compile ด้วย `docker/backend.build.Dockerfile` บน local ผลลัพธ์เป็น **Linux x86_64 ELF** สำหรับ server นี้ (`x86_64`) ไม่ใช่ Windows `.exe`
+ต้อง commit/push ทั้ง binary, checksum, tag, manifest และโค้ดรุ่นเดียวกัน Git เก็บเฉพาะ 4 ไฟล์ใน `dist/line-linux/`: `backend`, `backend.sha256`, `release.tag`, `release.json` ส่วน Windows output, archive, cache, `billing_wth_text/` และ `.env` ยังถูก ignore
 
-- `dist/line-linux/backend`: release binary
-- `dist/line-linux/backend.sha256`, `release.tag`, `release.json`: checksum, รุ่น และ platform
-- `dist/line-rel-<เวลา UTC>-<hash>.tar.gz`: ชุดส่งมอบพร้อม Dockerfile runtime, stack, deploy script และคู่มือ
+สำหรับ frontend ให้ใช้ `build-frontend.bat` เมื่อเพิ่ม frontend application แล้ว ได้ Linux standalone ใน `dist/frontend-linux/` ที่เข้า Git พร้อม dependencies และ tag แยก ดูเงื่อนไขและตัวเลือกใน [คู่มือ build local](build-local.md)
 
-Archive ไม่มี source Rust, Cargo, compiler Dockerfile, `.env` จริง หรือข้อมูล MongoDB เปลี่ยนจำนวนงาน compile ได้ด้วย `build-line.bat -Jobs 2` ส่วน `build.bat` เดิมใช้ทำ Windows release และไม่ได้ใช้ deploy ชุดนี้
+## ผู้ดูแลระบบ: บน Ubuntu
 
-เมื่อเปลี่ยนโค้ด ผู้พัฒนาต้อง build บน local และส่ง archive รุ่นใหม่ทุกครั้ง
-
-## 2. ผู้พัฒนา/ผู้ดูแลระบบ — ส่ง release ไป server
-
-รันจาก PowerShell บน local โดยแทนชื่อไฟล์ด้วย archive ที่ build สำเร็จ:
-
-```powershell
-scp "dist/line-rel-<เวลา UTC>-<hash>.tar.gz" Hermes:/home/ubuntu/
-```
-
-`Hermes` คือ SSH alias ของ server นี้ หากใช้เครื่องอื่นให้เปลี่ยนเป็น `ubuntu@<server-ip>` จากนั้นบน Ubuntu:
+ครั้งแรก clone ด้วยบัญชี ubuntu หากยังไม่มีโฟลเดอร์:
 
 ```sh
-mkdir -p /home/ubuntu/alex-order-connector
-cd /home/ubuntu/alex-order-connector
-tar -xzf /home/ubuntu/line-rel-<เวลา UTC>-<hash>.tar.gz
+cd ~
+git clone https://github.com/ceebell/alex-connectingpoint.git
 ```
 
-Archive ไม่ทับ `.env` จริงหรือ volume MongoDB สคริปต์ deploy ตรวจ checksum และชนิด binary ก่อนเปลี่ยน Swarm หาก release ขาดหรือผิดจะหยุด ไม่มีการ compile ทดแทนบน server
-
-## 3. ผู้ดูแลระบบ — config และ deploy บน Ubuntu
-
-ติดตั้ง Docker หากยังไม่มี (ใช้ `sudo` ตามที่เลือกไว้):
+**1. Pull โค้ด สคริปต์ และ compiled object จาก Git**
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y docker.io
-sudo systemctl enable --now docker
+cd ~/alex-connectingpoint
+bash ./loadgit.sh main
 ```
 
-เตรียม `/home/ubuntu/alex-order-connector/.env` และ `chmod 600 .env` ให้มี LINE ทั้ง 5 ค่า, `INQUIRY_ADMIN_TOKEN` และค่าต่อไปนี้:
+สคริปต์เก็บการแก้ไฟล์ที่ track บน server ไว้ใน Git stash ก่อน pull และคง stash ไว้เป็นสำรอง `.env` ไม่ถูกเปลี่ยน
+
+**2. สร้าง Docker image จาก compiled object**
+
+```sh
+sudo bash ./docker-build.sh
+```
+
+ตรวจ SHA256 และ ELF Linux/amd64 ก่อน COPY เข้า image สร้างเฉพาะ backend โดยไม่ต้องมี frontend ไม่มี cargo/npm build บน Ubuntu และยังไม่เปลี่ยนบริการที่รันอยู่ หาก release ขาดให้ผู้พัฒนา build/push จาก local แล้ว pull ใหม่
+
+**3. เปิดหรืออัปเดตบริการด้วย image ที่สร้างแล้ว**
+
+```sh
+sudo bash ./docker-deploy.sh
+```
+
+ครั้งแรกที่ยังไม่ได้เปิด Swarm ใช้ `sudo bash ./docker-deploy.sh --init-swarm` สคริปต์ตรวจว่า image ตรงกับ release แล้ว deploy backend + MongoDB โดยไม่สร้าง image ซ้ำ จากนั้นรอ health
+
+`deploy-line.sh` ยังใช้เป็นทางลัดสร้าง image + deploy ได้ ส่วนลำดับมาตรฐานแยก build และ deploy ตามข้างบน ชุดเต็มที่มี Linux frontend ใช้ `docker-build.sh --full-stack` และ `docker-deploy.sh --full-stack`
+
+## ผู้ดูแลระบบ: .env และ Caddy
+
+เก็บ `.env` ที่ `/home/ubuntu/alex-connectingpoint/.env` สิทธิ์ `600` หากมี config เดิมอยู่แล้ว คัดลอกเฉพาะครั้งแรก:
+
+```sh
+cp -n /home/ubuntu/alex-order-connector/.env /home/ubuntu/alex-connectingpoint/.env
+chmod 600 /home/ubuntu/alex-connectingpoint/.env
+nano /home/ubuntu/alex-connectingpoint/.env
+```
+
+กรอก LINE ทั้ง 5 ค่าและ `INQUIRY_ADMIN_TOKEN` พร้อมค่าฝั่ง server:
 
 ```dotenv
 APP_NAME=alex-line
@@ -66,26 +78,7 @@ LINE_HTTP_PORT=18080
 SWARM_ADVERTISE_ADDR=178.128.22.196
 ```
 
-เติมรหัสผ่านสุ่มจริง ใช้ตัวอักษร/ตัวเลขเพื่อใส่ใน Mongo URI ห้ามเปลี่ยนรหัสผ่านใน `.env` อย่างเดียวหลัง volume มีข้อมูลแล้ว บัญชี MongoDB เดิมต้องถูกปรับให้ตรงด้วย `INQUIRY_ADMIN_TOKEN` คือรหัสสุ่มของระบบเรา ไม่ได้ขอจาก LINE
-
-ครั้งแรก:
-
-```sh
-cd /home/ubuntu/alex-order-connector
-sudo bash ./deploy-line.sh --init-swarm
-```
-
-อัปเดตรุ่นถัดไปหลังรับและแตก archive ใหม่:
-
-```sh
-sudo bash ./deploy-line.sh
-```
-
-Ubuntu สร้างเฉพาะ Docker runtime image จาก binary ที่ compile มาแล้ว อาจ download base image/แพ็กเกจ runtime ครั้งแรก แต่ไม่มีขั้นตอน build โปรแกรม Image tag มาจาก release ที่สร้างบน local แต่ละรุ่นมี tag ใหม่ จึงอัปเดต Swarm ได้
-
-ชุด Step 1 ใช้ backend + MongoDB ใน `docker-stack.line.yml` ไม่ต้องมี frontend ส่วน `docker-build.sh`/`docker-deploy.sh` สำหรับชุดเต็มต้องมี frontend standalone ที่ build บน local สำหรับ Linux เพิ่มด้วย และไม่มีการ compile บน server เช่นกัน
-
-## 4. ผู้ดูแลระบบ — Caddy และ LINE
+ใช้รหัสผ่านสุ่มจริงเป็นตัวอักษร/ตัวเลข การเปลี่ยนรหัสผ่านใน `.env` หลัง volume มีข้อมูล ต้องปรับบัญชี MongoDB ให้ตรงกันด้วย `INQUIRY_ADMIN_TOKEN` คือรหัสสุ่มที่ระบบเรากำหนดสำหรับ API ภายใน
 
 ไฟล์ `/etc/caddy/Caddyfile`:
 
@@ -94,7 +87,6 @@ hermes.salepie.online {
     handle /api/line/webhook {
         reverse_proxy 127.0.0.1:18080
     }
-
     handle {
         reverse_proxy localhost:8646
     }
@@ -104,22 +96,42 @@ hermes.salepie.online {
 ```sh
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
+```
+
+## ตรวจรับบริการ
+
+```sh
 curl --noproxy '*' http://127.0.0.1:18080/api/health
 sudo docker stack services alex-line
 ```
 
-ต้องได้ `{"status":"ok"}` และ backend/mongo เป็น `1/1` จากนั้น LINE Developers → Messaging API → Webhook URL: `https://hermes.salepie.online/api/line/webhook` กด Verify ให้ Success และเปิด Use webhook
+ต้องได้ `{"status":"ok"}` และ backend/mongo เป็น `1/1` แล้วตั้ง LINE Webhook URL เป็น `https://hermes.salepie.online/api/line/webhook` กด Verify ให้ Success และเปิด Use webhook ส่งข้อความจริงเข้า OA และตรวจ user ID/แชทตาม [คู่มือ Step 1](step-1-line-inquiry.md)
 
-ส่งข้อความจาก LINE ส่วนตัวเข้า OA แล้วตรวจ user ID/แชทตาม [คู่มือ Step 1](step-1-line-inquiry.md) Verify อย่างเดียวอาจมี events ว่างและไม่สร้าง user
-
-## 5. ผู้ดูแลระบบ — ตรวจงานหลัง deploy
+หากยังไม่พร้อม:
 
 ```sh
+sudo docker node ls
 sudo docker service ps --no-trunc alex-line_backend
-sudo docker service logs --tail 50 alex-line_backend
+sudo docker service logs --tail 40 alex-line_backend
 sudo docker service ps --no-trunc alex-line_mongo
 ```
 
-Backend/MongoDB ถูกตรึงที่ node ของ Caddy และ MongoDB ใช้ volume ถาวร ไม่ publish port ของ MongoDB ส่วน port 18080 ใช้ให้ Caddy เรียก ควรจำกัดการเข้าจากภายนอกด้วย firewall ของ server อัปเดตแบบ stop-first จึงมีช่วงหยุดสั้น
+หาก Pending/no suitable node ให้ตรวจ node เป็น ready/active และใช้ stack ที่แก้ interpolation แล้ว สคริปต์ตรวจ node/image หลังแทนตัวแปรก่อน deploy โดยไม่แสดง credentials กรณีค่าเป็น `line.sh` ให้ใช้ไฟล์แก้ไขและทำขั้นตอน build/deploy ใหม่
 
-หลัง deploy สำเร็จ ปิดเครื่อง local และ SSH ได้ บริการรันต่อบน server งานสำรอง/ทดสอบกู้คืน MongoDB, credentials, HTTPS และตรวจ log เป็นหน้าที่ผู้ดูแลระบบ
+หาก backend เคยเริ่มด้วย image ที่ถูกต้องแล้วล้มว่า `Database unavailable` ก่อนกลับไปเป็น `line.sh` ให้แยกข้อผิดพลาดฐานข้อมูลออกจากผล rollback ตาม update policy การแก้ YAML ด้วย vi ยังไม่เปลี่ยน service ที่ deploy ไปแล้ว
+
+ตรวจสาเหตุด้วยคำสั่งแบบไม่เปลี่ยนบริการ:
+
+```sh
+sudo bash ./diagnose-line.sh
+```
+
+สคริปต์รายงาน image/update state/constraint, ค่าเชื่อมต่อว่าตรง `.env` หรือไม่, MongoDB health และทดสอบ authentication ผ่าน localhost, `mongo` และ `tasks.mongo` โดยไม่แสดง password/token/URI เต็ม
+
+- `auth_local` ไม่ผ่าน: ตรวจบัญชีใน MongoDB และ credentials ของ volume เดิม
+- localhost ผ่านแต่ชื่อ service ไม่ผ่าน: ตรวจ DNS/เครือข่าย Swarm และเส้นทาง VIP
+- ทุก probe ผ่าน: MongoDB พร้อมในเวลาตรวจแล้ว แต่ยังต้องใช้ image/constraint ที่ถูกต้องแทน spec เก่าที่ rollback กลับมา
+
+Backend รุ่นปัจจุบันลอง ping ฐานข้อมูลโดยมี server selection timeout 5 วินาทีก่อนเปิด HTTP จึงไม่มีพอร์ต 18080 หากขั้นตอนนั้นล้มเหลว ค่า service MongoDB เป็น `1/1` เพียงอย่างเดียวไม่ได้ยืนยันว่า backend authentication หรือเส้นทางเครือข่ายผ่าน
+
+MongoDB ใช้ volume ถาวรและไม่มี published port ส่วนพอร์ต 18080 ให้ Caddy เรียก อัปเดตแบบ stop-first มีช่วงหยุดสั้น หลัง deploy ปิด local/SSH ได้ ผู้ดูแลระบบรับผิดชอบ backup/ทดสอบกู้คืน MongoDB และดูแล HTTPS/config

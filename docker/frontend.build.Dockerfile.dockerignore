@@ -1,0 +1,11 @@
+# Local frontend compiler accepts source only; secrets and host build output stay out.
+**
+!frontend/
+!frontend/**
+frontend/**/node_modules
+frontend/**/.next
+frontend/**/out
+frontend/**/.git
+frontend/**/.env
+frontend/**/.env.*
+frontend/**/*.log
