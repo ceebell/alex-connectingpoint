@@ -1,0 +1,24 @@
+.git
+.gitignore
+.gitattributes
+
+# Never bake secrets into an image
+.env
+.env.*
+
+# Dependencies are excluded; allow only precompiled release inputs.
+**/target
+**/node_modules
+**/.next
+dist/*
+!dist/line-linux/
+!dist/frontend-linux/
+data
+billing_wth_text
+
+# Not needed at build time
+*.md
+*.bat
+prompts
+docker-stack.yml
+*.log

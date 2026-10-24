@@ -1,0 +1,86 @@
+version: "3.9"
+
+# Docker Swarm stack:  ./docker-deploy.sh   (reads .env, exports TAG / APP_NAME / REGISTRY)
+# Services: mongo (database) · backend (Rust axum) · frontend (Next.js)
+
+services:
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?set MONGO_USER in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env}
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager   # keeps the data volume on one known node
+      restart_policy:
+        condition: on-failure
+
+  backend:
+    image: ${REGISTRY:-}${APP_NAME:-myapp}-backend:${TAG:-latest}
+    environment:
+      PORT: "8080"
+      RUST_LOG: ${RUST_LOG:-info}
+      MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      MONGODB_DB: ${MONGODB_DB:-myapp}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      LINE_SHOP_ID: ${LINE_SHOP_ID:?set LINE_SHOP_ID in .env}
+      LINE_CHANNEL_ID: ${LINE_CHANNEL_ID:?set LINE_CHANNEL_ID in .env}
+      LINE_DESTINATION_ID: ${LINE_DESTINATION_ID:?set LINE_DESTINATION_ID in .env}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:?set LINE_CHANNEL_SECRET in .env}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?set LINE_CHANNEL_ACCESS_TOKEN in .env}
+      INQUIRY_ADMIN_TOKEN: ${INQUIRY_ADMIN_TOKEN:?set INQUIRY_ADMIN_TOKEN in .env}
+      LINE_BURST_WINDOW_MS: ${LINE_BURST_WINDOW_MS:-3000}
+      LINE_MEDIA_MAX_BYTES: ${LINE_MEDIA_MAX_BYTES:-20971520}
+      LINE_MEDIA_RETENTION_DAYS: ${LINE_MEDIA_RETENTION_DAYS:-30}
+    networks:
+      - app_net
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  frontend:
+    image: ${REGISTRY:-}${APP_NAME:-myapp}-frontend:${TAG:-latest}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"   # put a reverse proxy (nginx / traefik / caddy) in front for TLS
+    networks:
+      - app_net
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+networks:
+  app_net:
+    driver: overlay
+
+volumes:
+  mongo_data:

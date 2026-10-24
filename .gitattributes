@@ -1,0 +1,9 @@
+# Normalize line endings. Windows scripts need CRLF, Linux scripts MUST be LF (CRLF breaks them on Ubuntu).
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf

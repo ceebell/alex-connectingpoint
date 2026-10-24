@@ -1,0 +1,32 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Rust
+backend/target/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# Build output from build.bat
+dist/
+
+# Local MongoDB data (runall.bat)
+data/
+
+# Legacy reference application has its own repository and local configuration.
+billing_wth_text/
+
+# Logs / OS / editors
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
