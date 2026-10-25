@@ -27,3 +27,8 @@ docker-stack.yml
 !dist/frontend-linux/**
 dist/frontend-linux/**/.env
 dist/frontend-linux/**/.env.*
+
+!dist/oa-connector-linux/
+!dist/oa-connector-linux/**
+dist/oa-connector-linux/**/.env
+dist/oa-connector-linux/**/.env.*

@@ -28,6 +28,12 @@ dist/frontend-linux/**/.env
 dist/frontend-linux/**/.env.*
 dist/frontend-linux/**/.git/
 
+!dist/oa-connector-linux/
+!dist/oa-connector-linux/**
+dist/oa-connector-linux/**/.env
+dist/oa-connector-linux/**/.env.*
+connectors/line-oa/build/
+
 # Local MongoDB data (runall.bat)
 data/
 

@@ -19,6 +19,10 @@ pub enum AppError {
     MethodNotAllowed,
     #[error("Inquiry selection required")]
     Conflict,
+    #[error("OA messages cannot be linked to one verified inquiry")]
+    OaUnlinked,
+    #[error("OA message ID has conflicting content")]
+    OaMessageConflict,
     #[error("Database unavailable")]
     Database(#[from] mongodb::error::Error),
     #[error("Media download failed")]
@@ -57,6 +61,8 @@ impl AppError {
             Self::NotFound => "NOT_FOUND",
             Self::MethodNotAllowed => "METHOD_NOT_ALLOWED",
             Self::Conflict => "INQUIRY_SELECTION_REQUIRED",
+            Self::OaUnlinked => "OA_UNLINKED",
+            Self::OaMessageConflict => "OA_MESSAGE_CONFLICT",
             Self::Validation(_) => "VALIDATION_ERROR",
             Self::DraftConflict => "DRAFT_CONFLICT",
             Self::AdminUnavailable => "ADMIN_NOT_CONFIGURED",
@@ -81,6 +87,7 @@ impl IntoResponse for AppError {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict => StatusCode::CONFLICT,
+            Self::OaUnlinked | Self::OaMessageConflict => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,

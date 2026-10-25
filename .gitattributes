@@ -14,3 +14,4 @@ dist/line-linux/backend.sha256 text eol=lf
 dist/line-linux/release.tag text eol=lf
 dist/line-linux/release.json text eol=lf
 dist/frontend-linux/** -text
+dist/oa-connector-linux/** -text

@@ -1,5 +1,6 @@
 mod admin;
 mod drafts;
+mod oa_sync;
 mod session;
 mod users;
 pub(crate) mod webhook;
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/line/events/{id}/assign", post(admin::assign))
         .route("/api/line/events/{id}/retry", post(admin::retry))
         .route("/api/line/status", get(admin::status))
+        .route("/api/line/oa-sync/status", get(oa_sync::status))
         .route("/api/media/{id}", get(admin::media))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -44,6 +46,8 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             get(|| async { Json(serde_json::json!({"status":"ok"})) }),
         )
         .route("/api/line/webhook", post(webhook::receive))
+        .route("/api/connectors/line-oa/messages", post(oa_sync::ingest))
+        .route("/api/connectors/line-oa/status", post(oa_sync::heartbeat))
         .merge(admin)
         .fallback(|| async { AppError::NotFound })
         .method_not_allowed_fallback(|| async { AppError::MethodNotAllowed })

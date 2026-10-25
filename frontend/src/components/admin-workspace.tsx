@@ -1,16 +1,21 @@
 "use client";
-/* eslint-disable @next/next/no-img-element -- Protected media uses same-origin session cookies. */
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent } from "@/lib/api";
 import DraftEditor from "./draft-editor";
+import ChatMessage from "./chat-message";
 
 type Session = { username: string; hermes_configured: boolean };
+type OaStatus = { state: string; synced?: number; pending?: number };
+const oaStates: Record<string, string> = { NOT_CONFIGURED: "รอเปิดตัวเชื่อม OA บน Ubuntu", NEEDS_LOGIN: "ตัวเชื่อมรอล็อกอิน LINE กรุณาติดต่อผู้ดูแลระบบ", READY: "อ่าน OA ได้ ยังไม่มีข้อความแอดมินใหม่ที่จับคู่ได้", SYNCING: "กำลังรับข้อความแอดมินจาก OA อัตโนมัติ", UNLINKED: "มีข้อความ OA รอจับคู่กับบทสนทนาลูกค้า", UNSUPPORTED_SCHEMA: "รูปแบบข้อมูล OA ยังไม่รองรับ กรุณาติดต่อผู้พัฒนา", OFFLINE: "ตัวเชื่อม OA ขาดการติดต่อ", LINE_UNAVAILABLE: "ตัวเชื่อมติดต่อ LINE ไม่สำเร็จ", BACKEND_UNAVAILABLE: "backend ของตัวเชื่อมยังไม่พร้อม", BACKEND_UPDATE_REQUIRED: "ต้องอัปเดต backend เพื่อเปิดตัวเชื่อม OA", STOPPED: "ตัวเชื่อม OA หยุดทำงาน" };
+function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
+  return [...new Map([...previous, ...incoming].map(message => [message._id, message])).values()].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime() || (a.event_id ?? a._id).localeCompare(b.event_id ?? b._id));
+}
 const time = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 const statusLabels: Record<string, string> = { RECEIVED: "รับเรื่องแล้ว", READY_FOR_REVIEW: "รอตรวจร่าง", NEEDS_INFORMATION: "รอข้อมูลเพิ่ม", NEEDS_REVIEW: "มีข้อมูลขัดกัน", CLOSED: "ปิดเรื่อง", PENDING: "รอประมวลผล", PROCESSING: "AI กำลังเตรียมร่าง", DONE: "เสร็จแล้ว", STALE: "บริบทเปลี่ยนแล้ว", FAILED: "เตรียมร่างไม่สำเร็จ" };
 
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
-  return <details className="evidence"><summary>ดูหลักฐานอ้างอิง ({evidence.length})</summary>{evidence.map((item, i) => <div className="evidence-item" key={i}><strong>{fieldLabel(item.field)}</strong><span className="muted small">{({ admin_summary: "สรุปแอดมิน", line_event: "ข้อความหรือรูปจาก LINE", previous_draft: "ร่างก่อนหน้า", admin_edit: "แอดมินแก้ไข" })[item.source_type] ?? item.source_type}</span><p>{item.quote}</p><code>{item.source_ref}</code></div>)}</details>;
+  return <details className="evidence"><summary>ดูหลักฐานอ้างอิง ({evidence.length})</summary>{evidence.map((item, i) => <div className="evidence-item" key={i}><strong>{fieldLabel(item.field)}</strong><span className="muted small">{({ admin_summary: "สรุปแอดมิน", oa_message: "ข้อความแอดมินจากตัวเชื่อม OA", line_event: "ข้อความหรือรูปจาก LINE", previous_draft: "ร่างก่อนหน้า", admin_edit: "แอดมินแก้ไข" })[item.source_type] ?? item.source_type}</span><p>{item.quote}</p><code>{item.source_ref}</code></div>)}</details>;
 }
 
 function DraftReadOnly({ draft }: { draft: Draft }) {
@@ -34,6 +39,8 @@ export default function AdminWorkspace() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [messages, setMessages] = useState<LineEvent[]>([]);
+  const messagesRef = useRef<LineEvent[]>([]);
+  const [oaStatus, setOaStatus] = useState<OaStatus>({ state: "NOT_CONFIGURED" });
   const [nextMessage, setNextMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [version, setVersion] = useState(0);
@@ -49,6 +56,7 @@ export default function AdminWorkspace() {
   const latest = drafts[0];
   const working = busy || job?.status === "PENDING" || job?.status === "PROCESSING";
   const current = inquiries.find(inquiry => inquiry._id === selected);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => { let cancelled = false; api<Session>("/api/admin/session").then(value => { if (!cancelled) setSession(value); }).catch(() => {}).finally(() => { if (!cancelled) setChecking(false); }); return () => { cancelled = true; }; }, []);
 
@@ -91,6 +99,42 @@ export default function AdminWorkspace() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [job?.id, job?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    let polling = false;
+    async function poll() {
+      if (polling) return;
+      polling = true;
+      try {
+        const status = await api<OaStatus>("/api/line/oa-sync/status");
+        if (cancelled) return;
+        setOaStatus(status);
+        if (selected) {
+          let cursor: string | null = null;
+          const records: LineEvent[] = [];
+          const pageCount = Math.max(1, Math.ceil(messagesRef.current.length / 200));
+          for (let n = 0; n < pageCount; n++) {
+            const result: { batches: LineEvent[][]; next: string | null } = await api(`/api/inquiries/${selected}/context${cursor ? `?after=${cursor}` : ""}`);
+            if (cancelled) return;
+            records.push(...result.batches.flat()); cursor = result.next;
+            if (!cursor) break;
+          }
+          setMessages(records); setNextMessage(cursor);
+          const result = await api<DraftList>(`/api/inquiries/${selected}/drafts`);
+          if (!cancelled) { setDrafts(result.drafts); setVersion(result.version); setContextHash(result.context_hash); }
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          if (cause instanceof ApiError && cause.status === 401) setSession(null);
+          else setOaStatus({ state: cause instanceof ApiError && cause.status === 404 ? "BACKEND_UPDATE_REQUIRED" : "BACKEND_UNAVAILABLE" });
+        }
+      } finally { polling = false; }
+    }
+    const timer = setInterval(poll, 10000); void poll();
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [selected, session]);
+
   async function login(event: FormEvent) {
     event.preventDefault(); setLoginBusy(true); setLoginError("");
     try {
@@ -117,7 +161,7 @@ export default function AdminWorkspace() {
     setBusy(true);
     try {
       const result = await api<{ batches: LineEvent[][]; next: string | null }>(`/api/inquiries/${selected}/context?after=${nextMessage}`);
-      setMessages(previous => [...previous, ...result.batches.flat()]); setNextMessage(result.next);
+      setMessages(previous => mergeMessages(previous, result.batches.flat())); setNextMessage(result.next);
     } catch (cause) { setError(errorText(cause)); } finally { setBusy(false); }
   }
 
@@ -146,9 +190,9 @@ export default function AdminWorkspace() {
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
-      <section className="chat-panel"><div className="panel-heading"><div><h2>{current ? `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2><span className="small muted">{current ? "ข้อความจากลูกค้า · เวลาไทย" : "เลือก inquiry เพื่ออ่านรายละเอียด"}</span></div>{current && <span className="line-badge">LINE OA</span>}</div>
+      <section className="chat-panel"><div className="panel-heading"><div><h2>{current ? `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2><span className="small muted">{current ? "ลูกค้าและแอดมิน · เวลาไทย" : "เลือก inquiry เพื่ออ่านรายละเอียด"}</span></div>{current && <span className="line-badge">LINE OA</span>}</div>
         <div className="chat-stream" aria-busy={loading}>
-          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <><div className="chat-notice">แสดงข้อความขาเข้าที่ระบบได้รับจาก LINE<br /><span>คำตอบที่พิมพ์ใน OA Manager ไม่ได้รวมในประวัตินี้</span></div>{messages.map(message => <article className="message" key={message._id}><div className="avatar line-avatar" aria-hidden="true">L</div><div className="message-body"><div className="message-bubble">{message.withdrawn ? <p className="muted">ข้อความถูกยกเลิกแล้ว</p> : message.payload?.message?.type === "image" ? message.media_id ? <><a href={`/api/media/${message.media_id}`} target="_blank" rel="noreferrer"><img src={`/api/media/${message.media_id}`} alt="รูปที่ลูกค้าส่งใน LINE" loading="lazy" /></a><label className="checkbox-row small"><input type="checkbox" checked={images.includes(message._id)} disabled={working || (!images.includes(message._id) && images.length >= 4)} onChange={e => setImages(previous => e.target.checked ? [...previous, message._id] : previous.filter(id => id !== message._id))} />แนบรูปนี้ให้ AI</label></> : <p className="muted">รูปยังไม่พร้อมหรือหมดอายุ</p> : <p>{message.payload?.message?.text ?? message.payload?.postback?.data ?? `ข้อความประเภท ${message.payload?.message?.type ?? message.payload?.type ?? "อื่น ๆ"}`}</p>}</div><div className="message-meta"><time>{time(message.event_at)}</time><span>{message._id.slice(-6)}</span></div></div></article>)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
+          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <><div className="chat-notice">ลูกค้าอยู่ด้านซ้าย · แอดมินอยู่ด้านขวา<br /><span>{oaStates[oaStatus.state] ?? "กำลังตรวจตัวเชื่อม OA"}</span></div>{messages.map(message => <ChatMessage key={message._id} message={message} selectedImages={images} disabled={working} onToggleImage={(id, checked) => setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id))} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div><div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
       <section className="draft-panel"><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>

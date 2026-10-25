@@ -42,9 +42,12 @@
 | งาน | คำสั่ง | ที่รัน |
 |---|---|---|
 | รัน dev ทั้งหมด (Mongo + backend + frontend) | `runall.bat` | Windows |
+| รัน frontend เชื่อม backend บน Ubuntu ผ่าน SSH | `run-frontend.bat` หรือ `runall.bat -RemoteBackend` | Windows |
 | Build เฉพาะ binary → `dist/` | `build.bat` | Windows |
 | Compile Rust Linux release สำหรับ Ubuntu | `build-backend.bat` (`build-line.bat` เดิม) | Windows + local Docker Desktop |
 | Build frontend Linux standalone | `build-frontend.bat` | Windows + local Docker Desktop |
+| Build OA browser connector Linux release | `build-oa-connector.bat` | Windows + local Docker Desktop |
+| เปิดหน้าล็อกอิน OA browser บน Ubuntu ผ่าน SSH | `login-oa.bat` | Windows |
 | Commit + push | `rungit.bat "ข้อความ commit"` | Windows |
 | Pull โค้ดลง server | `./loadgit.sh [branch]` | Ubuntu |
 | Build Docker image | `./docker-build.sh` | Ubuntu |
@@ -118,6 +121,7 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 - Image tag backend ใช้ `dist/line-linux/release.tag`; frontend ใช้ `dist/frontend-linux/frontend.tag` จาก local เพื่ออัปเดตแยกกัน — **ห้ามใช้แค่ `latest`** เพราะ Swarm จะไม่ rolling update ถ้า tag เดิม
 - `.env` จริงอยู่บน server เท่านั้น ไม่เข้า git และไม่ถูก copy เข้า image
 - `build.bat` สร้าง **Windows** (`.exe`) ส่วน `build-line.bat` compile **Linux** บนเครื่อง local; Dockerfile ที่ deploy บน Ubuntu ต้องไม่มี compiler หรือคำสั่ง build โปรแกรม
+- OA browser connector เป็น companion container บน Swarm host เพื่อ bind หน้าควบคุมเฉพาะ 127.0.0.1; `deploy-oa-connector.sh` ใช้ compiled release จาก `dist/oa-connector-linux/` เท่านั้น ไม่แก้ stack/Mongo volume เดิม และไม่เปิด Caddy เพิ่ม ดู `docs/line-oa-auto-sync.md`
 
 ## 9. กฎการทำงานของ agent
 

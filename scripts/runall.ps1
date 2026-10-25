@@ -1,4 +1,4 @@
-param([switch]$Check)
+param([switch]$Check, [switch]$RemoteBackend, [switch]$LocalBackend)
 
 $ErrorActionPreference = 'Stop'
 $repoPath = Split-Path -Parent $PSScriptRoot
@@ -41,6 +41,16 @@ function Start-DevProcess([string]$Name, [string]$File, [string[]]$Arguments, [s
 }
 
 try {
+    if (Test-Path -LiteralPath $envPath) { $envLines = Get-Content -LiteralPath $envPath -Encoding UTF8 }
+    if ($RemoteBackend -and $LocalBackend) { throw 'Choose either -RemoteBackend or -LocalBackend.' }
+    $backendMode = Get-DevSetting 'DEV_BACKEND_MODE' 'local'
+    if ($RemoteBackend) { $backendMode = 'remote' }
+    if ($LocalBackend) { $backendMode = 'local' }
+    if ($backendMode -notin @('local', 'remote')) { throw 'DEV_BACKEND_MODE must be local or remote.' }
+    if ($backendMode -eq 'remote') {
+        & (Join-Path $PSScriptRoot 'run-frontend.ps1') -Check:$Check
+        exit $LASTEXITCODE
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $backendPath 'Cargo.toml'))) {
         throw 'backend\Cargo.toml was not found.'
     }
@@ -50,7 +60,6 @@ try {
         $null = Get-DevCommand 'node.exe'
         $npmPath = Get-DevCommand 'npm.cmd'
     }
-    if (Test-Path -LiteralPath $envPath) { $envLines = Get-Content -LiteralPath $envPath -Encoding UTF8 }
     $required = @('LINE_SHOP_ID', 'LINE_CHANNEL_ID', 'LINE_DESTINATION_ID',
         'LINE_CHANNEL_SECRET', 'LINE_CHANNEL_ACCESS_TOKEN', 'INQUIRY_ADMIN_TOKEN')
     $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace((Get-DevSetting $_)) })

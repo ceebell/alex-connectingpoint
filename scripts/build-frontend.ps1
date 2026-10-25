@@ -76,7 +76,7 @@ try {
     $tag = 'front-' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss') + '-' + $contentHash.Substring(0, 12)
     $utf8 = New-Object Text.UTF8Encoding($false)
     $manifest = @{ tag = $tag; platform = 'linux/amd64'; built_at = [DateTime]::UtcNow.ToString('o'); build_location = 'local'; backend_url = $BackendUrl; content_sha256 = $contentHash } | ConvertTo-Json
-    [IO.File]::WriteAllText((Join-Path $compiledDir 'frontend-release.json'), $manifest + "`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $compiledDir 'frontend-release.json'), $manifest.Replace("`r`n", "`n") + "`n", $utf8)
     [IO.File]::WriteAllText((Join-Path $compiledDir 'frontend.platform'), "linux/amd64`n", [Text.Encoding]::ASCII)
     [IO.File]::WriteAllText((Join-Path $compiledDir 'frontend.tag'), $tag + "`n", [Text.Encoding]::ASCII)
     $checksums = @(Get-ChildItem -LiteralPath $compiledDir -Recurse -Force -File | Sort-Object FullName | ForEach-Object {

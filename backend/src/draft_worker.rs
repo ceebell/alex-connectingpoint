@@ -86,7 +86,10 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
                         .and_then(|p| p.get_str("data").ok())
                 })
                 .unwrap_or("");
-            sources.insert(format!("line_event:{id}"), text.into());
+            sources.insert(
+                format!("{}:{id}", crate::db::oa_sync::source_type(event)),
+                text.into(),
+            );
         }
     }
     if let Some(previous) = &previous {

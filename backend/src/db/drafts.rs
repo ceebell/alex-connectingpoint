@@ -61,6 +61,19 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
         .await?
         .try_collect()
         .await?;
+    let mut oa_filter = state.scope();
+    oa_filter.insert("inquiry_id", id);
+    records.extend(
+        state
+            .collection("oa_messages")
+            .find(oa_filter)
+            .sort(doc! {"event_at":1,"event_id":1})
+            .limit(501)
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?,
+    );
+    crate::db::oa_sync::sort_messages(&mut records);
     if records.len() > 500 {
         return Err(AppError::Validation(
             "Inquiry exceeds the 500-event preparation limit",
@@ -79,6 +92,8 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
         content.push(json!({
             "event_ref":record.get_object_id("_id").map_err(|_| AppError::Data)?.to_hex(),
             "event_at":record.get_datetime("event_at").map_err(|_| AppError::Data)?.timestamp_millis(),
+            "sender_role":record.get_str("sender_role").unwrap_or("customer"),
+            "source_type":crate::db::oa_sync::source_type(record),
             "status":status, "withdrawn":record.get_bool("withdrawn").unwrap_or(false),
             "payload":record.get_document("payload").ok(),
             "media_ref":record.get_object_id("media_id").ok().map(|id| id.to_hex()),

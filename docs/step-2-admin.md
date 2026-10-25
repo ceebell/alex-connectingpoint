@@ -2,6 +2,8 @@
 
 ทำแล้วทั้ง Next.js frontend และ Rust backend: แอดมินเข้าสู่ระบบ → เลือก inquiry → อ่านแชท/รูป → ใส่สรุป → กด **เตรียมออเดอร์ด้วย AI** → ตรวจ/แก้ร่าง → บันทึกเป็นเวอร์ชันใหม่ ไม่มีการส่งข้อความถึงลูกค้า เช็คคิว หรือสร้างออเดอร์ในขั้นนี้
 
+เพิ่มตัวเชื่อม OA Manager บน Ubuntu แล้ว ไม่มีช่องคัดลอกข้อความมาบันทึกเอง ต้อง deploy ตัวเชื่อม ล็อกอิน LINE ครั้งแรก และทดสอบ schema ของ OA จริงก่อนถือว่าเปิดซิงก์สำเร็จ ดูคำสั่งและหน้าที่แต่ละฝ่ายที่ [รับข้อความแอดมินอัตโนมัติ](line-oa-auto-sync.md)
+
 ## ใครต้องทำอะไร
 
 | ผู้รับผิดชอบ | ต้องลงมือทำ |
@@ -27,6 +29,36 @@ HERMES_TIMEOUT_SECONDS=120
 รัน `runall.bat` แล้วเปิด `http://localhost:3000` ใช้ ADMIN_USERNAME/ADMIN_PASSWORD ล็อกอิน หากเพิ่งเปลี่ยน config ให้หยุดและเริ่ม backend ใหม่ สคริปต์จะใช้ backend ที่ health ผ่านอยู่แล้ว จึงต้อง restart process เดิมเพื่อโหลดค่าที่แก้
 
 หากยังไม่ตั้ง Hermes ปุ่ม AI จะปิด แต่ยังอ่านแชทและกรอกร่างด้วยมือได้ บัญชีแอดมินต้องมี password อย่างน้อย 16 ตัวอักษร ไม่ใช้ INQUIRY_ADMIN_TOKEN เป็นรหัสล็อกอิน
+
+## Frontend บน Windows เชื่อม backend บน Ubuntu
+
+ใช้ `run-frontend.bat` หรือกำหนด `DEV_BACKEND_MODE=remote` ใน root `.env` แล้วรัน `runall.bat` โหมดนี้เปิดเฉพาะ Next.js และ SSH tunnel ไม่เริ่ม MongoDB หรือ Rust backend ในเครื่อง ข้อมูลและการบันทึกทั้งหมดเป็นข้อมูลจริงบน Ubuntu
+
+```dotenv
+DEV_BACKEND_MODE=remote
+DEV_SSH_HOST=Hermes
+DEV_TUNNEL_PORT=28080
+DEV_REMOTE_PORT=18080
+DEV_FRONTEND_PORT=3000
+```
+
+เครื่อง Windows ต้องใช้ `ssh Hermes` เข้า server ได้ด้วย key ก่อน โดย alias อยู่ใน `%USERPROFILE%\.ssh\config` ตัว launcher ส่ง `/api/...` จาก Next.js ไป `127.0.0.1:28080` แล้วลอด SSH ไป `127.0.0.1:18080` บน Ubuntu จึงไม่ต้องเปิดพอร์ต backend เพิ่มหรือเปลี่ยน Caddy/LINE webhook
+
+```bat
+run-frontend.bat -Check
+run-frontend.bat -ProbeOnly
+run-frontend.bat
+```
+
+`-Check` ตรวจโปรแกรม/config โดยไม่เปิดบริการ; `-ProbeOnly` ตรวจ health/admin API โดยใช้ tunnel เดิมที่ปลายทางตรงกัน หรือเปิดชั่วคราวแล้วปิดเฉพาะตัวที่สร้างเอง; คำสั่งปกติเปิด `http://localhost:3000` ใช้บัญชีแอดมินจาก `.env` บน Ubuntu
+
+รัน `runall.bat` ซ้ำได้ หาก frontend เป็นของโปรเจกต์นี้และชี้ไป backend ที่ตั้งไว้ สคริปต์จะใช้ตัวเดิม หาก SSH tunnel หลุดจะเปิดกลับมา ให้คงหน้าต่างที่แจ้ง `SSH connection restored` ไว้แล้วรีเฟรช browser เมื่อทั้ง frontend และ tunnel ทำงานอยู่แล้ว คำสั่งจะตรวจการเชื่อมต่อและจบโดยไม่เปิดซ้ำ หากพอร์ตเป็นของโปรแกรมอื่นหรือ frontend ชี้ไป backend คนละตัว จะบอกให้ปิดหน้าต่างต้นทางหรือเปลี่ยนพอร์ต โดยไม่ปิด process ให้อัตโนมัติ กด Ctrl+C ในหน้าต่างที่เปิดบริการเพื่อหยุดเฉพาะบริการที่หน้าต่างนั้นสร้าง
+
+Backend บน Ubuntu ต้องเป็นรุ่น Step 2 ที่มี `/api/admin/session` แล้ว หากได้ 404 ให้ pull Git แล้วรัน `sudo bash ./docker-build.sh` และ `sudo bash ./docker-deploy.sh` บน Ubuntu โดยใช้ compiled release ที่ build ไว้บน local ไม่ต้อง deploy frontend ขึ้น server สำหรับโหมดนี้
+
+Frontend ยังเรียก API แบบ relative และไม่มี token/password ของ server ใน browser bundle; เก็บ `ADMIN_COOKIE_SECURE=true` บน Ubuntu และเปิดผ่านชื่อ `localhost` ตาม launcher สำหรับทดสอบ cookie ใน Chrome หากรัน `npm run dev` เอง ให้ตั้ง `BACKEND_URL=http://127.0.0.1:28080` ใน `frontend/.env.development.local` และเปิด SSH tunnel ค้างไว้ด้วย
+
+กลับมาทดสอบทุกส่วนในเครื่องได้ด้วย `runall.bat -LocalBackend` หรือเปลี่ยน `DEV_BACKEND_MODE=local` การเปลี่ยนปลายทางต้องหยุด frontend แล้วเริ่มใหม่ และล็อกอินใหม่
 
 ## ผู้ดูแลระบบ: ตั้ง Hermes สำหรับสกัดร่าง
 

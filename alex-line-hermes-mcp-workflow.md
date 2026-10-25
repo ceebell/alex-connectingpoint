@@ -184,6 +184,8 @@ Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime i
 
 ## 5. Step 2 — รวมสรุปแอดมินและสกัดร่างออเดอร์
 
+เพิ่มตัวเชื่อมข้อความแอดมินจาก OA Manager บน Ubuntu แล้ว: ผู้พัฒนา build บน local และส่ง release เข้า Git; ผู้ดูแล pull/package/deploy backend และ `deploy-oa-connector.sh`; ผู้ดูแลบัญชีรัน `login-oa.bat` เพื่อล็อกอิน LINE ให้ browser บน Ubuntu ครั้งแรก ดู [ขั้นตอนและ config OA auto-sync](docs/line-oa-auto-sync.md) ต้องทดสอบบัญชีจริงก่อนยืนยันว่า sync สำเร็จ ไม่มีช่องคัดลอกข้อความเอง
+
 **สถานะโค้ด:** มี frontend หลังบ้านและ backend สำหรับ Step 2 แล้ว แอดมินล็อกอิน เลือก inquiry อ่านแชท/เลือกรูป ใส่สรุป และกดเตรียมออเดอร์ด้วย AI ได้เมื่อผู้ดูแลตั้ง Hermes API เรียบร้อย ผลผ่าน validator แล้วเก็บเป็นร่างเวอร์ชันใหม่ พร้อมหลักฐาน ข้อมูลที่ขาดและขัดกัน แก้ร่างด้วยมือและดูประวัติได้ ยังไม่เช็คคิวหรือ submit order
 
 | ผู้รับผิดชอบ | ต้องลงมือทำก่อนใช้งาน |

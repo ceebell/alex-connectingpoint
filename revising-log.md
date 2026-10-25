@@ -4,6 +4,80 @@
 
 <!-- entries -->
 
+## 2026-10-25 20:32 — ให้ runall ใช้ frontend เดิมและเปิด SSH tunnel กลับมาได้
+- **คำอธิบาย:** พบ Next.js ของโปรเจกต์ยังทำงานที่พอร์ต 3000 แต่ SSH tunnel 28080 หลุด ทำให้ API ตอบ 500 และ launcher เดิมปฏิเสธการรันซ้ำ จึงเพิ่มการตรวจและใช้บริการเดิม พร้อมเปิด tunnel ใหม่เมื่อขาดการเชื่อมต่อ
+- **โฟลเดอร์ `scripts/`**
+  - `run-frontend.ps1` — แก้: ตรวจเจ้าของพอร์ตจาก process และ API rewrite ใน dev manifest ก่อนใช้ frontend เดิม ตรวจ SSH executable/forward/host ให้ตรง config ก่อนใช้ tunnel เดิม ตรวจ health ผ่าน frontend จริง และคงหน้าต่างไว้เมื่อสร้าง tunnel ให้ frontend ที่เปิดอยู่ ไม่ปิด process อื่นหรือเปิด backend/MongoDB ในเครื่อง
+- **โฟลเดอร์ `docs/`**
+  - `step-2-admin.md` — แก้: อธิบายการรันซ้ำ การเปิด tunnel ที่หลุดกลับมา การใช้ ProbeOnly กับ tunnel เดิม และหน้าต่างที่ต้องเปิดค้างไว้
+- **ผลตรวจสอบ:** PowerShell parser และ runall -Check ผ่าน; ทดสอบ runall ซ้ำและ ProbeOnly ใช้ frontend/SSH เดิมผ่าน; ปฏิเสธ frontend ที่ชี้ backend คนละตัว, SSH host/remote port คนละค่า และพอร์ตของโปรแกรมอื่นโดย listener เดิมยังทำงาน; frontend localhost:3000 และ tunnel 28080 ตอบ /api/health เป็น ok หน้าเว็บ HTTP 200; BAT ASCII/CRLF และ git diff --check ผ่าน
+- **สถานะทดสอบจริง:** คง frontend PID 58692 ไว้และเปิด SSH tunnel ใหม่ให้เชื่อม backend Ubuntu ได้แล้ว ไม่แก้บริการหรือ build โปรแกรมบน Ubuntu และยังไม่ commit/push
+
+## 2026-10-25 15:40 — เพิ่มตัวเชื่อม OA Manager บน Ubuntu พร้อม release สำหรับทดสอบบัญชีจริง
+- **คำอธิบาย:** ผู้ใช้ขอให้ทำตัวเชื่อมอัตโนมัติต่อ จึงเพิ่ม browser companion บน Ubuntu และหน้าล็อกอินผ่าน SSH ให้ใช้ OA Manager ตามเดิมโดยไม่คัดลอกข้อความ ไม่ส่งข้อความลูกค้าซ้ำ ไม่แก้ LINE webhook/Caddy/DNS และไม่ให้เครื่องแอดมินต้องเปิด browser ค้างเมื่อ server เชื่อมแล้ว
+- **โฟลเดอร์ `connectors/line-oa/`**
+  - `package.json`, `package-lock.json`, `build.mjs` — เพิ่ม: npm package ที่ pin Playwright 1.64.1 และ esbuild 0.28.2; bundle โปรแกรมบน local แล้วส่งเฉพาะ compiled JavaScript และ production dependencies ไป server
+  - `src/index.mjs`, `src/adapter.mjs` — เพิ่ม: persistent Chromium profile, read-only OA API requests, CSRF token ในหน่วยความจำ, poll ค่าเริ่มต้น 30 วินาที, ตรวจ bot ID/บทบาทผู้ส่ง/เวลา/ID/pagination, หยุดเมื่อ schema ไม่รองรับ, จับคู่ข้อความแอดมินกับ incoming message ID ที่ได้รับจาก webhook และ heartbeat ไม่มี log เนื้อหาแชท/cookie/password
+  - `src/control.mjs`, `src/control.html` — เพิ่ม: หน้าควบคุมล็อกอิน LINE ใน browser บน Ubuntu ผ่าน SSH; Basic auth ใช้บัญชีหลังบ้านเดิม, ตรวจ custom header/origin สำหรับคำสั่ง, screenshot ในหน่วยความจำ, รองรับ popup login; เปิดเผย diagnostics เฉพาะชื่อฟิลด์/ชนิดข้อมูล
+  - `test/adapter.test.mjs`, `test/control.test.mjs` — เพิ่ม: ตรวจ explicit roles/anchors, timestamp/ID/pagination ที่ไม่แน่ใจ, diagnostics ไม่มีค่าลูกค้า และ auth/CSRF/ห้าม arbitrary navigation
+- **โฟลเดอร์ `backend/src/`**
+  - `models/oa_sync.rs`, `db/oa_sync.rs`, `routes/oa_sync.rs` — เพิ่ม: connector ingestion ที่รับเฉพาะ Bearer token, ตรวจ destination และ anchors ในร้าน/แชนแนล/บทสนทนาเดียวกัน, แยก collection oa_messages, dedup และปฏิเสธ ID เดิมแต่ข้อมูลขัดกัน, heartbeat/stale status และ merge ข้อความแอดมินกับลูกค้าพร้อม pagination
+  - `routes/admin.rs`, `routes/mod.rs`, `db/indexes.rs`, `db/mod.rs`, `models/mod.rs`, `error.rs` — แก้: แยก token verifier ที่ใช้ร่วมกัน เพิ่ม routes/errors/indexes แบบ idempotent โดยคง session/CSRF ของ browser เดิม
+  - `db/drafts.rs`, `draft_worker.rs`, `order_draft_prompt.txt` — แก้: รวมแอดมินจากตัวเชื่อมใน snapshot/hash/evidence เป็น oa_message แยกจาก signed customer webhook และไม่ถือเป็นการยืนยันลูกค้า ข้อความใหม่ทำให้ร่างเก่าถูกตรวจว่าบริบทเปลี่ยน
+  - `tests_oa_sync.rs`, `tests.rs` — เพิ่ม/แก้: auth/DTO ก่อน DB, isolation, anchors, dedup/conflict, context hash, mixed-source pagination และ status
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx`, `components/chat-message.tsx` — แก้: แอดมินขวาพื้นฟ้าอ่อนพร้อมป้ายจาก OA Manager, แสดงสถานะตัวเชื่อม, poll บริบทที่โหลดอยู่ทุก 10 วินาทีโดยไม่ล้างสรุปที่พิมพ์ค้างไว้ ไม่มีช่องบันทึกข้อความเอง
+- **โฟลเดอร์ `./`, `scripts/`, `docker/`**
+  - `build-oa-connector.bat`, `scripts/build-oa-connector.ps1`, `docker/oa-connector.build.Dockerfile` — เพิ่ม: ตรวจ local named-pipe Docker Desktop/builder, build/test Linux release บน local, checksum/tag และเก็บใน dist/oa-connector-linux
+  - `docker/oa-connector.Dockerfile`, `deploy-oa-connector.sh` — เพิ่ม: runtime packaging จาก compiled objects, Playwright/browser รุ่นตรงกัน, profile volume แยก, non-root process, private bind 127.0.0.1:18082, restart unless-stopped, ตรวจ manifest/tag/config ก่อนแก้ container ไม่ย้าย stack หรือ Mongo volume เดิม
+  - `login-oa.bat`, `scripts/login-oa.ps1` — เพิ่ม: เปิดหน้าควบคุมล็อกอินผ่าน SSH alias Hermes และปิดเฉพาะ tunnel ที่สร้างเอง ไม่ปิด browser service บน Ubuntu
+  - `scripts/build-frontend.ps1` — แก้: บันทึก frontend-release.json เป็น LF เพื่อคง byte ของ Linux artifact และผ่าน diff/checksum checks
+  - `.env.example`, `.gitignore`, `.dockerignore`, `.gitattributes`, `AGENTS.md` — แก้: config ตัวอย่าง, รวม compiled connector/runtime dependencies ใน Git/Docker context แบบไม่แปลง bytes, คง profile/data/env/secrets ไว้นอก Git และเพิ่มคำสั่ง/ข้อกำหนด deployment
+- **โฟลเดอร์ `docs/` และ guideline**
+  - `line-oa-auto-sync.md`, `step-2-admin.md`, `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: ขั้นตอนแยกผู้พัฒนา/ผู้ดูแล/เจ้าของ OA, local build → Git → Ubuntu package/deploy → login-oa.bat, states/ข้อจำกัด/schema calibration; คง embedded images เดิมทั้ง 4 ภาพครบ
+- **โฟลเดอร์ `dist/` (build จริงบน local)**
+  - `line-linux/` — rel-20261025081859-c575b8b9f490
+  - `frontend-linux/` — front-20261025083658-8588f12fd6a4
+  - `oa-connector-linux/` — oa-20261025082952-9a6bfea570b9 พร้อม compiled connector, control UI, production dependencies และ manifest
+- **ผลตรวจสอบ:** cargo fmt/clippy ผ่าน, unit tests 8 ผ่าน และ MongoDB integration tests ทั้ง 4 ผ่าน; npm lint/build ผ่านทั้ง Windows และ Linux; connector tests ทั้ง 4 ผ่าน; runtime Docker images ของ connector/backend build ผ่าน; real runtime Chromium → backend → MongoDB → frontend ด้วย fixture ผ่านทั้งข้อความเข้าด้านขวา สีพื้นถูกต้อง auto-refresh ไม่ล้างสรุป dedup บล็อก LINE POST และ auth ของหน้าควบคุม; unknown schema/unlinked anchors ไม่เพิ่มข้อมูล; ทดสอบ browser runtime เปิดหน้า LINE Business ID จริงได้และแสดง NEEDS_LOGIN โดยยังไม่ล็อกอิน; deploy mock ตรวจ private bind/runtime-only/env-only secrets และ manifest/config guards ผ่าน; secret scan, Git inclusion, BAT ASCII/CRLF, Linux LF, frontend checksum, runall remote preflight และ git diff --check ผ่าน
+- **ขอบเขต:** ยังไม่ commit/push, deploy หรือเข้า LINE ด้วยบัญชีจริง ผู้ใช้เลือกเป็นผู้รัน sudo Docker เอง ต้องส่ง Git แล้ว deploy backend/connector และล็อกอิน LINE ผ่าน login-oa.bat ก่อน จากนั้นต้องยืนยัน schema ของ OA ปัจจุบัน รุ่นแรกเก็บข้อความตัวอักษรและแชท 1:1 ที่มี webhook anchor ไม่รับรองประวัติเก่าหรือ media ขาออกครบทั้งหมด; ตรวจ server แบบอ่านอย่างเดียวพบ x86_64, RAM available ประมาณ 1.8 GB และ disk ว่างประมาณ 65 GB
+- **ไฟล์ช่วยทดสอบ `data/` (ignored):** test-oa-runtime.py, oa-runtime-preload.mjs, test-oa-login.py, test-oa-deploy.sh และ screenshots ใช้ fixture หรือหน้า login สาธารณะที่ยังไม่เข้า account ไม่ใช้แชทจริง หยุด disposable MongoDB 27018 และ test containers/processes ที่สร้างเองแล้ว คง frontend 3000/SSH 28080 ของผู้ใช้ไว้
+
+## 2026-10-25 14:52 — ยกเลิกช่องบันทึกเองและตรวจแนวทางซิงก์แอดมินจาก OA อัตโนมัติ
+- **คำอธิบาย:** ผู้ใช้เปลี่ยนข้อกำหนดเป็นรับข้อความแอดมินจาก OA Manager อัตโนมัติ จึงเอาแบบฟอร์ม/API/manual-copy persistence ที่กำลังพัฒนาออกทั้งหมด โดยไม่สร้างข้อความจากภาพตัวอย่างหรือบันทึกข้อความใดลง production
+- **โฟลเดอร์ `frontend/`**
+  - `src/components/chat-message.tsx` — เพิ่ม: แยกลูกค้าด้านซ้าย/แอดมินด้านขวาจาก sender_role/direction, พื้นแอดมินสีฟ้าอ่อน, ป้ายผู้ส่งและเวลาส่ง, ยังใช้ authenticated media/withdrawn handling เดิม
+  - `src/components/admin-workspace.tsx`, `src/lib/api.ts`, `src/app/globals.css` — แก้: ใช้ component แชทสองฝั่ง เพิ่มชนิดบทบาท/ทิศทางข้อความและป้องกันข้อความซ้ำเมื่อโหลดต่อ ไม่มีช่องคัดลอก/บันทึกข้อความเอง ไม่มีการอ้างว่าข้อความแอดมินเข้าแล้ว
+  - `src/components/admin-message-import.tsx` — ลบ: ไฟล์ที่ agent เพิ่งสร้างในงานที่ยกเลิก ยังไม่เคย commit/deploy
+- **Backend:** เอาโค้ด manual-copy ที่ agent เพิ่งแก้/เพิ่มออกทั้งหมด ปัจจุบัน backend ไม่มี diff จาก HEAD ของผู้ใช้ ไม่เพิ่ม endpoint หรือ collection สำหรับกรอกข้อความเอง ไม่แก้ compiled release และไม่แก้ฐาน production
+- **โฟลเดอร์ `docs/`**
+  - `line-oa-auto-sync.md` — เพิ่ม: ผลตรวจเอกสาร LINE webhook/module และตัวอย่าง API ภายใน OA Manager, เปรียบเทียบตัวอ่านข้อมูลบนเครื่องแอดมินกับ browser service บน Ubuntu, เงื่อนไข session และข้อกำหนดทดสอบกับบัญชีจริงก่อนยืนยันว่า sync ได้
+  - `step-2-admin.md` — แก้: อ้างอิงแนวทาง auto-sync และระบุสถานะว่ายังไม่มีการซิงก์ข้อความแอดมินจาก OA Manager
+- **ผลค้นคว้า:** webhook ปกติในเอกสาร LINE รับ message จากผู้ใช้ ไม่มี event แอดมินขาออกที่ตรวจพบ; module ไม่ใช่หลักฐานว่ารับแอดมินได้; พบตัวอย่างเก่าของ GET chat.line.biz/api/v1/bots/{botId}/messages/{chatId} ซึ่งใช้ web session แต่ยังไม่ได้ทดสอบกับ OA ปัจจุบัน ไม่ถือเป็น public API ที่ LINE รับรอง
+- **ผลตรวจสอบ:** npm lint/build ผ่าน; cargo fmt --check, clippy -- -D warnings และ cargo test ผ่าน 7 tests (3 MongoDB integration tests ถูก ignore ตามเดิม); Chrome fixture ที่ใช้ ChatMessage จริงตรวจลูกค้าซ้าย/แอดมินขวา พื้นฟ้าอ่อน ข้อความ HTML ถูก escape และไม่ล้นที่ความกว้าง 390/800 ผ่าน; git diff --check ผ่าน
+- **ขอบเขต/งานที่ยังไม่เสร็จ:** ยังไม่ได้สร้าง ติดตั้ง หรือล็อกอินตัวเชื่อมอัตโนมัติจริง ไม่ยืนยันว่ารับข้อความ OA ได้ครบ ผู้ใช้ถามความต่างของ Chrome/Ubuntu และต้องตัดสินใจตำแหน่งที่รัน/ทดสอบ session ต่อ; หยุด disposable mongod 27018 ที่สร้างเองในงาน manual-copy ที่ยกเลิกแล้ว ไม่ปิด frontend/SSH ของงานเดิม ไม่มี commit/push หรือแก้ Caddy/LINE webhook
+
+## 2026-10-25 14:18 — เปิด frontend local เชื่อม backend Ubuntu สำเร็จ
+- **คำอธิบาย:** ผู้ใช้ให้รันเฉพาะ frontend ที่เชื่อม backend บน Ubuntu จึงเรียก runall.bat -RemoteBackend และยืนยันว่า runall.bat -Check ปกติใช้ remote mode จาก .env เช่นกัน
+- **บริการ local:** Next.js เปิด http://localhost:3000 และ SSH tunnel เปิด 127.0.0.1:28080 ไป backend Ubuntu 127.0.0.1:18080; ไม่เริ่ม Rust backend หรือ MongoDB ในเครื่อง ตรวจไม่พบ listener 8080/27017
+- **ผลตรวจสอบจริง:** เรียก health/login/session ผ่าน frontend proxy ได้ HTTP 200; อ่าน inquiries จาก Ubuntu ได้ 1 รายการ, inquiry context HTTP 200 และ events DONE 7 รายการ ไม่แสดงรหัส/token/cookie หรือข้อความลูกค้าในผลตรวจ
+- **ขอบเขต:** เปิด frontend และ tunnel ค้างไว้ให้ผู้ใช้ทดสอบ ไม่แก้ source/config, ไม่ build/commit/push และไม่แก้บริการ Ubuntu
+
+## 2026-10-25 13:50 — เชื่อม frontend local dev กับ backend Ubuntu ผ่าน SSH
+- **คำอธิบาย:** frontend อ่าน backend Ubuntu ตัวเดียวกับ LINE webhook ผ่าน SSH tunnel โดยไม่เปิด backend เป็น public
+- **โฟลเดอร์ `./` และ `scripts/`**
+  - `run-frontend.bat`, `scripts/run-frontend.ps1` — เพิ่ม: ตรวจ SSH/config/พอร์ต เปิด tunnel 127.0.0.1:28080 ไป Ubuntu 127.0.0.1:18080 ตั้ง BACKEND_URL ตรวจ health/admin API และ cleanup เฉพาะ SSH child ของ launcher; รองรับ -Check/-ProbeOnly และแจ้งให้ deploy เมื่อ backend รุ่นเก่าตอบ 404
+  - `scripts/runall.ps1` — แก้: รองรับ DEV_BACKEND_MODE, -RemoteBackend และ -LocalBackend; remote mode ไม่เรียก cargo หรือเริ่ม MongoDB/backend ในเครื่อง
+  - `.env` — แก้ local/ignored: remote mode, SSH alias Hermes และพอร์ต โดยไม่เปลี่ยน credentials
+  - `.env.example` — แก้: เพิ่ม remote dev config และลบรหัสผ่านจริงที่ติดมาในตัวอย่าง ให้ ADMIN_PASSWORD ว่าง
+  - `AGENTS.md` — แก้: เพิ่มคำสั่ง frontend remote
+- **โฟลเดอร์ `frontend/` และ `docs/`**
+  - `frontend/.env.development.local` — เพิ่ม/แก้ local/ignored: BACKEND_URL=http://127.0.0.1:28080 สำหรับ npm dev โดยไม่มี token/password; production build ไม่ใช้ไฟล์ development นี้
+  - `docs/step-2-admin.md` — แก้: วิธี frontend local + Ubuntu backend, SSH/config, บัญชี server, หยุด tunnel, สลับกลับ local และข้อกำหนด backend Step 2
+- **Ubuntu:** เรียก loadgit.sh main แล้ว server เป็น commit 608551c ซึ่งมี compiled release จาก local; ไม่ compile/build โปรแกรมบน server ไม่เปลี่ยน Caddy/webhook/ฐานข้อมูล และไม่เรียก Docker ด้วย sudo ตามที่ผู้ใช้เลือกเป็นผู้รัน sudo เอง
+- **ผลตรวจสอบ:** npm lint/build, PowerShell syntax, remote/local preflight, invalid-port/busy-port guards และ BAT ASCII/CRLF ผ่าน; config ทั้งสองไฟล์ยัง gitignored; SSH tunnel จริงและ health ผ่าน แต่ admin/session ยังตอบ 404 จึงปฏิเสธรุ่นเก่าและ cleanup tunnel ได้ถูกต้อง; Chrome isolated fixture ทดสอบ Secure/HttpOnly cookie บน http://localhost ผ่าน
+- **ข้อจำกัดปัจจุบัน:** ยังไม่ยืนยัน login/inquiry ผ่าน frontend กับ backend ใหม่ เพราะต้องให้ผู้ใช้รัน sudo bash ./docker-build.sh และ sudo bash ./docker-deploy.sh ก่อน ไม่มี commit/push โดย agent และไม่เปลี่ยน compiled Linux artifacts
+
 ## 2026-10-25 13:39 — ตรวจข้อความ LINE ไม่แสดงในหน้าหลังบ้าน local
 - **คำอธิบาย:** หน้าเว็บ local อ่าน backend localhost:8080 และ MongoDB localhost/database myapp ซึ่งไม่มี events หรือ inquiries แต่ LINE webhook เปิดใช้งานและส่งเข้า https://hermes.salepie.online/api/line/webhook บน Ubuntu
 - **ผลตรวจสอบ:** LINE bot ตรงกับ destination ที่ตั้งไว้; Ubuntu /api/health ผ่าน, line_events DONE 7 รายการ และ inquiries 1 รายการใน database alex_line จึงยืนยันว่าข้อความถูกเก็บบน server ไม่ใช่ฐาน local ไม่มีการแสดงข้อความลูกค้าหรือ credentials ในผลตรวจ

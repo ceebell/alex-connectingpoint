@@ -35,8 +35,17 @@ pub async fn authorize(
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         return Ok(response);
     }
-    let token = request
-        .headers()
+    require_token(&state, request.headers())?;
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+pub fn require_token(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
+    let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
@@ -50,12 +59,7 @@ pub async fn authorize(
     candidate
         .verify_slice(&expected.finalize().into_bytes())
         .map_err(|_| AppError::Unauthorized)?;
-    let mut response = next.run(request).await;
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    Ok(response)
+    Ok(())
 }
 
 fn object_id(value: &str) -> Result<ObjectId, AppError> {
@@ -126,38 +130,8 @@ pub async fn context(
         .find_one(filter)
         .await?
         .ok_or(AppError::NotFound)?;
-    let mut filter = state.scope();
-    filter.extend(doc! {"inquiry_id":inquiry_id, "status":"DONE", "withdrawn":{"$ne":true}});
-    // Use an opaque event reference as a stable (event_at, event_id) cursor.
-    if let Some(after) = query.after {
-        let mut cursor_filter = state.scope();
-        cursor_filter.extend(doc! {"_id":object_id(&after)?, "inquiry_id":inquiry_id});
-        let cursor = state
-            .collection("line_events")
-            .find_one(cursor_filter)
-            .await?
-            .ok_or(AppError::NotFound)?;
-        let at = *cursor
-            .get_datetime("event_at")
-            .map_err(|_| AppError::Data)?;
-        let event_id = cursor.get_str("event_id").map_err(|_| AppError::Data)?;
-        filter.insert(
-            "$or",
-            vec![
-                doc! {"event_at":{"$gt":at}},
-                doc! {"event_at":at, "event_id":{"$gt":event_id}},
-            ],
-        );
-    }
-    let mut messages: Vec<Document> = state
-        .collection("line_events")
-        .find(filter)
-        .sort(doc! {"event_at":1, "event_id":1})
-        .limit(201)
-        .projection(doc! {"lease_token":0})
-        .await?
-        .try_collect()
-        .await?;
+    let after = query.after.as_deref().map(object_id).transpose()?;
+    let mut messages = crate::db::oa_sync::messages(&state, inquiry_id, after).await?;
     let has_more = messages.len() > 200;
     messages.truncate(200);
     let next = if has_more {
