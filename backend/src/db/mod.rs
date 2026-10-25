@@ -6,4 +6,5 @@ pub mod inquiries;
 pub mod media;
 pub mod oa_sync;
 pub mod orders;
+pub mod outbound;
 pub mod users;

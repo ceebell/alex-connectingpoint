@@ -8,11 +8,14 @@ use futures_util::TryStreamExt;
 use mongodb::bson::{DateTime, Document, doc, oid::ObjectId};
 use serde_json::{Value, json};
 
+// Customer webhook events, OA Manager captures and replies sent from Alex.
+pub const MESSAGE_COLLECTIONS: [&str; 3] = ["line_events", "oa_messages", "outbound_messages"];
+
 pub fn source_type(record: &Document) -> &'static str {
-    if record.get_str("source").ok() == Some("oa_manager_browser") {
-        "oa_message"
-    } else {
-        "line_event"
+    match record.get_str("source").ok() {
+        Some("oa_manager_browser") => "oa_message",
+        Some("alex_push") => "admin_message",
+        _ => "line_event",
     }
 }
 
@@ -41,18 +44,17 @@ pub async fn messages(
     if let Some(id) = after {
         let mut cursor_filter = state.scope();
         cursor_filter.extend(doc! {"_id":id,"inquiry_id":inquiry});
-        let cursor = match state
-            .collection("line_events")
-            .find_one(cursor_filter.clone())
-            .await?
-        {
-            Some(record) => record,
-            None => state
-                .collection("oa_messages")
-                .find_one(cursor_filter)
-                .await?
-                .ok_or(AppError::NotFound)?,
-        };
+        let mut cursor = None;
+        for name in MESSAGE_COLLECTIONS {
+            cursor = state
+                .collection(name)
+                .find_one(cursor_filter.clone())
+                .await?;
+            if cursor.is_some() {
+                break;
+            }
+        }
+        let cursor = cursor.ok_or(AppError::NotFound)?;
         let at = *cursor
             .get_datetime("event_at")
             .map_err(|_| AppError::Data)?;
@@ -66,7 +68,7 @@ pub async fn messages(
         );
     }
     let mut records = Vec::new();
-    for name in ["line_events", "oa_messages"] {
+    for name in MESSAGE_COLLECTIONS {
         records.extend(
             state
                 .collection(name)

@@ -1,7 +1,7 @@
 use crate::{
     db::{drafts, events::duplicate},
     error::AppError,
-    models::customer::ApproveInput,
+    models::customer::{Actor, ApproveInput},
     state::AppState,
 };
 use mongodb::bson::{DateTime, Document, doc, oid::ObjectId};
@@ -24,7 +24,7 @@ pub async fn approve(
     state: &AppState,
     inquiry_id: ObjectId,
     input: ApproveInput,
-    actor: &str,
+    actor: &Actor,
 ) -> Result<Document, AppError> {
     input.validate()?;
     let draft_id = ObjectId::parse_str(&input.draft_id).map_err(|_| AppError::BadRequest)?;
@@ -65,7 +65,7 @@ pub async fn approve(
     order.extend(doc! {"_id":ObjectId::new(),"inquiry_id":inquiry_id,
         "conversation_id":inquiry.get_object_id("conversation_id").ok(),"line_user_id":inquiry.get_str("line_user_id").ok(),
         "draft_id":draft_id,"draft_version":input.draft_version,"context_hash":&snapshot.hash,"fields":fields,
-        "status":"CONFIRMED","approved_by":actor,"approved_at":now,
+        "status":"CONFIRMED","approved_by":&actor.name,"approved_by_id":&actor.id,"approved_at":now,
         // Quoted values still need checking against Alex stock and pricing.
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
         "created_at":now,"updated_at":now});

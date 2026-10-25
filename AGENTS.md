@@ -61,7 +61,7 @@
 - ทุก route ขึ้นต้น `/api` · health check ที่ `GET /api/health` → `{"status":"ok"}`
 - Error response รูปแบบเดียวกัน: `{"error":{"code":"...","message":"..."}}` ผ่าน `AppError` ใน `error.rs`
 - Config อ่านจาก env เท่านั้น: `PORT`, `MONGODB_URI`, `MONGODB_DB`, `RUST_LOG`, `CORS_ORIGIN`
-- Step 2 เพิ่ม `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_COOKIE_SECURE`, `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_TIMEOUT_SECONDS`; ห้ามส่ง server token/API key เข้า frontend bundle
+- Step 2 เพิ่ม `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_COOKIE_SECURE`, `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_TIMEOUT_SECONDS`; LINE Login ใช้ `LINE_LOGIN_CHANNEL_ID`, `LINE_LOGIN_CHANNEL_SECRET`, `LINE_LOGIN_REDIRECT_URI`, `ADMIN_LINE_USER_IDS` (ต้องเพิ่มใน docker-stack.line.yml ด้วยเมื่อเพิ่ม env ใหม่); ห้ามส่ง server token/API key เข้า frontend bundle
 - Browser admin ใช้ signed HttpOnly session cookie และ X-Admin-Request สำหรับ mutation; API ภายในเดิมยังรับ Bearer token ร่างเป็นเวอร์ชันพร้อม evidence และต้องตรวจ source ใหม่ก่อน commit
 - ห้าม `unwrap()` / `expect()` ใน handler — คืน `Result<_, AppError>`
 - แยก layer: `routes/` (HTTP) → `models/` (struct + serde) → `db/` (query)

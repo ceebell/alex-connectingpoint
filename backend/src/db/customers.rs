@@ -1,5 +1,8 @@
 use crate::{
-    db::events::duplicate, error::AppError, models::customer::ProfileInput, state::AppState,
+    db::events::duplicate,
+    error::AppError,
+    models::customer::{Actor, ProfileInput},
+    state::AppState,
 };
 use mongodb::{
     bson::{Bson, DateTime, Document, doc, oid::ObjectId},
@@ -29,7 +32,7 @@ pub async fn save(
     state: &AppState,
     user_id: &str,
     input: ProfileInput,
-    actor: &str,
+    actor: &Actor,
 ) -> Result<Document, AppError> {
     // Profiles exist only for LINE users actually seen through the signed webhook.
     if state
@@ -42,7 +45,7 @@ pub async fn save(
     }
     let now = DateTime::now();
     let fields = doc! {"display_name":text(&input.display_name),"phone":text(&input.phone),
-    "address":text(&input.address),"notes":text(&input.notes),"updated_by":actor,"updated_at":now};
+    "address":text(&input.address),"notes":text(&input.notes),"updated_by":&actor.name,"updated_by_id":&actor.id,"updated_at":now};
     if input.expected_version == 0 {
         let mut record = identity(state, user_id);
         record.extend(fields);

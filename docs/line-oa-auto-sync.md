@@ -1,5 +1,7 @@
 # รับข้อความแอดมินจาก LINE OA อัตโนมัติ
 
+> **ไม่จำเป็นเมื่อตอบลูกค้าจาก Alex:** ตั้งแต่ 2026-10-25 แอดมินเข้า Alex ด้วย LINE Login และตอบลูกค้าผ่าน Messaging API ได้ ([step-2-admin.md](step-2-admin.md)) ข้อความจึงเข้า MongoDB โดยตรงด้วย API ทางการ ไม่ต้องรัน `login-oa.bat` ใช้ตัวเชื่อมนี้เฉพาะเมื่อยังต้องเก็บข้อความที่พิมพ์ใน OA Manager; ปิดได้ด้วย `sudo docker stop <ชื่อ container>` โดย profile volume ยังอยู่
+
 เพิ่มตัวเชื่อม OA Manager บน Ubuntu แล้ว: browser ทำงานเบื้องหลัง → อ่านข้อความแอดมิน → backend จับคู่จาก message ID ของลูกค้าที่ได้รับทาง webhook → เก็บ `oa_messages` ใน MongoDB → frontend อัปเดตแชทและแสดงแอดมินด้านขวาพื้นฟ้าอ่อน ไม่มีช่องคัดลอกข้อความเอง และตัวเชื่อมบล็อก API ส่ง/แก้ไขข้อความของ OA
 
 **สถานะ:** source, build scripts และ Linux releases พร้อมแล้ว ทดสอบเส้นทางครบด้วย browser/Docker/MongoDB และข้อมูลจำลองผ่าน ยังไม่ได้ล็อกอินหรือยืนยัน schema ของบัญชี OA จริง จึงยังไม่ถือว่า production sync สำเร็จ รุ่นแรกเก็บข้อความตัวอักษรขาออก; รูปจากลูกค้ายังเข้าระบบทาง webhook เดิม

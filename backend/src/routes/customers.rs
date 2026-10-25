@@ -1,7 +1,10 @@
 use crate::{
-    db::{customers, orders},
+    db::{customers, orders, outbound},
     error::AppError,
-    models::customer::{ApproveInput, ProfileInput, valid_user_id},
+    models::{
+        customer::{ApproveInput, ProfileInput, valid_user_id},
+        outbound::SendInput,
+    },
     state::AppState,
 };
 use axum::{
@@ -61,4 +64,16 @@ pub async fn approve(
     let actor = super::session::actor(&state, &headers);
     let order = orders::approve(&state, inquiry(&id)?, input, &actor).await?;
     Ok((StatusCode::CREATED, Json(json!({"order":order}))))
+}
+
+pub async fn send_message(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    input: Result<Json<SendInput>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    let actor = super::session::actor(&state, &headers);
+    let message = outbound::send(&state, inquiry(&id)?, input, &actor).await?;
+    Ok((StatusCode::CREATED, Json(json!({"message":message}))))
 }

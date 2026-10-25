@@ -1,6 +1,13 @@
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 
+// Who performed an admin write: a stable ID for audit plus a display name.
+#[derive(Clone, Debug)]
+pub struct Actor {
+    pub id: String,
+    pub name: String,
+}
+
 pub fn valid_user_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_alphanumeric())
 }

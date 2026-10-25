@@ -117,20 +117,39 @@ sudo bash ./docker-deploy.sh --full-stack
 
 Full-stack รุ่นนี้ใช้ docker-stack.line.yml + docker-stack.admin.yml ร่วมกัน ไม่ย้ายไปฐานข้อมูล/volume/network ชุดใหม่ และยังคง LINE webhook ที่พอร์ต 18080 Frontend พอร์ต 18081 ใช้ Next.js proxy ไป backend:8080 ภายใน Docker ไม่มีการ compile Rust หรือ npm build บน Ubuntu
 
-เพิ่ม DNS `admin.salepie.online` ให้ชี้ server และเพิ่ม site block นี้ใน `/etc/caddy/Caddyfile` โดยเก็บ Hermes/webhook site เดิมไว้:
+หน้า Alex ใช้ `https://hermes.salepie.online` ร่วมกับ Hermes บน server: Caddy ส่งเฉพาะ path ของ Alex ไป admin frontend (18081) ส่ง LINE webhook ไป backend (18080) ตามเดิม และ path อื่นทั้งหมดไป Hermes (`localhost:8646`) ตามเดิม ตรวจแล้วว่า Hermes ตอบ 404 ทุก path ในรายการนี้จึงไม่ชนกัน
+
+แก้ `/etc/caddy/Caddyfile` (สำรองไฟล์เดิมก่อน):
 
 ```caddyfile
-admin.salepie.online {
-    reverse_proxy 127.0.0.1:18081
+hermes.salepie.online {
+    handle /api/line/webhook {
+        reverse_proxy 127.0.0.1:18080
+    }
+
+    # Alex admin workspace: Next.js frontend, which proxies /api to the backend.
+    @alex {
+        path / /favicon.ico /_next/* /api/health /api/admin/* /api/inquiries /api/inquiries/* /api/conversations/* /api/line/* /api/draft-requests/* /api/media/*
+        not path /api/line/webhook
+    }
+    handle @alex {
+        reverse_proxy 127.0.0.1:18081
+    }
+
+    handle {
+        reverse_proxy localhost:8646
+    }
 }
 ```
 
 ```sh
+sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)
+sudo nano /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-เปิด `https://admin.salepie.online` เพื่อล็อกอิน hostname นี้เป็นตัวอย่างที่ต้องตั้ง DNS ก่อนจริง การเปิดผ่าน HTTP บน IP โดย ADMIN_COOKIE_SECURE=true จะล็อกอินไม่ได้เพราะ cookie ใช้กับ HTTPS
+เปิด `https://hermes.salepie.online` เพื่อล็อกอิน ADMIN_COOKIE_SECURE ต้องเป็น true (ค่าเริ่มต้นของ stack) หาก Hermes เพิ่ม path ใหม่ที่ซ้ำรายการ `@alex` ต้องแก้ matcher ให้ชัดก่อน พอร์ต 18081 แบบ host mode เปิดบนทุก interface เหมือน 18080 ควรให้เข้าผ่าน Caddy/HTTPS เท่านั้น เช่นปิดพอร์ตนี้จากภายนอกด้วย firewall ของ server
 
 ## ขั้นตอนทดสอบของแอดมิน
 
@@ -143,6 +162,37 @@ sudo systemctl reload caddy
 7. เมื่อมีข้อความใหม่ระหว่างวิเคราะห์ งานเดิมเป็น STALE ไม่ทับร่างล่าสุด ให้โหลดข้อมูลและเตรียมใหม่ หาก source ถูก unsend ประวัติร่างที่อ้างอิงข้อความนั้นจะถูกซ่อนจาก API/UI
 
 ข้อมูลเก็บใน MongoDB `admin_summaries`, `draft_requests`, `order_drafts` และ pointer/version ใน `inquiries` ทุกรายการจำกัด shop/channel จาก config ไม่รับร้านจาก browser ประวัติแสดงล่าสุด 50 ร่าง บริบทเตรียมร่างรองรับ 500 events ต่อ inquiry; เกินจะหยุดพร้อมข้อผิดพลาดโดยไม่ตัดข้อมูลเงียบ ๆ
+
+## เข้าสู่ระบบด้วย LINE Login
+
+หน้า Alex ใช้ LINE Login (OAuth 2.1 / OpenID Connect ของ LINE) และรับเฉพาะ LINE user ID ใน `ADMIN_LINE_USER_IDS` รหัสผ่าน `ADMIN_PASSWORD` เป็นทางสำรอง ปล่อยว่างเพื่อปิดได้ LINE Login ยืนยันตัวตนอย่างเดียว ไม่ได้ให้สิทธิ์อ่านแชทใน OA Manager
+
+1. LINE Developers Console → provider เดียวกับ Messaging API ของ OA → Create a new channel → **LINE Login** → App type: Web app
+2. แท็บ LINE Login → Callback URL: `https://hermes.salepie.online/api/admin/line/callback` (ต้องตรงกับ `LINE_LOGIN_REDIRECT_URI` ทุกตัวอักษร) frontend บนเครื่องผ่าน `runall.bat` ใช้ได้เฉพาะรหัสผ่านสำรอง เพราะ LINE redirect กลับไปที่ domain นี้
+3. ช่องทางที่ยังเป็น Developing ให้เฉพาะ Admin/Tester ของ channel ล็อกอินได้: เพิ่มบัญชีแอดมินในแท็บ Roles หรือ Publish channel
+4. ใส่ใน `.env` บน server เท่านั้น แล้ว `sudo bash ./docker-deploy.sh`:
+
+```dotenv
+LINE_LOGIN_CHANNEL_ID=<Channel ID ตัวเลข>
+LINE_LOGIN_CHANNEL_SECRET=<Channel secret>
+LINE_LOGIN_REDIRECT_URI=https://hermes.salepie.online/api/admin/line/callback
+ADMIN_LINE_USER_IDS=
+```
+
+5. ให้แอดมินกด **เข้าสู่ระบบด้วย LINE** ครั้งแรก หน้าเว็บจะแจ้งว่ายังไม่มีสิทธิ์พร้อม LINE user ID ของบัญชีนั้น นำ ID มาใส่ `ADMIN_LINE_USER_IDS` (คั่นด้วย comma) แล้ว deploy อีกครั้ง
+6. ถอดสิทธิ์: ลบ ID ออกแล้ว deploy session เดิมของคนนั้นจะใช้ไม่ได้ทันที
+
+Session เป็น HttpOnly cookie อายุ 8 ชั่วโมง ผูกกับ channel และรายชื่อที่อนุญาต; state/nonce ป้องกันการปลอม callback และ channel secret อยู่บน server เท่านั้น
+
+## ตอบลูกค้าจาก Alex
+
+ช่องพิมพ์ใต้แชทส่งข้อความถึงลูกค้าจริงด้วย Messaging API Push (`LINE_CHANNEL_ACCESS_TOKEN` เดิม) แล้วเก็บใน `outbound_messages` แสดงด้านขวาพร้อมชื่อแอดมินและป้าย "ส่งจาก Alex"
+
+- ส่งได้เฉพาะแชท 1:1 ที่ลูกค้าทักเข้ามา ไม่ส่งเข้ากลุ่ม/ห้อง
+- ใช้ request ID เป็น `X-Line-Retry-Key`: เมื่อ LINE ไม่ตอบหรือเน็ตหลุด ปุ่มเปลี่ยนเป็น **ส่งอีกครั้ง** และส่งซ้ำได้โดยลูกค้าไม่ได้รับสองครั้ง ถ้าแก้ข้อความก่อนส่งใหม่จะนับเป็นข้อความใหม่
+- Push นับโควตาข้อความรายเดือนของแพ็กเกจ OA เมื่อเต็ม LINE ตอบ 429 และหน้าเว็บแจ้งว่าโควตาหมด
+- ข้อความที่ส่งเป็นบริบทของ AI (`admin_message`) และทำให้ร่างเดิมถูกตรวจว่าบริบทเปลี่ยน: ก่อนอนุมัติออเดอร์ให้บันทึกร่างเป็นเวอร์ชันใหม่อีกครั้ง
+- ข้อความที่พิมพ์ใน OA Manager หรือแอป LINE OA ไม่เข้า Alex ทีมควรตอบลูกค้าจาก Alex เท่านั้น ตัวเชื่อม OA Manager ([line-oa-auto-sync.md](line-oa-auto-sync.md)) ไม่จำเป็นในวิธีนี้
 
 ## ข้อมูลลูกค้าและอนุมัติออเดอร์
 
@@ -163,6 +213,9 @@ sudo systemctl reload caddy
 | POST /api/inquiries/{id}/prepare | summary, request_id, expected_version, image_event_ids → 202 และ job ID |
 | POST /api/inquiries/{id}/draft | fields, summary, request_id, expected_version, context_hash, confirmed_fields → บันทึก manual revision ผ่านคิว |
 | GET /api/draft-requests/{id} | สถานะงานและ error_code ที่ไม่มี secret/ข้อความ driver |
+| GET /api/admin/login-options | วิธีล็อกอินที่เปิด `{line, password}` |
+| GET /api/admin/line/start → /api/admin/line/callback | LINE Login: redirect ไป LINE และรับ code กลับ ตั้ง session cookie หรือ redirect `/?login_error=...` |
+| POST /api/inquiries/{id}/messages | request_id (UUID), text → 201 ส่งแล้ว; 409 REPLY_UNAVAILABLE / RECORD_CONFLICT; 502 LINE_UNAVAILABLE / LINE_RATE_LIMITED / LINE_SEND_FAILED |
 | GET /api/line/users/{user_id}/profile | ข้อมูลลูกค้า (หรือ null) |
 | POST /api/line/users/{user_id}/profile | expected_version (0 = สร้างใหม่), display_name, phone, address, notes → 409 RECORD_CONFLICT เมื่อ version ไม่ตรง |
 | GET /api/inquiries/{id}/order | ออเดอร์ที่อนุมัติแล้ว (หรือ null) |

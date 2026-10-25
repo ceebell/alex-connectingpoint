@@ -24,6 +24,11 @@ pub struct Config {
     pub hermes_api_key: Option<String>,
     pub hermes_model: String,
     pub hermes_timeout_seconds: u64,
+    pub line_api_base: String,
+    pub line_login_channel_id: Option<String>,
+    pub line_login_channel_secret: Option<String>,
+    pub line_login_redirect_uri: Option<String>,
+    pub admin_line_user_ids: Vec<String>,
 }
 
 impl Config {
@@ -50,7 +55,33 @@ impl Config {
             hermes_api_key: optional("HERMES_API_KEY"),
             hermes_model: env::var("HERMES_MODEL").unwrap_or_else(|_| "hermes-agent".into()),
             hermes_timeout_seconds: number("HERMES_TIMEOUT_SECONDS", 120, 5, 180)? as u64,
+            line_api_base: env::var("LINE_API_BASE")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://api.line.me".into())
+                .trim_end_matches('/')
+                .to_string(),
+            line_login_channel_id: optional("LINE_LOGIN_CHANNEL_ID"),
+            line_login_channel_secret: optional("LINE_LOGIN_CHANNEL_SECRET"),
+            line_login_redirect_uri: optional("LINE_LOGIN_REDIRECT_URI"),
+            admin_line_user_ids: env::var("ADMIN_LINE_USER_IDS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
         })
+    }
+
+    pub fn line_login_enabled(&self) -> bool {
+        self.line_login_channel_id.is_some()
+            && self.line_login_channel_secret.is_some()
+            && self.line_login_redirect_uri.is_some()
+    }
+
+    pub fn password_login_enabled(&self) -> bool {
+        self.admin_password.as_ref().is_some_and(|p| p.len() >= 16)
     }
 
     pub fn http_timeout(&self) -> Duration {

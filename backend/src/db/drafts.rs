@@ -73,6 +73,18 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
             .try_collect::<Vec<_>>()
             .await?,
     );
+    let mut sent_filter = state.scope();
+    sent_filter.extend(doc! {"inquiry_id":id,"status":"DONE"});
+    records.extend(
+        state
+            .collection("outbound_messages")
+            .find(sent_filter)
+            .sort(doc! {"event_at":1,"event_id":1})
+            .limit(501)
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?,
+    );
     crate::db::oa_sync::sort_messages(&mut records);
     if records.len() > 500 {
         return Err(AppError::Validation(

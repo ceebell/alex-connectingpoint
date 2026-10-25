@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "tests_customers.rs"]
 mod customer_tests;
+#[path = "tests_line.rs"]
+mod line_tests;
 #[path = "tests_oa_sync.rs"]
 mod oa_sync_tests;
 #[path = "tests_step2.rs"]
@@ -47,6 +49,11 @@ fn config() -> Config {
         hermes_api_key: None,
         hermes_model: "hermes-agent".into(),
         hermes_timeout_seconds: 5,
+        line_api_base: "http://127.0.0.1:9".into(),
+        line_login_channel_id: None,
+        line_login_channel_secret: None,
+        line_login_redirect_uri: None,
+        admin_line_user_ids: vec![],
     }
 }
 

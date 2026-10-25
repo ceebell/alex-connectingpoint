@@ -14,6 +14,16 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             true,
         ),
         (
+            "outbound_messages",
+            doc! {"shop_id":1,"channel_id":1,"request_id":1},
+            true,
+        ),
+        (
+            "outbound_messages",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"event_at":1,"event_id":1},
+            false,
+        ),
+        (
             "orders",
             doc! {"shop_id":1,"channel_id":1,"line_user_id":1,"created_at":-1},
             false,

@@ -57,6 +57,10 @@ pub enum AppError {
     OrderExists,
     #[error("Only the latest complete, conflict-free and current draft can be approved")]
     OrderNotReady,
+    #[error("Replies can only be sent to a known 1:1 LINE chat")]
+    ReplyUnavailable,
+    #[error("LINE did not accept the message")]
+    LineSend(&'static str),
 }
 
 impl AppError {
@@ -81,6 +85,8 @@ impl AppError {
             Self::RecordConflict => "RECORD_CONFLICT",
             Self::OrderExists => "ORDER_EXISTS",
             Self::OrderNotReady => "ORDER_NOT_READY",
+            Self::ReplyUnavailable => "REPLY_UNAVAILABLE",
+            Self::LineSend(code) => code,
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -100,6 +106,8 @@ impl IntoResponse for AppError {
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
             Self::RecordConflict | Self::OrderExists | Self::OrderNotReady => StatusCode::CONFLICT,
+            Self::ReplyUnavailable => StatusCode::CONFLICT,
+            Self::LineSend(_) => StatusCode::BAD_GATEWAY,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,

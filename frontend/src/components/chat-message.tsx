@@ -23,7 +23,7 @@ export default function ChatMessage({ message, selectedImages, disabled, onToggl
           <label className="checkbox-row small"><input type="checkbox" checked={selectedImages.includes(message._id)} disabled={disabled || (!selectedImages.includes(message._id) && selectedImages.length >= 4)} onChange={event => onToggleImage(message._id, event.target.checked)} />แนบรูปนี้ให้ AI</label>
         </> : <p className="muted">รูปยังไม่พร้อมหรือหมดอายุ</p> : <p>{message.payload?.message?.text ?? message.payload?.postback?.data ?? `ข้อความประเภท ${message.payload?.message?.type ?? message.payload?.type ?? "อื่น ๆ"}`}</p>}
       </div>
-      <div className="message-meta"><time dateTime={message.event_at}>{timestamp}</time><span>{message.source === "oa_manager_browser" ? "จาก OA Manager" : message._id.slice(-6)}</span></div>
+      <div className="message-meta"><time dateTime={message.event_at}>{timestamp}</time><span>{message.source === "oa_manager_browser" ? "จาก OA Manager" : message.source === "alex_push" ? "ส่งจาก Alex" : message._id.slice(-6)}</span></div>
     </div>
   </article>;
 }

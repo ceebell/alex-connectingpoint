@@ -4,6 +4,37 @@
 
 <!-- entries -->
 
+## 2026-10-25 22:49 — ใช้ hermes.salepie.online เป็น URL ของหน้า Alex และ LINE Login
+- **คำอธิบาย:** ผู้ใช้ให้ใช้ hermes.salepie.online ตรวจ server แบบอ่านอย่างเดียวพบว่า domain นี้ส่ง /api/line/webhook ไป backend 18080 และ path อื่นไป Hermes agent (aiohttp, localhost:8646) จึงใช้ร่วมกันด้วย Caddy path routing: เฉพาะ path ของ Alex ไป admin frontend 18081, webhook คงเดิม, ที่เหลือไป Hermes ตามเดิม; Hermes ตอบ 404 ทุก path ของ Alex จึงไม่ชนกัน
+- **โฟลเดอร์ `docker/`**
+  - `Caddyfile.line.example` — แก้: เลิกใช้ admin.salepie.online เปลี่ยนเป็น named matcher `@alex` (/, /_next/*, /favicon.ico, /api/health, /api/admin/*, /api/inquiries*, /api/conversations/*, /api/line/* ยกเว้น webhook, /api/draft-requests/*, /api/media/*) → 127.0.0.1:18081
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `.env.example` — แก้: LINE_LOGIN_REDIRECT_URI=https://hermes.salepie.online/api/admin/line/callback และหมายเหตุ ADMIN_COOKIE_SECURE=true
+  - `docs/step-2-admin.md` — แก้: ขั้นตอนแก้ Caddyfile พร้อมสำรอง/validate/reload, callback URL ของ LINE Login, ข้อจำกัดว่า runall.bat บนเครื่องใช้ได้เฉพาะรหัสผ่านสำรอง และคำแนะนำปิดพอร์ต 18081 จากภายนอก
+- **ผลตรวจสอบ:** `caddy validate` (caddy:2.10 ใน Docker local) ผ่านทั้ง Caddyfile ใน docs และ docker/Caddyfile.line.example; ทดสอบ routing ด้วย Caddy จริงที่แทน upstream ด้วย respond: path ของ Alex → alex, /api/line/webhook → webhook, /v1/chat/completions, /api/other, /health, /admin → hermes; release ใน dist ไม่อ้างอิง Caddyfile จึงไม่ต้อง build ใหม่ (rel-20261025153117-65c57753fb02, front-20261025153210-4e1f9f6df1b1)
+- **ขอบเขต:** ไม่ได้แก้ Caddy, .env, firewall หรือบริการบน server (ต้องใช้ sudo โดยผู้ใช้) และยังไม่ commit/push
+
+## 2026-10-25 22:32 — เข้า Alex ด้วย LINE Login และตอบลูกค้าจาก Alex ผ่าน Messaging API (แทน login-oa.bat)
+- **คำอธิบาย:** ผู้ใช้ไม่ต้องการใช้ login-oa.bat และต้องการ LINE Login API จริง ตรวจเอกสารแล้วพบว่า LINE Login มีแค่ scope profile/openid/email อ่านแชท OA Manager ไม่ได้ ผู้ใช้จึงเลือกให้แอดมินเข้า Alex ด้วย LINE Login และตอบลูกค้าจาก Alex ด้วย Push API (ขั้น B) ทำให้ข้อความเข้า MongoDB ด้วย API ทางการทั้งหมดโดยไม่ต้องใช้ตัวเชื่อม OA
+- **โฟลเดอร์ `backend/src/`**
+  - `routes/session.rs` — แก้: session cookie v2 เก็บผู้ล็อกอิน (password/line) ผูกกับรหัสผ่านหรือ channel + allowlist ทำให้ถอดสิทธิ์/เปลี่ยนรหัสแล้ว session เดิมใช้ไม่ได้; เพิ่ม `/api/admin/login-options`, `/api/admin/line/start` (state ลงนาม + nonce, cookie Lax เฉพาะ path) และ `/api/admin/line/callback` (แลก code, verify ID token กับ LINE, ตรวจ aud/allowlist, แสดง LINE user ID เมื่อไม่มีสิทธิ์); `actor()` คืน ID + ชื่อ; ปิด password login อัตโนมัติเมื่อไม่ได้ตั้งรหัส
+  - `config.rs` — แก้: LINE_LOGIN_CHANNEL_ID/SECRET/REDIRECT_URI, ADMIN_LINE_USER_IDS และ LINE_API_BASE (ค่าเริ่มต้น https://api.line.me ใช้ทดสอบกับ mock)
+  - `models/outbound.rs`, `db/outbound.rs` — เพิ่ม: ส่งข้อความด้วย Push API เฉพาะแชท 1:1, X-Line-Retry-Key = request UUID, บันทึก `outbound_messages` (SENDING/DONE/FAILED, line_message_id, ผู้ส่ง), ส่งซ้ำ request เดิมไม่ส่งสองครั้ง, request เดิมแต่ข้อความต่างถูกปฏิเสธ, แยก error 429/5xx/4xx
+  - `routes/customers.rs`, `routes/mod.rs`, `error.rs`, `db/indexes.rs`, `db/mod.rs`, `models/mod.rs`, `models/customer.rs`, `db/customers.rs`, `db/orders.rs` — แก้: route `POST /api/inquiries/{id}/messages`, error REPLY_UNAVAILABLE/LINE_*, index outbound_messages, Actor เก็บ updated_by_id/approved_by_id
+  - `db/oa_sync.rs`, `db/drafts.rs`, `order_draft_prompt.txt` — แก้: รวม outbound_messages ในแชท/pagination และบริบท AI เป็น source_type `admin_message` (ข้อความร้าน ไม่ใช่การยืนยันจากลูกค้า)
+  - `tests_line.rs`, `tests.rs` — เพิ่ม/แก้: mock LINE server ทดสอบ state/nonce, ผู้ไม่อยู่ใน allowlist, cancel, ถอดสิทธิ์, login-options, Push idempotent/retry/429/กลุ่ม และ context hash เปลี่ยนหลังส่ง
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx` — แก้: ปุ่ม "เข้าสู่ระบบด้วย LINE" (รหัสผ่านเป็นทางสำรองเมื่อเปิดไว้), แสดงเหตุผลและ LINE user ID เมื่อไม่มีสิทธิ์, ช่องตอบลูกค้าใต้แชท (Ctrl+Enter, ส่งอีกครั้งด้วย request ID เดิม), ซ่อนสถานะตัวเชื่อม OA เมื่อไม่ได้ติดตั้ง
+  - `components/chat-message.tsx`, `lib/api.ts`, `app/globals.css` — แก้: ป้าย "ส่งจาก Alex", ข้อความ error ภาษาไทย, สไตล์ช่องตอบ/หน้าล็อกอิน
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `docker-stack.line.yml`, `.env.example`, `AGENTS.md` — แก้: ส่ง env LINE Login เข้า backend service (ตรวจด้วย docker stack config แล้ว) และตัวอย่าง/กฎ env
+  - `docs/step-2-admin.md`, `docs/line-oa-auto-sync.md` — แก้: ขั้นตอนสร้าง LINE Login channel, callback URL, Roles/Publish, allowlist, การตอบลูกค้าจาก Alex/โควตา และระบุว่าตัวเชื่อม OA ไม่จำเป็นแล้ว
+- **โฟลเดอร์ `dist/` (build จริงบน local)**
+  - `line-linux/` — rel-20261025153117-65c57753fb02
+  - `frontend-linux/` — front-20261025153210-4e1f9f6df1b1
+- **ผลตรวจสอบ:** cargo fmt/clippy -D warnings ผ่าน; cargo test รวม MongoDB integration (disposable 27018) ผ่าน 19/19; npm lint/build ผ่าน; Chrome headless ผ่าน backend local + standalone frontend + mock LINE: ผู้ไม่มีสิทธิ์เห็น LINE user ID, ผู้มีสิทธิ์เข้าได้และแสดงชื่อ LINE, ส่งข้อความด้วย Ctrl+Enter ขึ้นขวา "ส่งจาก Alex", 500 จาก LINE แสดงปุ่มส่งอีกครั้งและ retry ใช้ key เดิมส่งครั้งเดียว, reload แล้วข้อความยังอยู่, ไม่ล้นที่ 390/800px, ไม่มี page error; ระหว่างดีบักสคริปต์ browser เคยเปิดหน้า access.line.me จริงด้วย channel ID ปลอมและ LINE ปฏิเสธ (400) ไม่มีการล็อกอินหรือส่งข้อความจริง
+- **ขอบเขต:** ยังไม่ commit/push/deploy และยังไม่ได้ทดสอบกับ LINE Login channel/OA จริง ผู้ใช้ต้องสร้าง LINE Login channel และตั้ง .env บน server; หยุด backend/frontend/mongod/mock ทดสอบที่สร้างเองแล้ว คง frontend 3000 ของผู้ใช้ไว้; ตัวเชื่อม OA ยังรันอยู่บน server (ไม่ได้แตะ)
+
 ## 2026-10-25 21:45 — ขั้น A: บันทึกข้อมูลลูกค้าและอนุมัติร่างเป็นออเดอร์ใน Alex
 - **คำอธิบาย:** ผู้ใช้ต้องการใช้ Alex เป็น UI บันทึกข้อมูลลง MongoDB บน Ubuntu หลังล็อกอิน OA ให้ตัวเชื่อม จึงแบ่งงานเป็นขั้น A (ข้อมูลลูกค้า + อนุมัติออเดอร์) และขั้น B (ตอบลูกค้าจาก Alex ด้วย Push API ซึ่งผู้ใช้อนุมัติแล้วแต่ยังไม่ทำในรอบนี้)
 - **โฟลเดอร์ `backend/src/`**

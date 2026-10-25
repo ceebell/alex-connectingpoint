@@ -39,6 +39,10 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             "/api/inquiries/{id}/order",
             get(customers::order).post(customers::approve),
         )
+        .route(
+            "/api/inquiries/{id}/messages",
+            post(customers::send_message),
+        )
         .route("/api/line/events/{id}/assign", post(admin::assign))
         .route("/api/line/events/{id}/retry", post(admin::retry))
         .route("/api/line/status", get(admin::status))
@@ -50,6 +54,9 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         ));
     let mut router = Router::new()
         .route("/api/admin/login", post(session::login))
+        .route("/api/admin/login-options", get(session::options))
+        .route("/api/admin/line/start", get(session::line_start))
+        .route("/api/admin/line/callback", get(session::line_callback))
         .route(
             "/api/health",
             get(|| async { Json(serde_json::json!({"status":"ok"})) }),

@@ -1,15 +1,20 @@
 # Merge this site block into the existing host Caddyfile.
+# Alex shares hermes.salepie.online with Hermes: only the paths below go to Alex.
 hermes.salepie.online {
     handle /api/line/webhook {
         reverse_proxy 127.0.0.1:18080
     }
 
+    # Alex admin workspace: Next.js frontend, which proxies /api to the backend.
+    @alex {
+        path / /favicon.ico /_next/* /api/health /api/admin/* /api/inquiries /api/inquiries/* /api/conversations/* /api/line/* /api/draft-requests/* /api/media/*
+        not path /api/line/webhook
+    }
+    handle @alex {
+        reverse_proxy 127.0.0.1:18081
+    }
+
     handle {
         reverse_proxy localhost:8646
     }
-}
-
-# Add DNS for this hostname first. Preserve the existing Hermes site above.
-admin.salepie.online {
-    reverse_proxy 127.0.0.1:18081
 }
