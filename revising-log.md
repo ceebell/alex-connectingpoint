@@ -4,6 +4,13 @@
 
 <!-- entries -->
 
+## 2026-10-25 23:36 — แก้ frontend release ขึ้น Git ไม่ครบ (checksum mismatch บน server)
+- **คำอธิบาย:** `docker-build.sh --full-stack` บน server ล้มด้วย "Frontend checksum mismatch" เพราะ `.gitignore` มี `data/` ซึ่ง ignore โฟลเดอร์ชื่อ data ทุกระดับ ทำให้ `dist/frontend-linux/node_modules/caniuse-lite/data/` 588 ไฟล์ไม่เข้า Git (local 2011 ไฟล์ใน node_modules, Git 1423) จึงจำกัดให้ ignore เฉพาะ `/data/` ที่ root ตามเจตนาเดิม (ข้อมูล MongoDB dev)
+- **โฟลเดอร์ `./`**
+  - `.gitignore` — แก้: `data/` → `/data/`
+- **ผลตรวจสอบ:** หลังแก้ไม่มีไฟล์ใน dist/frontend-linux, dist/oa-connector-linux, dist/line-linux ถูก ignore; root data/ ยังถูก ignore; ไม่มีไฟล์ใหม่นอก dist โผล่ (billing_wth_text/ ยัง ignore ทั้งโฟลเดอร์); `sha256sum -c frontend.sha256` บน local ผ่าน 2108 ไฟล์ และ git attr ของไฟล์เหล่านี้ไม่แปลง line ending; release เดิม front-20261025153210-4e1f9f6df1b1 ใช้ต่อได้ไม่ต้อง build ใหม่
+- **สถานะ server (อ่านอย่างเดียว):** อยู่ที่ commit 29f1ee0, Caddyfile ยังเป็นรุ่นเดิม (ผู้ใช้รัน `caddy validate` โดยไม่ระบุ --config จึงไปตรวจ config JSON ว่าง); ยังไม่ commit/push
+
 ## 2026-10-25 22:49 — ใช้ hermes.salepie.online เป็น URL ของหน้า Alex และ LINE Login
 - **คำอธิบาย:** ผู้ใช้ให้ใช้ hermes.salepie.online ตรวจ server แบบอ่านอย่างเดียวพบว่า domain นี้ส่ง /api/line/webhook ไป backend 18080 และ path อื่นไป Hermes agent (aiohttp, localhost:8646) จึงใช้ร่วมกันด้วย Caddy path routing: เฉพาะ path ของ Alex ไป admin frontend 18081, webhook คงเดิม, ที่เหลือไป Hermes ตามเดิม; Hermes ตอบ 404 ทุก path ของ Alex จึงไม่ชนกัน
 - **โฟลเดอร์ `docker/`**

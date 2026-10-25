@@ -35,7 +35,7 @@ dist/oa-connector-linux/**/.env.*
 connectors/line-oa/build/
 
 # Local MongoDB data (runall.bat)
-data/
+/data/
 
 # Legacy reference application has its own repository and local configuration.
 billing_wth_text/
