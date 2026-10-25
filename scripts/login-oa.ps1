@@ -5,7 +5,7 @@ try {
     if ($SshHost -notmatch '^[A-Za-z0-9][A-Za-z0-9_.@-]*$') { throw 'Invalid SSH host.' }
     $listeners=[System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
     if ($listeners | Where-Object Port -EQ $Port) { throw "Port $Port is already in use. Close the previous login-oa window first." }
-    $ssh=(Get-Command ssh.exe -CommandType Application -ErrorAction Stop).Source
+    $ssh=(Get-Command ssh.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $tunnel=Start-Process -FilePath $ssh -ArgumentList @('-N','-T','-n','-o','BatchMode=yes','-o','ConnectTimeout=10','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=15','-L',"127.0.0.1:${Port}:127.0.0.1:${Port}",$SshHost) -PassThru -WindowStyle Hidden
     $deadline=[DateTime]::UtcNow.AddSeconds(12)
     while (-not ([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object Port -EQ $Port)) {

@@ -4,6 +4,14 @@
 
 <!-- entries -->
 
+## 2026-10-25 20:55 — แก้ login-oa.bat ล้มเมื่อมี ssh.exe หลายตัวใน PATH
+- **คำอธิบาย:** เครื่องผู้ใช้มี ssh.exe ทั้ง Windows OpenSSH และ Git usr/bin ทำให้ Get-Command คืน array และ Start-Process -FilePath ล้มด้วย "Cannot convert System.Object[]" จึงเลือกตัวแรกใน PATH แบบเดียวกับ run-frontend.ps1
+- **โฟลเดอร์ `scripts/`**
+  - `login-oa.ps1` — แก้: ใช้ `Select-Object -First 1` ก่อนอ่าน `.Source` ของ ssh.exe
+- **ผลตรวจสอบ:** PowerShell parser ผ่าน; ssh ที่เลือกคือ C:\Windows\System32\OpenSSH\ssh.exe; ทดสอบ tunnel 127.0.0.1:18082 ไป Hermes ได้ /health = ok และหน้าควบคุมตอบ 401 (ต้อง Basic auth ตามที่ออกแบบ) แล้วปิด tunnel ที่สร้างเอง
+- **สถานะ Ubuntu (อ่านอย่างเดียว):** server อยู่ที่ commit 91cf6e7, connector tag oa-20261025082952-9a6bfea570b9 listen 127.0.0.1:18082 และ backend 18080 health ok; ไม่ใช้ sudo ไม่แก้บริการบน server
+- **หมายเหตุ:** `bash ./loadgit.sh` ที่ผู้ใช้รันบน Windows เรียก WSL ที่ไม่มี /bin/bash จึงล้ม — สคริปต์ .sh ต้องรันบน Ubuntu ผ่าน SSH ไม่ใช่ปัญหาของ repo
+
 ## 2026-10-25 20:32 — ให้ runall ใช้ frontend เดิมและเปิด SSH tunnel กลับมาได้
 - **คำอธิบาย:** พบ Next.js ของโปรเจกต์ยังทำงานที่พอร์ต 3000 แต่ SSH tunnel 28080 หลุด ทำให้ API ตอบ 500 และ launcher เดิมปฏิเสธการรันซ้ำ จึงเพิ่มการตรวจและใช้บริการเดิม พร้อมเปิด tunnel ใหม่เมื่อขาดการเชื่อมต่อ
 - **โฟลเดอร์ `scripts/`**
