@@ -18,6 +18,9 @@ use sha2::Sha256;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+#[path = "tests_step2.rs"]
+mod step2;
+
 fn config() -> Config {
     Config {
         port: 8080,
@@ -139,6 +142,7 @@ async fn public_routes_verify_before_database_access() {
         db: client.database(&config.mongodb_db),
         config: Arc::new(config),
         http: reqwest::Client::new(),
+        login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let (status, body) = request(&state, "/api/health", "GET", Value::Null, false).await;
     assert_eq!(status, StatusCode::OK);
@@ -201,6 +205,7 @@ async fn webhook_does_not_acknowledge_database_failure() {
         db: client.database(&config.mongodb_db),
         config: Arc::new(config),
         http: reqwest::Client::new(),
+        login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let (status, response) = request(
         &state,

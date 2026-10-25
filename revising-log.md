@@ -4,6 +4,72 @@
 
 <!-- entries -->
 
+## 2026-10-25 13:39 — ตรวจข้อความ LINE ไม่แสดงในหน้าหลังบ้าน local
+- **คำอธิบาย:** หน้าเว็บ local อ่าน backend localhost:8080 และ MongoDB localhost/database myapp ซึ่งไม่มี events หรือ inquiries แต่ LINE webhook เปิดใช้งานและส่งเข้า https://hermes.salepie.online/api/line/webhook บน Ubuntu
+- **ผลตรวจสอบ:** LINE bot ตรงกับ destination ที่ตั้งไว้; Ubuntu /api/health ผ่าน, line_events DONE 7 รายการ และ inquiries 1 รายการใน database alex_line จึงยืนยันว่าข้อความถูกเก็บบน server ไม่ใช่ฐาน local ไม่มีการแสดงข้อความลูกค้าหรือ credentials ในผลตรวจ
+- **สถานะ deploy:** Ubuntu ยังเป็น commit d5a2d14; /api/admin/session ตอบ 404, frontend 18081 ยังไม่เปิด, ยังไม่มี admin.salepie.online ใน Caddy และ DNS ไม่ resolve ต้องส่ง compiled releases ขึ้น Git แล้ว pull/package runtime/deploy full-stack พร้อมตั้ง admin DNS/Caddy ตาม docs/step-2-admin.md เพื่อให้หน้าหลังบ้านอ่านข้อมูลชุดเดียวกับ webhook
+- **ขอบเขต:** ตรวจแบบ read-only ไม่เปลี่ยน webhook/ฐานข้อมูล/config ไม่สร้างข้อมูลจำลอง ไม่ build/commit/push หรือแก้บริการ production
+
+## 2026-10-25 13:35 — ยืนยันล็อกอินหลัง backend โหลดรหัสใหม่
+- **คำอธิบาย:** ตรวจภาพ error แล้วพบช่วงแรก local backend ยังเป็น process เดิม 54568 และ login ด้วยค่าปัจจุบันใน .env ได้ 401 ไม่มี backend/.env ที่ทับ root config ระหว่างตรวจ process เดิมถูกหยุดและมี backend ใหม่ 8584 ฟังพอร์ต 8080
+- **ผลตรวจสอบ:** เรียก POST /api/admin/login ผ่าน frontend http://localhost:3000 โดยอ่าน credentials จาก .env ในหน่วยความจำ ได้ HTTP 200 และตรวจ GET /api/admin/session ด้วย cookie jar เดียวกันได้ HTTP 200 จึงยืนยันว่า backend ใหม่โหลดรหัสล่าสุดและ session ผ่าน frontend proxy ทำงานแล้ว ไม่พิมพ์รหัส/token/cookie ในผลตรวจ
+- **ขอบเขต:** ไม่แก้ source/config ไม่หยุดหรือเริ่ม process ด้วย agent ไม่สร้าง restart script เนื่องจาก backend ถูก restart และตรวจสำเร็จแล้ว ไม่มีการ build/commit/push หรือแก้บริการบน Ubuntu
+
+## 2026-10-25 12:23 — ตรวจรหัสล็อกอินและปรับให้ตรงกับรหัสล่าสุด
+- **คำอธิบาย:** พบว่ารหัสที่ผู้ใช้แจ้งล่าสุดต่างจากค่าที่บันทึกก่อนหน้าหนึ่งตัวอักษร ทดสอบรหัสเดิมจาก .env แล้วได้ HTTP 200 ทั้ง backend 8080 และ frontend proxy 3000 จึงยืนยันว่าเส้นทาง login ทำงาน และเปลี่ยนเฉพาะรหัสให้ตรงกับค่าล่าสุดโดยรับผ่าน hidden input
+- **โฟลเดอร์ `./` (local)**
+  - `.env` — แก้: ADMIN_PASSWORD เป็นค่าล่าสุด คง username/admin cookie/config อื่น; ไม่พิมพ์รหัสหรือ token ในผลตรวจ
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `.env` — แก้: อัปเดตรหัสเดียวกันและรักษาสิทธิ์ 600; ยังไม่ได้ redeploy Docker
+- **ผลตรวจสอบ:** ไม่มี admin key ซ้ำหรือ ADMIN_PASSWORD override ใน environment ของ agent; local backend เป็น binary ของ workspace และ proxy ตอบ login ได้ด้วยค่าเดิม ก่อน restart การลองรหัสใหม่ยังได้ 401 เนื่องจาก process เก็บ config ตอน startup; Ubuntu ยังอยู่ commit d5a2d14 และ admin/session ตอบ 404 ไม่มี frontend 18081
+- **ข้อจำกัด:** คำสั่งหยุด/เริ่ม local backend ถูก automatic approval review ปฏิเสธด้วยข้อความ blocked by policy ก่อนรัน จึงไม่ได้หยุด process หรือเริ่มบริการใหม่ ผู้ใช้ต้อง Ctrl+C ในหน้าต่าง backend แล้วเรียก runall.bat เพื่อโหลดรหัสใหม่ ไม่มีการแก้ source/build/commit/push
+
+## 2026-10-25 11:58 — ตั้งบัญชีแอดมินสำหรับทดสอบหน้าหลังบ้าน
+- **คำอธิบาย:** ใช้รหัสที่ผู้ใช้กำหนดตั้ง ADMIN_PASSWORD และชื่อผู้ใช้ admin โดยรับรหัสผ่านผ่าน hidden input ไม่ใส่ใน script, command arguments, log หรือไฟล์ที่เข้า Git
+- **โฟลเดอร์ `./` (local)**
+  - `.env` — แก้: ตั้ง ADMIN_USERNAME/ADMIN_PASSWORD และ ADMIN_COOKIE_SECURE=false สำหรับ local HTTP; คง config อื่นไว้
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `.env` — แก้: ตั้งบัญชีเดียวกันและ ADMIN_COOKIE_SECURE=true สำหรับ HTTPS พร้อมรักษาสิทธิ์ไฟล์ 600; ต้อง deploy/restart backend เพื่อโหลดค่าใหม่
+- **ผลตรวจสอบ:** .env ถูก ignore ทั้ง local/server; server backend health ผ่าน แต่ยังอยู่ commit d5a2d14 ไม่มี admin stack/พอร์ต 18081 และ Hermes API 8642 ยังไม่เปิด; ยังไม่มี Caddy site/DNS ที่ตรวจพบสำหรับ admin.salepie.online จึงต้อง push/pull compiled Step 2 release และตั้ง HTTPS ก่อนทดสอบบน server
+- **ขอบเขต:** ไม่แสดงหรือบันทึกรหัสจริงใน log นี้ ไม่มีการ commit/push, compile บน Ubuntu หรือเปลี่ยนบริการ Docker/Caddy ของ server
+
+## 2026-10-25 00:20 — เพิ่มภาพ infographic Step 3–4 (Hermes เชื่อม Alex ผ่าน MCP)
+- **คำอธิบาย:** ผู้ใช้ส่งภาพอธิบายตำแหน่ง MCP Client, Alex Connector / MCP Server และ Alex REST API สำหรับ Step 3–4 จึงแปลง PNG 2.1 MB เป็น JPEG คุณภาพ 88 (≈515 KB, 1024×1536) แล้วฝังแบบ base64 ตามรูปแบบภาพเดิมในไฟล์
+- **โฟลเดอร์ `./` (root)**
+  - `alex-line-hermes-mcp-workflow.html` — แก้: เพิ่ม `<figure id="step3-4-mcp-diagram">` พร้อม alt และ figcaption ภาษาไทย ใต้ Input/เจ้าของงานหลักของหัวข้อ 6 (Step 3) โดย caption ลิงก์ไปหัวข้อ 7 (Step 4) และหัวข้อ 9 (MCP)
+
+## 2026-10-25 00:20 — สร้างหน้าหลังบ้านแอดมินและ Step 2 เตรียมร่างออเดอร์
+- **คำอธิบาย:** สร้าง frontend และ backend ให้แอดมินเลือก inquiry อ่านแชท/รูป ใส่สรุป สั่ง Hermes สกัดร่าง ตรวจข้อมูล แก้ไขด้วยมือ ยืนยันข้อมูล และดูประวัติเวอร์ชัน โดยยังไม่เช็คคิว ส่งข้อความถึงลูกค้า หรือ submit order
+- **โฟลเดอร์ `backend/`**
+  - `Cargo.toml` — แก้: เปิด feature json ของ reqwest เดิมโดยไม่เพิ่ม crate ใหม่; Cargo.lock คงอยู่ใน repository
+  - `src/config.rs`, `src/state.rs`, `src/error.rs`, `src/main.rs` — เพิ่ม/แก้: config บัญชีแอดมิน/Hermes, login throttling, error codes ที่ไม่แสดง secret และแยก draft worker ที่ใช้ MongoDB queue
+  - `src/routes/session.rs`, `src/routes/mod.rs`, `src/routes/admin.rs` — เพิ่ม/แก้: login/logout/session ด้วย signed HttpOnly SameSite=Strict cookie อายุ 8 ชั่วโมงและ Secure สำหรับ production, X-Admin-Request สำหรับ mutation, คง Bearer auth สำหรับเครื่องมือภายใน และ JSON error รูปแบบเดียวกัน
+  - `src/routes/drafts.rs`, `src/db/drafts.rs`, `src/db/indexes.rs`, `src/db/mod.rs` — เพิ่ม/แก้: API เตรียม/แก้/อ่านร่างและสถานะงาน, collections admin_summaries/draft_requests/order_drafts, idempotency ต่อ request ID, expected version/context hash, lease/fencing/recovery และ atomic active-draft pointer โดยไม่ใช้ replica-set transactions
+  - `src/models/draft.rs`, `src/models/mod.rs`, `src/order_draft_prompt.txt`, `src/draft_worker.rs` — เพิ่ม: schema และ validators สำหรับ Gregorian date, quantity, integer-satang, evidence source/quote, missing/conflicts/questions, latest confirmed fields, ภาพจาก GridFS เป็น data URLs และ Hermes Chat Completions ที่ตรวจ finish reason; ตรวจ extraction profile ว่าปิด tools ก่อนส่งข้อมูลลูกค้า
+  - `src/db/events.rs` — แก้: เก็บ conversation_key ตั้งแต่รับ webhook เพื่อตรวจข้อความใหม่ที่ยังไม่ assign; ไม่ใช้ข้อความ NEEDS_ADMIN ที่ยังไม่ทราบ inquiry เป็นบริบท AI
+  - `src/tests.rs`, `src/tests_step2.rs` — เพิ่ม/แก้: session/CSRF/JSON rejection, idempotency/version recovery, source isolation, invalid dates/evidence, tools refusal, context race, ambiguous messages และการซ่อนร่างที่อ้างอิงข้อความ unsend พร้อมสร้างร่างใหม่ต่อได้
+- **โฟลเดอร์ `frontend/`**
+  - `package.json`, `package-lock.json`, `tsconfig.json`, `next.config.ts`, `postcss.config.mjs`, `eslint.config.mjs`, `public/.gitkeep` — เพิ่ม/แก้: Next.js App Router + TypeScript + Tailwind, npm lockfile, standalone output และ relative API proxy ที่ไม่ส่ง server credentials เข้า client
+  - `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/globals.css` — เพิ่ม: Mitr Thai/Latin, หน้าล็อกอินและ workspace สีขาว/เทา เขียว/ส้ม/ฟ้า รองรับ desktop/mobile
+  - `src/components/admin-workspace.tsx`, `src/components/draft-editor.tsx`, `src/lib/api.ts` — เพิ่ม: รายการ inquiry/ค้นหา/โหลดต่อ, แชท/รูปที่มีสิทธิ์อ่าน, สรุปแอดมิน/เลือกรูป, polling งานที่กลับมาเปิดต่อได้, แก้ร่าง/ยืนยันข้อมูล/หลักฐาน/ประวัติ และ normalize MongoDB Extended JSON
+  - `AGENTS.md` — เพิ่มโดย Next.js dev: คำแนะนำให้อ่านเอกสารของ Next.js รุ่นที่ติดตั้งก่อนแก้ frontend
+- **โฟลเดอร์ `./` (root) และ `docker/`**
+  - `.env.example`, `AGENTS.md` — แก้: config ใหม่และวิธีทำงานของ Step 2 โดยไม่ใส่ secret จริง
+  - `docker-stack.admin.yml` — เพิ่ม: frontend overlay บน LINE stack เดิม ใช้ line_net และ host port 18081 พร้อม pin node และ rollback
+  - `docker-stack.line.yml`, `deploy-line.sh`, `docker-deploy.sh` — แก้: ส่ง config backend ใหม่และ deploy --full-stack ด้วย LINE base + admin overlay เพื่อรักษา Mongo volume/network/พอร์ต webhook เดิม ตรวจ admin config/tags/image checksums และรอ frontend health
+  - `docker/frontend.Dockerfile`, `docker/Caddyfile.line.example` — แก้: runtime packaging และตัวอย่าง admin.salepie.online ไป frontend 18081 โดยเก็บ Hermes/webhook site เดิม
+- **โฟลเดอร์ `scripts/`, `docs/` และ guideline**
+  - `scripts/build-line.ps1` — แก้: รวม runtime admin overlay และคู่มือ Step 2 ใน local release archive สำรอง
+  - `docs/step-2-admin.md` — เพิ่ม: แยกหน้าที่ผู้พัฒนา/ผู้ดูแลระบบ/แอดมิน, config, Hermes extraction profile, HTTPS/Caddy, local build → Git → runtime Docker deploy, API และวิธีทดสอบ/ข้อจำกัด
+  - `docs/build-local.md`, `docs/deploy-line-server.md`, `docs/step-1-line-inquiry.md` — แก้: อ้างอิง frontend ที่มีแล้วและการส่งต่องาน Step 2
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: สถานะ implementation และสิ่งที่แต่ละบทบาทต้อง config/run; คง embedded images เดิมทั้ง 3 ภาพ
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — build จริงบน local: rel-20261024171734-2cb9ca0679a0, SHA256 2cb9ca0679a09d3a96ad4a00064fd8fefe783f691d6f81702c73690476956522
+  - `frontend-linux/` — build จริงบน local: front-20261024170737-dee53199121e พร้อม Linux standalone dependencies/static/font และ checksums สำหรับ runtime Docker
+- **ผลตรวจสอบ:** cargo fmt --check และ clippy --all-targets -- -D warnings ผ่าน; unit tests 7 และ MongoDB integration tests ทั้ง 3 ผ่าน; npm lint/build ผ่าน; build-backend.bat และ build-frontend.bat ผ่านจริง; Chrome desktop/mobile ทดสอบ signed webhook → แชท/ภาพ → login → Hermes จำลอง → ร่าง v1 → manual/confirm v2 → history/reload ผ่าน; real runtime Docker ผ่าน authenticated MongoDB startup, login/cookie, Next proxy/static assets; real Swarm config rendering และ mock deploy ตรวจการคง volume/network/ports และปฏิเสธ config/image ที่ผิดผ่าน โดยไม่เปลี่ยน Swarm จริง; runall.bat -Check, HTML role/search/mobile/print regression, frontend secret scan, Git inclusion, line endings และ git diff --check ผ่าน
+- **ขอบเขตและสิ่งที่ต้องตั้งค่าจริง:** ยังไม่ได้ตั้งบัญชี/Hermes API/HTTPS หรือ deploy บน Ubuntu และไม่ได้ commit/push; ทดสอบ AI กับ Hermes จำลอง ไม่ส่งข้อมูลลูกค้าจริงให้โมเดล ผู้ดูแลต้องตั้ง .env และ extraction profile ก่อนใช้ AI จริง รองรับ 500 events/4 ภาพรวม 8 MB ต่อการเตรียมร่าง และยังใช้ API assign ของ Step 1 สำหรับข้อความกำกวมหลาย inquiry
+- **ไฟล์ช่วยใน `data/` (ignored):** test-step2-ui.py, test-step2-runtime.py, update-step2-guide.py และ fixtures/screenshots ใช้ข้อมูลสมมติ; ลบ local Mongo test container ที่สร้างสำหรับงานนี้แล้ว
+
 ## 2026-10-24 23:44 — เพิ่มภาพ infographic Step 2 ในเอกสาร workflow
 - **คำอธิบาย:** ผู้ใช้ส่งภาพสรุป Step 2 (จากแชทและสรุปแอดมิน → ร่างออเดอร์) ให้วางในหัวข้อ 5 จึงแปลง PNG 2.5 MB เป็น JPEG คุณภาพ 88 (≈573 KB, 887×1774) แล้วฝังแบบ base64 ตามรูปแบบภาพเดิมในไฟล์ เพื่อให้ HTML ยังเป็นไฟล์เดียวเปิดได้ทันที
 - **โฟลเดอร์ `./` (root)**

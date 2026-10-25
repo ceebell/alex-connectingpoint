@@ -77,9 +77,10 @@ pub struct Login {
 pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(input): Json<Login>,
+    input: Result<Json<Login>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>), AppError> {
     require_browser_header(&headers)?;
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     let expected = state
         .config
         .admin_password

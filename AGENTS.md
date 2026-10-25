@@ -58,6 +58,8 @@
 - ทุก route ขึ้นต้น `/api` · health check ที่ `GET /api/health` → `{"status":"ok"}`
 - Error response รูปแบบเดียวกัน: `{"error":{"code":"...","message":"..."}}` ผ่าน `AppError` ใน `error.rs`
 - Config อ่านจาก env เท่านั้น: `PORT`, `MONGODB_URI`, `MONGODB_DB`, `RUST_LOG`, `CORS_ORIGIN`
+- Step 2 เพิ่ม `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_COOKIE_SECURE`, `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_TIMEOUT_SECONDS`; ห้ามส่ง server token/API key เข้า frontend bundle
+- Browser admin ใช้ signed HttpOnly session cookie และ X-Admin-Request สำหรับ mutation; API ภายในเดิมยังรับ Bearer token ร่างเป็นเวอร์ชันพร้อม evidence และต้องตรวจ source ใหม่ก่อน commit
 - ห้าม `unwrap()` / `expect()` ใน handler — คืน `Result<_, AppError>`
 - แยก layer: `routes/` (HTTP) → `models/` (struct + serde) → `db/` (query)
 - ก่อนจบงานต้องผ่าน: `cargo fmt --check` · `cargo clippy -- -D warnings` · `cargo test`
@@ -110,6 +112,7 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 - **ลำดับบน server:** `bash ./loadgit.sh main` → `sudo bash ./docker-build.sh` สร้าง image จาก compiled object ที่ pull มา → `sudo bash ./docker-deploy.sh` เปิด/อัปเดตบริการ
 - Git เก็บ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` และ Linux frontend standalone ใน `dist/frontend-linux/` เมื่อมี frontend เพื่อให้ pull แล้วนำไปใส่ Docker ได้ทันที; `.env`, Windows output และ archives ยังถูก ignore
 - `build-frontend.bat` สร้าง frontend บน local และเก็บ runtime dependencies/public/static พร้อม checksum และ tag แยก; Ubuntu ใช้ `docker-build.sh --full-stack` / `docker-deploy.sh --full-stack` เมื่อมีทั้งสอง release
+- Full-stack ของหน้าหลังบ้านใช้ `docker-stack.line.yml` + `docker-stack.admin.yml` เพื่อคง Mongo volume/LINE network เดิม; ไม่ใช้ docker-stack.yml ชุด legacy สำหรับอัปเกรด LINE ที่มีข้อมูลอยู่แล้ว ดู docs/step-2-admin.md
 - `build-line.bat` ใช้ Docker Desktop บน local เพื่อสร้าง Linux/amd64 release พร้อม archive; `deploy-line.sh` ตรวจ release และนำเข้า runtime image บน Ubuntu
 - Build context = root ของ repo · ใช้ `-f docker/<name>.Dockerfile`
 - Image tag backend ใช้ `dist/line-linux/release.tag`; frontend ใช้ `dist/frontend-linux/frontend.tag` จาก local เพื่ออัปเดตแยกกัน — **ห้ามใช้แค่ `latest`** เพราะ Swarm จะไม่ rolling update ถ้า tag เดิม

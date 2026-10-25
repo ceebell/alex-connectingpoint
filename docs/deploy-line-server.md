@@ -18,7 +18,7 @@ rungit.bat "Update Linux release"
 
 ต้อง commit/push ทั้ง binary, checksum, tag, manifest และโค้ดรุ่นเดียวกัน Git เก็บเฉพาะ 4 ไฟล์ใน `dist/line-linux/`: `backend`, `backend.sha256`, `release.tag`, `release.json` ส่วน Windows output, archive, cache, `billing_wth_text/` และ `.env` ยังถูก ignore
 
-สำหรับ frontend ให้ใช้ `build-frontend.bat` เมื่อเพิ่ม frontend application แล้ว ได้ Linux standalone ใน `dist/frontend-linux/` ที่เข้า Git พร้อม dependencies และ tag แยก ดูเงื่อนไขและตัวเลือกใน [คู่มือ build local](build-local.md)
+หน้าหลังบ้าน Step 2 ใช้ `build-frontend.bat` ได้ Linux standalone ใน `dist/frontend-linux/` ที่เข้า Gitพร้อม dependencies และ tag แยก ดู [คู่มือหน้าหลังบ้าน/config/deploy Step 2](step-2-admin.md) และ [คู่มือ build local](build-local.md)
 
 ## ผู้ดูแลระบบ: บน Ubuntu
 

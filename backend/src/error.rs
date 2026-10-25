@@ -41,8 +41,12 @@ pub enum AppError {
     HermesUnavailable,
     #[error("Hermes did not return a valid completed draft")]
     HermesFailed,
+    #[error("Hermes extraction profile must have all tools disabled")]
+    HermesToolsEnabled,
     #[error("New or withdrawn messages require preparing a fresh draft")]
     ContextChanged,
+    #[error("Waiting for incoming messages to finish processing")]
+    DraftWaiting,
 }
 
 impl AppError {
@@ -59,7 +63,9 @@ impl AppError {
             Self::LoginLimited => "LOGIN_RATE_LIMITED",
             Self::HermesUnavailable => "HERMES_NOT_CONFIGURED",
             Self::HermesFailed => "HERMES_FAILED",
+            Self::HermesToolsEnabled => "HERMES_TOOLS_ENABLED",
             Self::ContextChanged => "CONTEXT_CHANGED",
+            Self::DraftWaiting => "DRAFT_WAITING",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -76,10 +82,10 @@ impl IntoResponse for AppError {
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::DraftConflict | Self::ContextChanged => StatusCode::CONFLICT,
+            Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-            Self::HermesFailed => StatusCode::BAD_GATEWAY,
+            Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,
             Self::Database(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

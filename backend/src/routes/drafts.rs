@@ -21,8 +21,9 @@ fn job_view(record: &Document) -> Result<Value, AppError> {
 pub async fn prepare(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,
-    Json(input): Json<PrepareInput>,
+    input: Result<Json<PrepareInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     if input.fields.is_some() || !input.confirmed_fields.is_empty() {
         return Err(AppError::BadRequest);
     }
@@ -37,8 +38,9 @@ pub async fn prepare(
 pub async fn revise(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,
-    Json(input): Json<PrepareInput>,
+    input: Result<Json<PrepareInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     if input.fields.is_none() {
         return Err(AppError::BadRequest);
     }
@@ -69,7 +71,19 @@ pub async fn list(
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let inquiry = drafts::inquiry(&state, id(&inquiry)?).await?;
+    let mut filter = state.scope();
+    filter.insert(
+        "inquiry_id",
+        inquiry.get_object_id("_id").map_err(|_| AppError::Data)?,
+    );
+    let latest = state
+        .collection("draft_requests")
+        .find_one(filter)
+        .sort(mongodb::bson::doc! {"created_at":-1})
+        .await?;
+    let latest = latest.as_ref().map(job_view).transpose()?;
+    let context_hash = drafts::snapshot(&state, &inquiry).await?.hash;
     Ok(Json(
-        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?}),
+        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?,"latest_request":latest,"context_hash":context_hash}),
     ))
 }

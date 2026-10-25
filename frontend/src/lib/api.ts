@@ -8,6 +8,7 @@ const errors: Record<string, string> = {
   LOGIN_RATE_LIMITED: "ลองเข้าสู่ระบบหลายครั้ง กรุณารอ 1 นาที",
   HERMES_NOT_CONFIGURED: "AI ยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ คุณยังแก้ร่างด้วยมือได้",
   HERMES_FAILED: "AI ทำงานไม่สำเร็จ กรุณาลองใหม่หรือตรวจการเชื่อมต่อกับผู้ดูแลระบบ",
+  HERMES_TOOLS_ENABLED: "กรุณาให้ผู้ดูแลระบบตั้งค่า Hermes สำหรับการสกัดร่างก่อนใช้งาน",
   CONTEXT_CHANGED: "มีข้อความใหม่หรือข้อความถูกยกเลิก กรุณารอประมวลผลแล้วเตรียมร่างอีกครั้ง",
   DRAFT_CONFLICT: "ร่างมีการเปลี่ยนแปลงหรือมีผู้ดูแลกำลังทำงาน กรุณาโหลดข้อมูลล่าสุด",
   DATABASE_UNAVAILABLE: "ฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่",
@@ -53,7 +54,7 @@ export type Fields = {
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
 export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[] } };
 export type Job = { id: string; status: string; error_code: string | null };
-export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null };
+export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null; context_hash:string };
 export const emptyFields = (): Fields => ({ intent: null, customer_name: null, customer_phone: null, branch: null, items: [], rental: { usage_date: null, pickup_date: null, return_date: null, fulfillment_method: null }, amounts: { rental_fee_satang: null, deposit_satang: null }, notes: null });
 export const labels: Record<string, string> = { intent: "ความต้องการ", customer_name: "ชื่อลูกค้า", customer_phone: "เบอร์โทร", branch: "สาขา", items: "รายการสินค้า", product_code: "รหัสสินค้า", color: "สี", size: "ไซซ์", quantity: "จำนวน", "rental.usage_date": "วันใช้งาน", "rental.pickup_date": "วันรับ", "rental.return_date": "วันคืน", "rental.fulfillment_method": "วิธีรับสินค้า", "amounts.rental_fee_satang": "ค่าเช่า", "amounts.deposit_satang": "มัดจำ", notes: "หมายเหตุ" };
 export function fieldLabel(key: string) { const match = key.match(/^items\.(\d+)\.(.+)$/); return match ? `สินค้ารายการ ${Number(match[1]) + 1} · ${labels[match[2]] ?? match[2]}` : labels[key] ?? key; }

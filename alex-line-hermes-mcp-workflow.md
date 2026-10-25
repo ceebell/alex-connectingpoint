@@ -160,7 +160,7 @@ LINE แนะนำการประมวลผล webhook แบบ asynchro
 
 **ผู้พัฒนา:** compile Linux/amd64 บน local ด้วย `build-backend.bat` (`build-line.bat` เดิม) แล้วใช้ `rungit.bat "Update Linux release"` commit/push โค้ดและไฟล์ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` ให้เป็นรุ่นเดียวกัน Windows output/archives และ `.env` ยังถูก ignore
 
-สำหรับ frontend ใช้ `build-frontend.bat` เมื่อเพิ่ม frontend application แล้ว สคริปต์สร้าง Linux standalone ใน `dist/frontend-linux/` พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน [คู่มือ build local](docs/build-local.md)
+หน้าหลังบ้านใช้ `build-frontend.bat` ได้แล้ว สคริปต์สร้าง Linux standalone ใน `dist/frontend-linux/` พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน [คู่มือ build local](docs/build-local.md)
 
 **ผู้ดูแลระบบ:** บน Ubuntu ให้ทำตามลำดับ:
 
@@ -183,6 +183,16 @@ Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime i
 เมื่อ health ผ่าน ตั้ง LINE Webhook URL เป็น `https://hermes.salepie.online/api/line/webhook` เส้นทางนี้ผ่าน Caddy ไป backend พอร์ต 18080 ส่วนเส้นทางอื่นไป Hermes เดิมพอร์ต 8646 ดู config/ตรวจรับใน [คู่มือ deploy](docs/deploy-line-server.md) หลัง deploy ไม่ต้องเปิด local หรือ SSH tunnel ค้างไว้
 
 ## 5. Step 2 — รวมสรุปแอดมินและสกัดร่างออเดอร์
+
+**สถานะโค้ด:** มี frontend หลังบ้านและ backend สำหรับ Step 2 แล้ว แอดมินล็อกอิน เลือก inquiry อ่านแชท/เลือกรูป ใส่สรุป และกดเตรียมออเดอร์ด้วย AI ได้เมื่อผู้ดูแลตั้ง Hermes API เรียบร้อย ผลผ่าน validator แล้วเก็บเป็นร่างเวอร์ชันใหม่ พร้อมหลักฐาน ข้อมูลที่ขาดและขัดกัน แก้ร่างด้วยมือและดูประวัติได้ ยังไม่เช็คคิวหรือ submit order
+
+| ผู้รับผิดชอบ | ต้องลงมือทำก่อนใช้งาน |
+| --- | --- |
+| ผู้พัฒนา | build-backend.bat และ build-frontend.bat บน local แล้วส่ง source + compiled release ผ่าน Git |
+| ผู้ดูแลระบบ | ตั้ง ADMIN_USERNAME/ADMIN_PASSWORD, HERMES_API_URL/HERMES_API_KEY ของ extraction profile ที่ปิด tools, production cookie/HTTPS; pull แล้ว docker-build.sh --full-stack และ docker-deploy.sh --full-stack |
+| แอดมินร้าน | ล็อกอินหน้าหลังบ้าน เลือก inquiry วางสรุป เลือกรูป ตรวจ/แก้ร่างและยืนยันข้อมูลที่กรอก |
+
+ดู [คู่มือ Step 2: config, deploy และวิธีทดสอบ](docs/step-2-admin.md) สำหรับค่าที่ต้องเพิ่มใน .env และ Caddy งาน AI ถูกเก็บใน draft_requests; ร่าง/สรุปอยู่ใน order_drafts/admin_summaries และใช้ version/context เพื่อป้องกันการเขียนทับข้อมูลที่เปลี่ยนไป
 
 **Input:** แชทที่เกี่ยวข้อง รูป สรุปแอดมิน ร่างก่อนหน้า และการยืนยันล่าสุด
 

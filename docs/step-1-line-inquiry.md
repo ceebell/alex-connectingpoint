@@ -105,7 +105,7 @@ unsend สร้าง tombstone และลบเนื้อหาข้อ�
 
 ## ขอบเขตส่งต่อ Step 2
 
-งานนี้ยังไม่เรียก Hermes, Alex API, MCP หรือส่ง reply ให้ลูกค้า `analysis_jobs` คือ durable handoff สำหรับพัฒนา consumer ใน Step 2
+Step 1 ไม่เรียก Hermes โดยตรง ปัจจุบันมี [หน้าหลังบ้าน Step 2](step-2-admin.md) ให้แอดมินส่งสรุปและสั่งเตรียมร่างผ่าน draft_requests แล้ว โดยใช้ analysis_jobs เป็นตัวตรวจการรวมข้อความและบริบทที่เปลี่ยนไป ยังไม่มีการเรียก Alex API/MCP หรือส่ง reply ให้ลูกค้า
 
 consumer ต้องรอ `ready_at`, อ่าน event IDs/บริบทล่าสุด เรียงตาม event time ตรวจ tombstone และป้องกันการปิดงานทับข้อความใหม่ด้วย compare-and-set ของ snapshot `updated_at`/event IDs ต้องเช็กว่าข้อความในบทสนทนายังมี worker ประมวลผลค้างหรือไม่ก่อนสรุป burst และรองรับข้อความย้อนหลังที่มาถึงหลังการวิเคราะห์ครั้งก่อน ห้ามใช้ pagination cursor เป็นตัวบ่งชี้ว่าไม่มีเหตุการณ์ย้อนหลังเพิ่ม
 

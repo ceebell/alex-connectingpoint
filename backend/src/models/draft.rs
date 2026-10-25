@@ -77,6 +77,7 @@ pub struct PrepareInput {
     pub fields: Option<DraftFields>,
     #[serde(default)]
     pub confirmed_fields: Vec<String>,
+    pub context_hash: Option<String>,
 }
 
 impl PrepareInput {
@@ -191,7 +192,7 @@ impl DraftFields {
             .into_iter()
             .flatten()
         {
-            if !(0..=100_000_000_00).contains(&amount) {
+            if !(0..=10_000_000_000).contains(&amount) {
                 return Err(AppError::Validation("Invalid amount in satang"));
             }
         }

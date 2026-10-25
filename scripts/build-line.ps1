@@ -57,10 +57,10 @@ try {
     # Ship only compiled objects and runtime packaging files; never source or .env.
     $packageRoot = Join-Path $stageRoot 'package'
     $files = @('dist/line-linux/backend', 'dist/line-linux/backend.sha256', 'dist/line-linux/release.tag', 'dist/line-linux/release.json',
-        'docker/backend.Dockerfile', 'docker/Caddyfile.line.example', 'docker-stack.line.yml', 'deploy-line.sh',
+        'docker/backend.Dockerfile', 'docker/frontend.Dockerfile', 'docker/Caddyfile.line.example', 'docker-stack.line.yml', 'docker-stack.admin.yml', 'deploy-line.sh',
         'docker-build.sh', 'docker-deploy.sh', 'loadgit.sh', 'diagnose-line.sh', 'scripts/diagnose-line.py',
         'scripts/verify-line-release.sh', 'scripts/verify-frontend-release.sh', '.dockerignore', '.env.example', 'docs/deploy-line-server.md',
-        'docs/step-1-line-inquiry.md', 'docs/build-local.md', 'alex-line-hermes-mcp-workflow.md', 'alex-line-hermes-mcp-workflow.html')
+        'docs/step-1-line-inquiry.md', 'docs/step-2-admin.md', 'docs/build-local.md', 'alex-line-hermes-mcp-workflow.md', 'alex-line-hermes-mcp-workflow.html')
     foreach ($file in $files) {
         $destination = Join-Path $packageRoot $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null

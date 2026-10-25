@@ -4,6 +4,7 @@ const backend = process.env.BACKEND_URL ?? "http://localhost:8080";
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  allowedDevOrigins: ["localhost", "127.0.0.1"],
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${backend.replace(/\/$/, "")}/api/:path*` }];
   },

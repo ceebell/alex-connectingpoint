@@ -1,5 +1,5 @@
 # Runtime packaging only. Input must be standalone output built LOCALLY for Linux.
-# The current LINE-only release does not include a frontend.
+# Includes the admin workspace and same-origin backend proxy.
 FROM node:22-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0

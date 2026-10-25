@@ -17,7 +17,7 @@ build-backend.bat
 
 ## Frontend
 
-ต้องมี `frontend/package.json`, `frontend/package-lock.json` และ script `build` ใน package.json พร้อมตั้ง `output: "standalone"` ใน next.config.ts ปัจจุบัน repository ยังไม่มี frontend application จึงต้องเพิ่มซอร์สก่อนใช้คำสั่งนี้
+มี frontend หลังบ้านใน repository แล้ว ใช้ `frontend/package.json`, `frontend/package-lock.json` และ script `build` พร้อมตั้ง `output: "standalone"` ใน next.config.ts ดูการตั้งบัญชีแอดมิน/Hermes ใน [คู่มือ Step 2](step-2-admin.md)
 
 ```bat
 build-frontend.bat

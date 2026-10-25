@@ -17,7 +17,6 @@ pub struct Snapshot {
     pub content: Value,
     pub hash: String,
     pub pending: bool,
-    pub withdrawn: bool,
 }
 
 pub fn hash(value: &Value) -> Result<String, AppError> {
@@ -69,12 +68,14 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
     }
     events::redact_withdrawn(state, &mut records).await?;
     let mut pending = false;
-    let mut withdrawn = false;
     let mut content = Vec::new();
     for record in &records {
         let status = record.get_str("status").unwrap_or("PENDING");
         pending |= matches!(status, "PENDING" | "PROCESSING");
-        withdrawn |= record.get_bool("withdrawn").unwrap_or(false);
+        // Unassigned messages in an ambiguous conversation must never become AI
+        // context for an arbitrarily selected inquiry. Wait for explicit assignment.
+        pending |= record.get_object_id("inquiry_id").ok() != Some(id)
+            && matches!(status, "NEEDS_ADMIN" | "FAILED");
         content.push(json!({
             "event_ref":record.get_object_id("_id").map_err(|_| AppError::Data)?.to_hex(),
             "event_at":record.get_datetime("event_at").map_err(|_| AppError::Data)?.timestamp_millis(),
@@ -90,7 +91,6 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
         content,
         events: records,
         pending,
-        withdrawn,
     })
 }
 
@@ -105,6 +105,19 @@ pub async fn active(state: &AppState, inquiry: &Document) -> Result<Option<Docum
         .find_one(filter)
         .await
         .map_err(Into::into)
+}
+
+pub fn references_withdrawn(draft: &Document, snapshot: &Snapshot) -> bool {
+    let refs = draft
+        .get_array("source_event_ids")
+        .cloned()
+        .unwrap_or_default();
+    snapshot.events.iter().any(|event| {
+        event.get_bool("withdrawn").unwrap_or(false)
+            && event
+                .get_object_id("_id")
+                .is_ok_and(|id| refs.contains(&bson::Bson::ObjectId(id)))
+    })
 }
 
 pub async fn enqueue(
@@ -201,13 +214,14 @@ pub async fn finish(
     let mut filter = state.scope();
     filter.extend(
         doc! {"_id":job.get_object_id("inquiry_id").map_err(|_| AppError::Data)?,
-        "draft_job_id":job.get_object_id("_id").map_err(|_| AppError::Data)?},
+        "draft_job_id":job.get_object_id("_id").map_err(|_| AppError::Data)?,
+        "draft_lease_token":job.get_object_id("lease_token").map_err(|_| AppError::Data)?},
     );
     state
         .collection("inquiries")
         .update_one(
             filter,
-            doc! {"$unset":{"draft_job_id":"", "draft_lock_until":""}},
+            doc! {"$unset":{"draft_job_id":"", "draft_lock_until":"", "draft_lease_token":""}},
         )
         .await?;
     Ok(())
@@ -230,7 +244,7 @@ pub async fn lock(state: &AppState, job: &Document, expected: i64) -> Result<Doc
         .collection("inquiries")
         .find_one_and_update(
             filter,
-            doc! {"$set":{"draft_job_id":job_id,
+            doc! {"$set":{"draft_job_id":job_id,"draft_lease_token":job.get_object_id("lease_token").map_err(|_| AppError::Data)?,
             "draft_lock_until":DateTime::from_millis(DateTime::now().timestamp_millis()+300_000)}},
         )
         .return_document(ReturnDocument::After)
@@ -250,13 +264,28 @@ pub async fn commit(
     let job_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let mut draft_filter = state.scope();
     draft_filter.insert("_id", job_id);
+    let expected_hash = draft
+        .get_str("context_hash")
+        .map_err(|_| AppError::Data)?
+        .to_string();
     state
         .collection("order_drafts")
-        .update_one(draft_filter, doc! {"$setOnInsert":draft})
+        .update_one(draft_filter.clone(), doc! {"$setOnInsert":draft})
         .upsert(true)
         .await?;
+    let stored = state
+        .collection("order_drafts")
+        .find_one(draft_filter)
+        .await?
+        .ok_or(AppError::Data)?;
+    if stored.get_str("context_hash").ok() != Some(expected_hash.as_str()) {
+        return Err(AppError::ContextChanged);
+    }
+    let workflow = stored
+        .get_str("workflow_status")
+        .map_err(|_| AppError::Data)?;
     let mut filter = state.scope();
-    filter.extend(doc! {"_id":id,"draft_job_id":job_id});
+    filter.extend(doc! {"_id":id,"status":{"$ne":"CLOSED"},"draft_job_id":job_id,"draft_lease_token":job.get_object_id("lease_token").map_err(|_|AppError::Data)?});
     if expected == 0 {
         filter.insert(
             "$or",
@@ -269,8 +298,8 @@ pub async fn commit(
         filter.insert("draft_version", expected);
     }
     let result = state.collection("inquiries").update_one(filter,doc! {
-        "$set":{"active_draft_id":job_id,"draft_version":expected+1,"updated_at":DateTime::now()},
-        "$push":{"draft_history":job_id}, "$unset":{"draft_job_id":"", "draft_lock_until":"", "approval":"", "quote":""}
+        "$set":{"active_draft_id":job_id,"draft_version":expected+1,"status":workflow,"updated_at":DateTime::now()},
+        "$push":{"draft_history":job_id}, "$unset":{"draft_job_id":"", "draft_lock_until":"", "draft_lease_token":"", "approval":"", "quote":""}
     }).await?;
     if result.matched_count != 1 {
         return Err(AppError::DraftConflict);
@@ -298,14 +327,15 @@ pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Val
     for mut record in records {
         let stale = record.get_str("context_hash").ok() != Some(&snapshot.hash) || snapshot.pending;
         // Withdrawn evidence must not leak via an old AI or manual revision.
-        if snapshot.withdrawn {
+        let redacted = references_withdrawn(&record, &snapshot);
+        if redacted {
             for field in ["result", "admin_summary", "confirmed_fields"] {
                 record.remove(field);
             }
         }
         let mut value = serde_json::to_value(record).map_err(|_| AppError::Data)?;
         value["stale"] = json!(stale);
-        value["redacted"] = json!(snapshot.withdrawn);
+        value["redacted"] = json!(redacted);
         result.push(value);
     }
     Ok(result)
