@@ -18,6 +18,8 @@ use sha2::Sha256;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+#[path = "tests_customers.rs"]
+mod customer_tests;
 #[path = "tests_oa_sync.rs"]
 mod oa_sync_tests;
 #[path = "tests_step2.rs"]

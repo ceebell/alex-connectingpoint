@@ -4,6 +4,28 @@
 
 <!-- entries -->
 
+## 2026-10-25 21:45 — ขั้น A: บันทึกข้อมูลลูกค้าและอนุมัติร่างเป็นออเดอร์ใน Alex
+- **คำอธิบาย:** ผู้ใช้ต้องการใช้ Alex เป็น UI บันทึกข้อมูลลง MongoDB บน Ubuntu หลังล็อกอิน OA ให้ตัวเชื่อม จึงแบ่งงานเป็นขั้น A (ข้อมูลลูกค้า + อนุมัติออเดอร์) และขั้น B (ตอบลูกค้าจาก Alex ด้วย Push API ซึ่งผู้ใช้อนุมัติแล้วแต่ยังไม่ทำในรอบนี้)
+- **โฟลเดอร์ `backend/src/`**
+  - `models/customer.rs` — เพิ่ม: ProfileInput (trim, จำกัดความยาว, ตรวจเบอร์/อักขระควบคุม, deny_unknown_fields) และ ApproveInput พร้อม unit test
+  - `db/customers.rs` — เพิ่ม: อ่าน/บันทึก `customer_profiles` ต่อ shop/channel/line_user_id เฉพาะผู้ใช้ที่มีใน line_users, optimistic `version` และ updated_by
+  - `db/orders.rs` — เพิ่ม: อนุมัติได้เฉพาะร่าง active ล่าสุดที่เป็น READY_FOR_REVIEW, context_hash ตรงและไม่มีข้อความรอประมวลผล/ถูกยกเลิก; snapshot ฟิลด์ลง `orders` (CONFIRMED, approved_by/at, verified flags = false) 1 ออเดอร์ต่อ inquiry ด้วย unique index, กดซ้ำร่างเดิมคืนผลเดิม และเก็บ order_id ใน inquiry โดยไม่แตะ status ที่ worker ใช้
+  - `routes/customers.rs`, `routes/mod.rs` — เพิ่ม/แก้: GET/POST `/api/line/users/{user_id}/profile`, GET/POST `/api/inquiries/{id}/order` ภายใต้ auth เดิม (cookie + X-Admin-Request หรือ Bearer)
+  - `routes/session.rs` — แก้: เพิ่ม `actor()` ใช้ชื่อแอดมินจาก session หรือ internal-api สำหรับ Bearer token
+  - `error.rs`, `db/indexes.rs`, `db/mod.rs`, `models/mod.rs` — แก้: error RECORD_CONFLICT/ORDER_EXISTS/ORDER_NOT_READY (409) และ unique index ของ customer_profiles/orders แบบ idempotent
+  - `tests_customers.rs`, `tests.rs` — เพิ่ม/แก้: ตรวจ auth/DTO ก่อนแตะ DB และ MongoDB integration ของ profile version/unknown user และเงื่อนไขอนุมัติ (ไม่มีร่าง, ร่างไม่ครบ, hash ผิด, อนุมัติซ้ำ, ORDER_EXISTS)
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/customer-profile.tsx` — เพิ่ม: แท็บข้อมูลลูกค้า (ชื่อ เบอร์ ที่อยู่ โน้ตภายใน) แสดงผู้บันทึกล่าสุดและโหลดข้อมูลล่าสุดเมื่อชนกัน
+  - `components/admin-workspace.tsx` — แก้: แท็บ "ลูกค้า", การ์ดอนุมัติพร้อม checkbox ยืนยัน, แจ้งออเดอร์ที่อนุมัติแล้ว, ป้าย "ออเดอร์แล้ว" ในรายการ และ poll สถานะออเดอร์
+  - `lib/api.ts`, `app/globals.css` — แก้: types Profile/Order, ข้อความ error ภาษาไทย, สไตล์ notice/pill success และ approve-card
+- **โฟลเดอร์ `docs/`**
+  - `step-2-admin.md` — แก้: อธิบายข้อมูลลูกค้า การอนุมัติออเดอร์ ข้อจำกัด และ API ใหม่
+- **โฟลเดอร์ `dist/` (build จริงบน local)**
+  - `line-linux/` — rel-20261025144406-05a2895ef532
+  - `frontend-linux/` — front-20261025144514-4c469a4e318b
+- **ผลตรวจสอบ:** cargo fmt/clippy -D warnings ผ่าน; cargo test 10 ผ่าน และ MongoDB integration (disposable mongod 27018) ทั้ง 5 ผ่าน; npm lint/build ผ่าน; ทดสอบ browser จริง (Chrome headless) ผ่าน backend local 8080 + standalone frontend 3010 + Mongo ทดสอบ: webhook ลงนาม → บันทึกโปรไฟล์ → ร่างด้วยมือ → ปุ่มอนุมัติ disabled จนกว่าจะติ๊ก → อนุมัติ → ป้ายออเดอร์แล้ว → reload แล้วข้อมูลยังอยู่ ไม่มี page error และไม่ล้นจอที่ 390/800px; git diff --check ผ่าน
+- **ขอบเขต:** ยังไม่ commit/push/deploy; หยุด backend/frontend/mongod ทดสอบที่สร้างเองแล้ว คง frontend 3000 ของผู้ใช้ไว้ ขั้น B (ตอบลูกค้าผ่าน Push API + กันข้อความซ้ำกับตัวเชื่อม OA) ยังไม่เริ่ม
+
 ## 2026-10-25 20:55 — แก้ login-oa.bat ล้มเมื่อมี ssh.exe หลายตัวใน PATH
 - **คำอธิบาย:** เครื่องผู้ใช้มี ssh.exe ทั้ง Windows OpenSSH และ Git usr/bin ทำให้ Get-Command คืน array และ Start-Process -FilePath ล้มด้วย "Cannot convert System.Object[]" จึงเลือกตัวแรกใน PATH แบบเดียวกับ run-frontend.ps1
 - **โฟลเดอร์ `scripts/`**

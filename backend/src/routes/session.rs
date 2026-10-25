@@ -60,6 +60,15 @@ pub fn valid_cookie(state: &AppState, headers: &HeaderMap) -> bool {
     mac(state, payload.as_bytes()).is_ok_and(|m| m.verify_slice(&signature).is_ok())
 }
 
+// Name recorded on admin writes; the internal Bearer token has no username.
+pub fn actor(state: &AppState, headers: &HeaderMap) -> String {
+    if valid_cookie(state, headers) {
+        state.config.admin_username.clone()
+    } else {
+        "internal-api".into()
+    }
+}
+
 pub fn require_browser_header(headers: &HeaderMap) -> Result<(), AppError> {
     if headers.get("x-admin-request").and_then(|v| v.to_str().ok()) != Some("1") {
         return Err(AppError::Unauthorized);

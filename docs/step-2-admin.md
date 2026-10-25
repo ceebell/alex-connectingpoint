@@ -144,6 +144,12 @@ sudo systemctl reload caddy
 
 ข้อมูลเก็บใน MongoDB `admin_summaries`, `draft_requests`, `order_drafts` และ pointer/version ใน `inquiries` ทุกรายการจำกัด shop/channel จาก config ไม่รับร้านจาก browser ประวัติแสดงล่าสุด 50 ร่าง บริบทเตรียมร่างรองรับ 500 events ต่อ inquiry; เกินจะหยุดพร้อมข้อผิดพลาดโดยไม่ตัดข้อมูลเงียบ ๆ
 
+## ข้อมูลลูกค้าและอนุมัติออเดอร์
+
+- **แท็บ "ลูกค้า":** บันทึกชื่อ เบอร์โทร ที่อยู่ และโน้ตภายในต่อ LINE user ID ลง `customer_profiles` ใช้ร่วมกันทุก inquiry ของลูกค้าคนเดียวกัน ลูกค้าไม่เห็นข้อมูลนี้ บันทึกได้เฉพาะผู้ใช้ที่เคยส่งข้อความผ่าน webhook และใช้ `version` กันการบันทึกทับจากหลายหน้าต่าง หากชนกันระบบจะโหลดข้อมูลล่าสุดมาให้ตรวจก่อนบันทึกใหม่
+- **ปุ่ม "อนุมัติเป็นออเดอร์":** แสดงในแท็บร่างล่าสุดเมื่อร่างล่าสุดเป็น READY_FOR_REVIEW (ข้อมูลครบและไม่มีข้อขัดแย้ง) แชทไม่มีข้อความใหม่หลังทำร่าง และแอดมินติ๊กยืนยันแล้ว ระบบ snapshot ฟิลด์ของร่างลง `orders` สถานะ CONFIRMED พร้อมผู้อนุมัติและเวลา และเก็บ `order_id` ใน inquiry ได้ 1 ออเดอร์ต่อ inquiry การกดซ้ำด้วยร่างเดิมคืนออเดอร์เดิม แก้ร่างภายหลังได้แต่ออเดอร์ที่อนุมัติแล้วไม่เปลี่ยนตาม
+- ออเดอร์ยังมี `pricing_verified`, `product_verified`, `availability_verified` เป็น false: ยังไม่ได้ตรวจสต็อก คิว หรือราคากับระบบ Alex และยังไม่ส่งข้อความใดถึงลูกค้า
+
 หากบทสนทนามีหลาย inquiry และข้อความยังเป็น NEEDS_ADMIN ต้องใช้ API assign ของ Step 1 เลือก inquiry ให้ชัดก่อน งานเตรียมร่างจะรอและไม่เดาว่าข้อความนั้นเป็นของ inquiry ใด หน้าจอรุ่นนี้ยังไม่มีปุ่ม assign สำหรับกรณีนี้
 
 ## API สำหรับผู้พัฒนา
@@ -157,6 +163,10 @@ sudo systemctl reload caddy
 | POST /api/inquiries/{id}/prepare | summary, request_id, expected_version, image_event_ids → 202 และ job ID |
 | POST /api/inquiries/{id}/draft | fields, summary, request_id, expected_version, context_hash, confirmed_fields → บันทึก manual revision ผ่านคิว |
 | GET /api/draft-requests/{id} | สถานะงานและ error_code ที่ไม่มี secret/ข้อความ driver |
+| GET /api/line/users/{user_id}/profile | ข้อมูลลูกค้า (หรือ null) |
+| POST /api/line/users/{user_id}/profile | expected_version (0 = สร้างใหม่), display_name, phone, address, notes → 409 RECORD_CONFLICT เมื่อ version ไม่ตรง |
+| GET /api/inquiries/{id}/order | ออเดอร์ที่อนุมัติแล้ว (หรือ null) |
+| POST /api/inquiries/{id}/order | draft_id, draft_version, context_hash → 201; 409 ORDER_NOT_READY / CONTEXT_CHANGED / ORDER_EXISTS |
 
 API ภายในเดิมยังรับ Authorization Bearer INQUIRY_ADMIN_TOKEN สำหรับเครื่องมือฝั่ง server; browser ใช้ cookie เท่านั้น Mutating cookie requests และ login ต้องมี X-Admin-Request: 1 ป้องกันการส่ง form ข้ามเว็บไซต์ ไม่เก็บ token/password ใน localStorage หรือ frontend bundle
 

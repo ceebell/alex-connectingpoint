@@ -1,9 +1,10 @@
 "use client";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent } from "@/lib/api";
+import { api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order } from "@/lib/api";
 import DraftEditor from "./draft-editor";
 import ChatMessage from "./chat-message";
+import CustomerProfile from "./customer-profile";
 
 type Session = { username: string; hermes_configured: boolean };
 type OaStatus = { state: string; synced?: number; pending?: number };
@@ -47,7 +48,9 @@ export default function AdminWorkspace() {
   const [contextHash,setContextHash]=useState("");
   const [summary, setSummary] = useState("");
   const [images, setImages] = useState<string[]>([]);
-  const [tab, setTab] = useState<"summary" | "draft" | "history">("summary");
+  const [tab, setTab] = useState<"summary" | "draft" | "history" | "customer">("summary");
+  const [order, setOrder] = useState<Order | null>(null);
+  const [approveChecked, setApproveChecked] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -56,6 +59,7 @@ export default function AdminWorkspace() {
   const latest = drafts[0];
   const working = busy || job?.status === "PENDING" || job?.status === "PROCESSING";
   const current = inquiries.find(inquiry => inquiry._id === selected);
+  const canApprove = !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => { let cancelled = false; api<Session>("/api/admin/session").then(value => { if (!cancelled) setSession(value); }).catch(() => {}).finally(() => { if (!cancelled) setChecking(false); }); return () => { cancelled = true; }; }, []);
@@ -73,8 +77,9 @@ export default function AdminWorkspace() {
   useEffect(() => {
     if (!selected || !session) return;
     let cancelled = false;
-    Promise.all([api<{ batches: LineEvent[][]; next: string | null }>(`/api/inquiries/${selected}/context`), api<DraftList>(`/api/inquiries/${selected}/drafts`)]).then(([context, result]) => {
+    Promise.all([api<{ batches: LineEvent[][]; next: string | null }>(`/api/inquiries/${selected}/context`), api<DraftList>(`/api/inquiries/${selected}/drafts`), api<{ order: Order | null }>(`/api/inquiries/${selected}/order`)]).then(([context, result, approved]) => {
       if (cancelled) return;
+      setOrder(approved.order);
       setMessages(context.batches.flat()); setNextMessage(context.next);
       setDrafts(result.drafts); setVersion(result.version);
       setContextHash(result.context_hash);
@@ -121,8 +126,8 @@ export default function AdminWorkspace() {
             if (!cursor) break;
           }
           setMessages(records); setNextMessage(cursor);
-          const result = await api<DraftList>(`/api/inquiries/${selected}/drafts`);
-          if (!cancelled) { setDrafts(result.drafts); setVersion(result.version); setContextHash(result.context_hash); }
+          const [result, approved] = await Promise.all([api<DraftList>(`/api/inquiries/${selected}/drafts`), api<{ order: Order | null }>(`/api/inquiries/${selected}/order`)]);
+          if (!cancelled) { setDrafts(result.drafts); setVersion(result.version); setContextHash(result.context_hash); setOrder(approved.order); }
         }
       } catch (cause) {
         if (!cancelled) {
@@ -144,7 +149,7 @@ export default function AdminWorkspace() {
   }
 
   function selectInquiry(id: string) {
-    setSelected(id); setSummary(""); setImages([]); setMessages([]); setDrafts([]); setVersion(0); setJob(null); setError(""); setLoading(true); setTab("summary");
+    setSelected(id); setSummary(""); setImages([]); setMessages([]); setDrafts([]); setVersion(0); setJob(null); setOrder(null); setApproveChecked(false); setError(""); setLoading(true); setTab("summary");
   }
 
   async function submit(manual?: Fields, confirm = false) {
@@ -154,6 +159,15 @@ export default function AdminWorkspace() {
       const result = await api<Job>(`/api/inquiries/${selected}/${manual ? "draft" : "prepare"}`, { method: "POST", body: JSON.stringify({ request_id: crypto.randomUUID(), expected_version: version, context_hash: contextHash, summary, image_event_ids: manual ? [] : images, fields: manual ?? null, confirmed_fields: manual && confirm ? filledKeys(manual) : [] }) });
       setJob(result);
     } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) setSession(null); } finally { setBusy(false); }
+  }
+
+  async function approveOrder() {
+    if (!selected || !latest || !canApprove || !approveChecked) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api<{ order: Order }>(`/api/inquiries/${selected}/order`, { method: "POST", body: JSON.stringify({ draft_id: latest._id, draft_version: latest.draft_version, context_hash: contextHash }) });
+      setOrder(result.order); setApproveChecked(false); setInquiries(previous => previous.map(inquiry => inquiry._id === selected ? { ...inquiry, order_id: result.order._id } : inquiry));
+    } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) setSession(null); else setRefresh(n => n + 1); } finally { setBusy(false); }
   }
 
   async function moreMessages() {
@@ -173,7 +187,7 @@ export default function AdminWorkspace() {
   }
 
   async function logout() {
-    try { await api("/api/admin/session", { method: "DELETE" }); setSession(null); setSelected(null); setMessages([]); setDrafts([]); setInquiries([]); setSummary(""); setJob(null); }
+    try { await api("/api/admin/session", { method: "DELETE" }); setSession(null); setSelected(null); setMessages([]); setDrafts([]); setInquiries([]); setSummary(""); setJob(null); setOrder(null); }
     catch (cause) { setError(errorText(cause)); }
   }
 
@@ -186,7 +200,7 @@ export default function AdminWorkspace() {
       <div className="stats"><div><span className="stat-icon green" aria-hidden="true">▤</span><div><span>inquiry ที่โหลดมา</span><strong>{inquiries.length}</strong></div></div><div><span className="stat-icon sky" aria-hidden="true">✓</span><div><span>ข้อความประมวลผลแล้ว</span><strong>{counts.DONE ?? 0}</strong></div></div><div><span className="stat-icon orange" aria-hidden="true">!</span><div><span>เหตุการณ์รอแอดมินตรวจ</span><strong>{(counts.NEEDS_ADMIN ?? 0) + (counts.FAILED ?? 0)}</strong></div></div></div>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
       <div className="workspace"><section className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
-        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><strong>เรื่อง #{inquiry._id.slice(-6).toUpperCase()}</strong><p className="user-ref">{inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{(inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
+        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><strong>เรื่อง #{inquiry._id.slice(-6).toUpperCase()}</strong><p className="user-ref">{inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">ออเดอร์แล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
@@ -195,14 +209,17 @@ export default function AdminWorkspace() {
           {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <><div className="chat-notice">ลูกค้าอยู่ด้านซ้าย · แอดมินอยู่ด้านขวา<br /><span>{oaStates[oaStatus.state] ?? "กำลังตรวจตัวเชื่อม OA"}</span></div>{messages.map(message => <ChatMessage key={message._id} message={message} selectedImages={images} disabled={working} onToggleImage={(id, checked) => setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id))} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div><div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
-      <section className="draft-panel"><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+      <section className="draft-panel"><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["history", "เวอร์ชันก่อนหน้า"], ["customer", "ลูกค้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>
           {working && <div className="notice info" role="status">{job?.status === "PROCESSING" ? "กำลังเตรียมและตรวจร่าง…" : "รับงานแล้ว กำลังรอประมวลผล…"} คุณกลับมาเปิดเรื่องนี้ใหม่เพื่อตรวจผลได้</div>}
           {tab === "summary" && <><div className="step-caption"><span>01</span><div><h3>สรุปสิ่งที่ตกลงกับลูกค้า</h3><p className="muted small">เพิ่มรายละเอียดที่คุยผ่าน OA Manager ไว้ที่นี่</p></div></div><label className="summary-label">สรุปสำหรับ inquiry นี้<textarea rows={9} maxLength={20000} value={summary} disabled={working} onChange={e => setSummary(e.target.value)} placeholder="เช่น คุณเอ เช่าชุด DR-012 สีแดง ไซซ์ M จำนวน 1 ชุด รับ 15 พ.ย. 2569 คืน 18 พ.ย. 2569 ค่าเช่า 1,500 บาท มัดจำ 2,000 บาท รับสาขา A" /></label><div className="section-caption small muted"><span>แนบรูปที่เลือก {images.length}/4 รูป</span><span>{summary.length.toLocaleString()}/20,000</span></div><div className="notice soft"><strong>AI ช่วยจัดข้อมูล แอดมินช่วยตรวจความถูกต้อง</strong><p>ร่างจะแสดงข้อมูลที่ยังขาด ข้อขัดแย้ง และหลักฐานอ้างอิง โดยยังไม่สร้างออเดอร์จริง</p></div>{!session.hermes_configured && <div className="notice warning">AI ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ หรือไปแท็บร่างล่าสุดเพื่อกรอกด้วยมือ</div>}<button className="button primary full" disabled={working || !summary.trim() || !session.hermes_configured} onClick={() => submit()}><span aria-hidden="true">✦</span> เตรียมออเดอร์ด้วย AI</button><button className="text-button full" onClick={() => setTab("draft")}>หรือกรอกร่างด้วยมือ →</button></>}
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">มีการเปลี่ยนแปลงในแชท ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}
+          {order ? <div className="notice success" role="status"><strong><span aria-hidden="true">✅</span> อนุมัติเป็นออเดอร์แล้ว</strong><p>จากร่าง v{order.draft_version} · โดย {order.approved_by} · {time(order.approved_at)}<br />บันทึกในฐานข้อมูลบน server แล้ว ยังไม่ได้ตรวจสต็อก คิว และราคากับระบบ Alex</p></div>
+            : latest?.result && <div className="approve-card">{canApprove ? <><label className="checkbox-row"><input type="checkbox" checked={approveChecked} disabled={working} onChange={e => setApproveChecked(e.target.checked)} />ตรวจร่าง v{latest.draft_version} กับลูกค้าแล้ว ข้อมูลถูกต้อง</label><button type="button" className="button primary full" disabled={working || !approveChecked} onClick={approveOrder}>อนุมัติเป็นออเดอร์</button><p className="muted small">บันทึกร่างนี้เป็นออเดอร์ในฐานข้อมูล แก้ร่างภายหลังได้ แต่ออเดอร์ที่อนุมัติแล้วจะไม่เปลี่ยนตาม</p></> : <p className="muted small">อนุมัติเป็นออเดอร์ได้เมื่อร่างล่าสุดข้อมูลครบ ไม่มีข้อขัดแย้ง และแชทไม่มีข้อความใหม่หลังทำร่าง</p>}</div>}
           <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} onSave={(fields, confirm) => submit(fields, confirm)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
+          {tab === "customer" && (current?.line_user_id ? <CustomerProfile key={current.line_user_id} userId={current.line_user_id} onUnauthorized={() => setSession(null)} /> : <div className="notice warning">เรื่องนี้ไม่มี LINE user ID จึงยังบันทึกข้อมูลลูกค้าไม่ได้</div>)}
           {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => <details className="history-card" key={draft._id}><summary><span>ร่างเวอร์ชัน {draft.draft_version}</span><span className="small muted">{time(draft.created_at)}</span></summary><DraftReadOnly draft={draft} /></details>)}</>}
-        </>}</div><div className="draft-footer">ขั้นตอนนี้เตรียมร่าง ยังไม่เช็คคิวหรือส่งออเดอร์ไป Alex</div>
+        </>}</div><div className="draft-footer">ออเดอร์ที่อนุมัติบันทึกในฐานข้อมูลบน server · ยังไม่เช็คคิวหรือสต็อกกับ Alex</div>
       </section></div>
     </main>
   </div>;

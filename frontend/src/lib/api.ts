@@ -14,6 +14,9 @@ const errors: Record<string, string> = {
   DATABASE_UNAVAILABLE: "ฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่",
   VALIDATION_ERROR: "ข้อมูลไม่ผ่านการตรวจสอบ ตรวจวันที่ จำนวน เงิน หรือหลักฐาน แล้วลองใหม่",
   NOT_FOUND: "ไม่พบข้อมูล หรือรูปหมดอายุหรือถูกยกเลิกแล้ว",
+  RECORD_CONFLICT: "ข้อมูลถูกแก้จากหน้าต่างอื่นก่อนหน้า ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจแล้วบันทึกอีกครั้ง",
+  ORDER_EXISTS: "เรื่องนี้อนุมัติเป็นออเดอร์ไปแล้ว",
+  ORDER_NOT_READY: "อนุมัติได้เฉพาะร่างล่าสุดที่ข้อมูลครบและไม่มีข้อขัดแย้ง กรุณาโหลดข้อมูลล่าสุด",
 };
 export function errorText(error: unknown) {
   return error instanceof ApiError ? errors[error.code] ?? "ทำรายการไม่สำเร็จ กรุณาลองใหม่" : "เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่";
@@ -43,7 +46,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return normalize(value) as T;
 }
 
-export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; draft_version?: number };
+export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; draft_version?: number; order_id?: string };
 export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string }; postback?: { data: string } } };
 export type Fields = {
   intent: string | null; customer_name: string | null; customer_phone: string | null; branch: string | null;
@@ -54,6 +57,8 @@ export type Fields = {
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
 export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[] } };
 export type Job = { id: string; status: string; error_code: string | null };
+export type Profile = { _id: string; line_user_id: string; version: number; display_name: string | null; phone: string | null; address: string | null; notes: string | null; updated_by: string; updated_at: string };
+export type Order = { _id: string; inquiry_id: string; draft_id: string; draft_version: number; status: string; approved_by: string; approved_at: string; fields: Fields };
 export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null; context_hash:string };
 export const emptyFields = (): Fields => ({ intent: null, customer_name: null, customer_phone: null, branch: null, items: [], rental: { usage_date: null, pickup_date: null, return_date: null, fulfillment_method: null }, amounts: { rental_fee_satang: null, deposit_satang: null }, notes: null });
 export const labels: Record<string, string> = { intent: "ความต้องการ", customer_name: "ชื่อลูกค้า", customer_phone: "เบอร์โทร", branch: "สาขา", items: "รายการสินค้า", product_code: "รหัสสินค้า", color: "สี", size: "ไซซ์", quantity: "จำนวน", "rental.usage_date": "วันใช้งาน", "rental.pickup_date": "วันรับ", "rental.return_date": "วันคืน", "rental.fulfillment_method": "วิธีรับสินค้า", "amounts.rental_fee_satang": "ค่าเช่า", "amounts.deposit_satang": "มัดจำ", notes: "หมายเหตุ" };

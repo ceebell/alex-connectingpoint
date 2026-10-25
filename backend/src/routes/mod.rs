@@ -1,4 +1,5 @@
 mod admin;
+mod customers;
 mod drafts;
 mod oa_sync;
 mod session;
@@ -30,6 +31,14 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/line/events", get(admin::events))
         .route("/api/line/users", get(users::list))
         .route("/api/line/users/{user_id}/messages", get(users::messages))
+        .route(
+            "/api/line/users/{user_id}/profile",
+            get(customers::profile).post(customers::save_profile),
+        )
+        .route(
+            "/api/inquiries/{id}/order",
+            get(customers::order).post(customers::approve),
+        )
         .route("/api/line/events/{id}/assign", post(admin::assign))
         .route("/api/line/events/{id}/retry", post(admin::retry))
         .route("/api/line/status", get(admin::status))

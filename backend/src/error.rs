@@ -51,6 +51,12 @@ pub enum AppError {
     ContextChanged,
     #[error("Waiting for incoming messages to finish processing")]
     DraftWaiting,
+    #[error("Record changed; reload and try again")]
+    RecordConflict,
+    #[error("This inquiry already has an approved order")]
+    OrderExists,
+    #[error("Only the latest complete, conflict-free and current draft can be approved")]
+    OrderNotReady,
 }
 
 impl AppError {
@@ -72,6 +78,9 @@ impl AppError {
             Self::HermesToolsEnabled => "HERMES_TOOLS_ENABLED",
             Self::ContextChanged => "CONTEXT_CHANGED",
             Self::DraftWaiting => "DRAFT_WAITING",
+            Self::RecordConflict => "RECORD_CONFLICT",
+            Self::OrderExists => "ORDER_EXISTS",
+            Self::OrderNotReady => "ORDER_NOT_READY",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -90,6 +99,7 @@ impl IntoResponse for AppError {
             Self::OaUnlinked | Self::OaMessageConflict => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
+            Self::RecordConflict | Self::OrderExists | Self::OrderNotReady => StatusCode::CONFLICT,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,
