@@ -1,6 +1,14 @@
 .tabs{overflow-x:auto}.tabs>button{white-space:nowrap;flex-shrink:0}
 .order-cart{display:flex;flex-direction:column;min-width:0}.order-cart .notice,.queue-check .notice{margin:0}
-.order-section{display:flex;flex-direction:column;gap:12px;min-width:0;border-top:1px solid #e2e8f0;margin-top:20px;padding-top:4px}.draft-form>.order-section:first-child{border-top:0;margin-top:0;padding-top:0}
+/* Each order section sits on its own light theme tint so the page reads as separate steps. */
+.order-section{display:flex;flex-direction:column;gap:12px;min-width:0;margin-top:16px;padding:4px 16px 16px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc}.draft-form>.order-section:first-child{margin-top:0}
+.order-section.section-customer{background:#f8fafc;border-color:#e2e8f0}
+.order-section.section-search{background:#f0f9ff;border-color:#bae6fd}
+.order-section.section-cart{background:#eff6ff;border-color:#bfdbfe}
+.order-section.section-dates{background:#f8fafc;border-color:#cbd5e1}
+.order-section.section-amounts{background:#fdf2f8;border-color:#fbcfe8}
+.button.search{background:var(--color-primary-ink);color:white;box-shadow:0 3px 8px #1d4ed81f}.button.search:hover:enabled{background:#1e40af}
+.button.info{background:var(--color-info-ink);color:white;box-shadow:0 3px 8px #0369a11f}.button.info:hover:enabled{background:#075985}
 .order-section .form-heading{margin:14px 0 0}.order-section .form-heading>span[aria-hidden]{display:inline;font-size:inherit;margin:0 4px 0 0}
 .product-filters{border:1px solid #e2e8f0;border-radius:8px;padding:10px}
 .product-filters summary{cursor:pointer;color:#0369a1;font-size:14px}.product-filters .field-grid{margin-top:12px}

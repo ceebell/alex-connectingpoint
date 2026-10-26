@@ -19,7 +19,7 @@ export default function CustomerExtractButton({ inquiryId, disabled = false, onF
     finally { setBusy(false); onBusyChange?.(false); }
   }
   return <div className="customer-extract">
-    <button type="button" className="button secondary full" disabled={busy || disabled} onClick={extract}>{busy ? "กำลังค้นข้อมูลลูกค้าจากแชท…" : "ค้นข้อมูลลูกค้าจากแชท"}</button>
+    <button type="button" className="button info full" disabled={busy || disabled} onClick={extract}><span aria-hidden="true">💬</span> {busy ? "กำลังค้นข้อมูลลูกค้าจากแชท…" : "ค้นข้อมูลลูกค้าจากแชท"}</button>
     {error && <div className="notice warning" role="alert">{error}</div>}
     {result && <div className="notice info" role="status"><p>{Object.values(result.fields).some(Boolean) ? "เติมข้อมูลที่พบแล้ว กรุณาตรวจและกดบันทึก ช่องที่ไม่พบข้อมูลจะคงค่าเดิม" : "ยังไม่พบข้อมูลลูกค้าที่ชัดเจนในแชทของเรื่องนี้"}</p>
       {result.conflicts.map((conflict, i) => <p key={i}>{labels[conflict.field] ?? conflict.field}: {conflict.message}</p>)}

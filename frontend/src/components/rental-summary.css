@@ -18,9 +18,5 @@
 .rental-checkout label{font-size:14px}.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:15px;max-width:100%}
 .rental-checkout fieldset{border:0;min-width:0;display:flex;flex-direction:column;gap:13px}
 .rental-checkout .notice ul{font-size:13px}.rental-checkout code{font-size:13px;overflow-wrap:anywhere;user-select:all}
-.bill-lines{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:12px}.bill-lines>div+div{margin-top:10px}.bill-lines p{font-size:13px;margin-top:4px}
-.bill-review{display:flex;flex-direction:column;gap:12px;padding:15px;border:1px solid #bfdbfe;background:#f0f9ff;border-radius:10px;overflow-wrap:anywhere}
-.bill-review h3{font-size:17px}.bill-review p{font-size:14px;white-space:pre-wrap;line-height:1.8}
-.bill-review dl>div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #dbeafe;font-size:14px}
 .bill-resolve{margin-top:12px;display:flex;flex-direction:column;gap:10px}.bill-resolve input{background:white}
 @media(max-width:600px){.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:16px}}

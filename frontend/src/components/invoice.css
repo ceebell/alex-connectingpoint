@@ -1,0 +1,46 @@
+/* Invoice-style order summary, used in the คิว/บิล tab and as a modal from ร่างล่าสุด. */
+.invoice{display:flex;flex-direction:column;gap:16px;min-width:0}
+.invoice .notice{margin:0}
+.invoice-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px 20px;padding:18px 20px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#f0f9ff);border:1px solid #bfdbfe}
+.invoice-eyebrow{font-size:12px;letter-spacing:1.4px;font-weight:500;color:var(--color-primary-ink);margin-bottom:2px}
+.invoice-head h3{font-size:19px;color:#0f172a}
+.invoice-period{display:flex;flex-wrap:wrap;gap:8px;margin:0}
+.invoice-period>div{background:white;border:1px solid #dbeafe;border-radius:10px;padding:7px 12px;min-width:96px}
+.invoice-period dt{font-size:12px;color:#64748b}.invoice-period dd{margin:0;font-size:15px;font-weight:500;color:#1e3a8a}
+.invoice-body fieldset{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direction:column;gap:16px}
+.invoice-block{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid #e2e8f0;border-radius:14px;background:white}
+.invoice-block h4{font-size:15px;font-weight:500;color:#0f172a;display:flex;align-items:baseline;gap:8px}
+.invoice-items{display:flex;flex-direction:column;gap:10px}
+.invoice-item{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;transition:border-color .15s}
+.invoice-item:hover{border-color:#93c5fd}
+.invoice-item.queue-blocked{border-color:#f87171;background:#fef2f2;box-shadow:inset 4px 0 #dc2626}
+.invoice-thumb{width:64px;height:80px;border-radius:9px;overflow:hidden;background:white;display:grid;place-items:center;font-size:26px;box-shadow:0 2px 6px #0f172a14}
+.invoice-thumb img{width:100%;height:100%;object-fit:cover}
+.invoice-item-body{min-width:0;display:flex;flex-direction:column;gap:2px}
+.invoice-item-body strong{font-size:15px;font-weight:600;color:var(--color-primary-ink);overflow-wrap:anywhere}
+.invoice-code{font-size:12px;font-weight:500;color:#475569;letter-spacing:.3px}
+.invoice-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.invoice-chips>span:not(.queue-badge){font-size:12px;color:#334155;background:white;border:1px solid #e2e8f0;border-radius:999px;padding:2px 9px}
+.invoice-chips .queue-badge{font-size:12px;padding:2px 9px;border-radius:999px}
+.invoice-item-amounts{margin:0;display:flex;flex-direction:column;gap:3px;text-align:right}
+.invoice-item-amounts>div{display:flex;justify-content:flex-end;gap:10px;font-size:13px}
+.invoice-item-amounts dt{color:#64748b}.invoice-item-amounts dd{margin:0;font-weight:600;color:#0f172a;min-width:56px}
+.invoice-queue{font-size:13px;border-radius:8px;padding:7px 11px}.invoice-queue.free{background:#f0fdf4;color:#15803d}.invoice-queue.blocked{background:#fef2f2;color:#b91c1c}
+.invoice-options{display:flex;flex-wrap:wrap;gap:4px 18px}.invoice-options .checkbox-row{font-size:14px}
+.invoice-totals{padding:16px 18px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0}
+.invoice-totals dl{margin:0;display:flex;flex-direction:column}
+.invoice-totals dl>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:15px;color:#334155}
+.invoice-totals dd{margin:0;font-variant-numeric:tabular-nums}
+.invoice-totals .discount{color:#be185d}
+.invoice-totals .subtotal{font-weight:500;color:#0f172a;border-bottom:1px dashed #cbd5e1;padding-bottom:10px;margin-bottom:4px}
+.invoice-grand{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--color-primary-ink);color:white}
+.invoice-grand span{font-size:15px}.invoice-grand strong{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.invoice-grand small{font-size:14px;font-weight:400}
+.invoice-totals>p{margin-top:8px}
+.invoice-confirm{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;border:1px solid #bfdbfe;background:#eff6ff}
+.invoice-confirm p{font-size:14px}
+.invoice-actions{display:flex;gap:10px;flex-wrap:wrap}.invoice-actions .button{flex:1;min-width:150px}.invoice-actions .button.primary{flex:2}
+.order-submit{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:14px;border-top:1px dashed #cbd5e1}
+.invoice-dialog{width:min(780px,96vw);max-height:94vh;padding:0 22px 22px;border:0;border-radius:18px;background:white;box-shadow:0 24px 70px #0f172a40;overflow:auto}
+.invoice-dialog::backdrop{background:#0f172a73}
+.invoice-dialog-bar{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;padding:12px 0 8px;background:white}
+@media(max-width:560px){.invoice-item{grid-template-columns:56px minmax(0,1fr)}.invoice-thumb{width:56px;height:70px}.invoice-item-amounts{grid-column:1/-1;flex-direction:row;justify-content:space-between;text-align:left}.invoice-dialog{padding:0 14px 16px}.invoice-grand strong{font-size:20px}}

@@ -8,7 +8,7 @@
 :HL["/_next/static/media/72dbbb0ecdeaf97f-s.p.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
 :HL["/_next/static/media/9f5b3cf6567c77df-s.p.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
 :HL["/_next/static/media/e57321d00e3cc140-s.p.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
-:HL["/_next/static/css/cdf4f5c1cda46168.css","style"]
+:HL["/_next/static/css/23990cfa0f07d9b9.css","style"]
 2:[["children",{"s":"__PAGE__","h":160}]]
 1:[["children",{"s":"_not-found","h":96,"c":"$Q2"}]]
-0:{"b":"VKtednYay8hwik1dA8Eio","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
+0:{"b":"ElmG2KGH5Sybz6NfOCSbZ","t":{"t":{"s":"","h":80,"c":"$Q1"}}}

@@ -46,6 +46,7 @@
 | Build เฉพาะ binary → `dist/` | `build.bat` | Windows |
 | Compile Rust Linux release สำหรับ Ubuntu | `build-backend.bat` (`build-line.bat` เดิม) | Windows + local Docker Desktop |
 | Build frontend Linux standalone | `build-frontend.bat` | Windows + local Docker Desktop |
+| Build ทั้ง backend → frontend (หยุดเมื่อขั้นไหนล้ม แสดง release tag) | `build-all.bat` | Windows + local Docker Desktop |
 | Build OA browser connector Linux release | `build-oa-connector.bat` | Windows + local Docker Desktop |
 | เปิดหน้าล็อกอิน OA browser บน Ubuntu ผ่าน SSH | `login-oa.bat` | Windows |
 | Commit + push | `rungit.bat "ข้อความ commit"` | Windows |
@@ -123,7 +124,7 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
      build-frontend.bat
      rungit.bat "ข้อความ commit"
      ```
-     แก้ Rust → `build-backend.bat` · แก้ frontend → `build-frontend.bat` · แก้แค่ docs/config ไม่ต้อง build; agent ห้ามรัน `rungit.bat` เอง
+     แก้ Rust → `build-backend.bat` · แก้ frontend → `build-frontend.bat` · แก้ทั้งสองส่วน → `build-all.bat` (รัน backend แล้ว frontend) · แก้แค่ docs/config ไม่ต้อง build; agent ห้ามรัน `rungit.bat` เอง
   2. Ubuntu (`ssh Hermes`):
      ```sh
      cd ~/alex-connectingpoint

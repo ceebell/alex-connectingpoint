@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAmounts, emptyRental, Fields, labels, LineEvent, RECEIVING_METHODS, receivingMethod, Rental, STORE_PICKUP } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
+import RentalCheckout from "./rental-checkout";
 
 const rentalKeys = Object.keys(emptyRental()) as (keyof Rental)[];
 const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
@@ -33,8 +34,22 @@ function orderLevel(initial: Fields): Fields {
   return { ...fields, rental, amounts, notes: notes.join("\n") || null, items: fields.items.map(item => ({ product_code: item.product_code, product_name: item.product_name ?? null, category: item.category ?? null, color: item.color, size: item.size, quantity: item.quantity })) };
 }
 
-export default function DraftEditor({ inquiryId, draft, initial, busy, messages, attachments, onSave, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onUnauthorized: () => void }) {
+// The invoice opens as a modal page; the native dialog handles focus and the Escape key.
+function InvoiceDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  return <dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose}>
+    <div className="invoice-dialog-bar"><button type="button" className="text-button" onClick={() => ref.current?.close()}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button></div>
+    {children}
+  </dialog>;
+}
+
+export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onUnauthorized: () => void }) {
   const [fields, setFields] = useState<Fields>(() => orderLevel(initial));
+  // The bill is built from the saved draft, so the invoice waits until the form is saved.
+  const [baseline] = useState(() => JSON.stringify(orderLevel(initial)));
+  const dirty = JSON.stringify(fields) !== baseline;
+  const [invoice, setInvoice] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   // A queue result belongs to the dates and cart it was checked with; it is hidden once either changes.
@@ -55,13 +70,13 @@ export default function DraftEditor({ inquiryId, draft, initial, busy, messages,
   const tooMuch = !!cart.length && (rentalDiscount > rentalTotal || depositDiscount > depositTotal);
 
   return <div className="draft-form">
-    <section className="order-section">
+    <section className="order-section section-customer">
       <h3 className="form-heading"><span aria-hidden="true">👤</span> ลูกค้า</h3>
-      <CustomerExtractButton inquiryId={inquiryId} disabled={busy} onUnauthorized={onUnauthorized} onFill={value => setFields(current => ({ ...current, customer_name: value.display_name ?? current.customer_name, customer_phone: value.phone ? cleanPhone(value.phone) : current.customer_phone, customer_address: value.address ?? current.customer_address }))} />
       <div className="field-grid">{text("customer_name")}{text("customer_phone")}{text("customer_address")}</div>
+      <CustomerExtractButton inquiryId={inquiryId} disabled={busy} onUnauthorized={onUnauthorized} onFill={value => setFields(current => ({ ...current, customer_name: value.display_name ?? current.customer_name, customer_phone: value.phone ? cleanPhone(value.phone) : current.customer_phone, customer_address: value.address ?? current.customer_address }))} />
     </section>
     <OrderCart inquiryId={inquiryId} draft={draft} items={fields.items} messages={messages} attachments={attachments} availability={availability} disabled={busy} onCart={setCart} onUnauthorized={onUnauthorized} />
-    <section className="order-section">
+    <section className="order-section section-dates">
       <h3 className="form-heading"><span aria-hidden="true">📅</span> วันรับ–คืนชุด <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
       {!!draft?.result?.date_options?.length && <div className="request-list date-options"><span className="muted small">วันที่อ่านได้จากรูป/สรุป (กดเพื่อใช้):</span>{draft.result.date_options.map((option, i) => {
         const chosen = option.pickup_date === fields.rental.pickup_date && option.return_date === fields.rental.return_date;
@@ -73,7 +88,7 @@ export default function DraftEditor({ inquiryId, draft, initial, busy, messages,
       </div>
       <QueueCheck inquiryId={inquiryId} pickup={fields.rental.pickup_date} returned={fields.rental.return_date} count={cart.length} result={availability} disabled={busy} onResult={result => setQueue({ key: queueKey, result })} onUnauthorized={onUnauthorized} />
     </section>
-    <section className="order-section">
+    <section className="order-section section-amounts">
       <h3 className="form-heading"><span aria-hidden="true">🏷️</span> ส่วนลดและค่าจัดส่ง <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
       <p className="muted small">ตามแค็ตตาล็อก: ค่าเช่า {price(rentalTotal)} บาท · ค่าประกัน {price(depositTotal)} บาท{amount("rental_fee_satang") != null && <><br />ราคาที่แจ้งลูกค้า: ค่าเช่า {price(amount("rental_fee_satang"))} บาท{amount("deposit_satang") != null && ` · ค่าประกัน ${price(amount("deposit_satang"))} บาท`}</>}</p>
       <div className="field-grid">
@@ -87,6 +102,11 @@ export default function DraftEditor({ inquiryId, draft, initial, busy, messages,
     <details className="product-filters"><summary>ข้อมูลอื่นในร่าง</summary><div className="field-grid">{text("intent")}{text("branch")}</div></details>
     <label className="checkbox-row"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />ยืนยันข้อมูลที่กรอกครบในร่างนี้</label>
     <p className="muted small">ตะกร้าบันทึกทันทีเมื่อเพิ่มหรือแก้จำนวน ส่วนลูกค้า วันที่ ส่วนลด และหมายเหตุบันทึกเมื่อกดปุ่มด้านล่าง</p>
-    <button type="button" className="button primary full" disabled={busy || tooMuch} onClick={() => onSave(fields, confirm)}>{busy ? "กำลังบันทึก…" : "บันทึกร่างเป็นเวอร์ชันใหม่"}</button>
+    <button type="button" className={`button ${dirty || !draft ? "primary" : "secondary"} full`} disabled={busy || tooMuch} onClick={() => onSave(fields, confirm)}>{busy ? "กำลังบันทึก…" : "บันทึกร่างเป็นเวอร์ชันใหม่"}</button>
+    <div className="order-submit">
+      <button type="button" className={`button ${dirty || !draft ? "secondary" : "primary"} full`} disabled={busy || dirty || !draft || !cart.length} onClick={() => setInvoice(true)}><span aria-hidden="true">🧾</span> สรุปออเดอร์และส่งเข้า Alex</button>
+      <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอด เช็คคิว และยืนยันส่งออเดอร์เข้า Alex"}</p>
+    </div>
+    {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}
   </div>;
 }

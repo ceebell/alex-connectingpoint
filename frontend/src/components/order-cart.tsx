@@ -141,7 +141,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   const enter = (e: KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); void search(); } };
   return <div className="order-cart">
-    <section className="order-section">
+    <section className="order-section section-search">
       <h3 className="form-heading"><span aria-hidden="true">🔎</span> ค้นหาชุดจาก Alex</h3>
       {loading && <p role="status" className="muted small">กำลังโหลดตะกร้าและสาขา…</p>}
       {settings && !settings.configured && <div className="notice warning">ยังไม่เชื่อมบัญชี Alex กรุณาให้ผู้ดูแลระบบตั้งค่าการเชื่อมต่อก่อนค้นสินค้า</div>}
@@ -157,13 +157,13 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
         <label>ไซซ์<input maxLength={200} value={size} disabled={working} onKeyDown={enter} onChange={e => setSize(e.target.value)} placeholder="เช่น M" /></label>
       </div>
       <details className="product-filters"><summary>ตัวกรองเพิ่มเติม</summary><div className="field-grid"><label>ลาย/เนื้อผ้า (รหัส)<input maxLength={200} value={texture} disabled={working} onKeyDown={enter} onChange={e => setTexture(e.target.value)} /></label></div></details>
-      <button type="button" className="button secondary full" disabled={working || !branch || (mode === "image" && !image)} onClick={() => search()}>{busy ? "กำลังค้นหา…" : "ค้นหาสินค้าใน Alex"}</button>
+      <button type="button" className="button search full" disabled={working || !branch || (mode === "image" && !image)} onClick={() => search()}><span aria-hidden="true">🔎</span> {busy ? "กำลังค้นหา…" : "ค้นหาสินค้าใน Alex"}</button>
       {result && <p className="muted small">พบ {choices.length} ตัวเลือก · หน้าที่ {result.page}{result.method === "admin_input" ? " · ผลค้นอัตโนมัติจากรูป/สรุป" : result.method === "image_code" ? " · อ่านรหัสจากรูปแล้วยืนยันใน Alex" : result.method === "image_similarity" ? " · เรียงตามความคล้ายของรูป" : ""}</p>}
       {result && !choices.length && <div className="notice info">ยังไม่พบตัวเลือก ลองปรับชื่อ สี หรือไซซ์{result.has_more ? " หรือโหลดหน้าถัดไป" : ""}</div>}
       {choices.length > 0 && <div className="candidate-grid">{choices.map(candidate => <CandidateTile key={`${candidate.search_id}:${candidate.product_item_id}`} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} disabled={working} onAdd={() => add(candidate)} />)}</div>}
       {result?.has_more && <button type="button" className="text-button full" disabled={working} onClick={() => search(true)}>โหลดหน้าถัดไป</button>}
     </section>
-    <section className="order-section">
+    <section className="order-section section-cart">
       <h3 className="form-heading"><span aria-hidden="true">🛒</span> ตะกร้าสินค้า ({cart.reduce((sum, item) => sum + item.quantity, 0)} ชิ้น)</h3>
       {!cart.length ? <p className="muted small">ยังไม่มีสินค้าในตะกร้า ค้นหาแล้วกด “เพิ่มลงตะกร้า”</p> : <>
         <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
@@ -184,7 +184,7 @@ export function QueueCheck({ inquiryId, pickup, returned, count, result, disable
   }
   const ready = !!pickup && !!returned && count > 0;
   return <div className="queue-check">
-    <button type="button" className="button secondary full" disabled={disabled || busy || !ready} onClick={check}><span aria-hidden="true">📅</span> {busy ? "กำลังเช็คคิว…" : "เช็คคิวจาก Alex"}</button>
+    <button type="button" className="button info full" disabled={disabled || busy || !ready} onClick={check}><span aria-hidden="true">📅</span> {busy ? "กำลังเช็คคิว…" : "เช็คคิวจาก Alex"}</button>
     {!ready && <p className="muted small">ใส่วันรับชุด วันคืนชุด และเพิ่มสินค้าลงตะกร้าก่อนเช็คคิว</p>}
     {error && <div className="notice warning" role="alert">{error}</div>}
     {result && <div className={`notice ${result.state === "AVAILABLE" ? "success" : "warning"}`} role="status"><strong>{queueStates[result.state] ?? result.state}</strong>{result.items.map(item => <p key={item.item_index}>{item.code} × {item.quantity}: {queueStates[item.state] ?? item.state}</p>)}<p className="small">ผลตรวจยังไม่กันคิว ระบบจะตรวจซ้ำก่อนส่งออเดอร์</p></div>}
