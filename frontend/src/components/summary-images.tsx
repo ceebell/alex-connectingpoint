@@ -21,7 +21,7 @@ async function encode(file: File): Promise<string> {
   } finally { bitmap.close(); }
 }
 
-export default function SummaryImages({ inquiryId, attachments, selected, disabled, onUploaded, onToggle, onBusy, onUnauthorized }: { inquiryId: string; attachments: Attachment[]; selected: string[]; disabled: boolean; onUploaded: (attachment: Attachment, contextHash: string) => void; onToggle: (id: string, checked: boolean) => void; onBusy: (busy: boolean) => void; onUnauthorized: () => void }) {
+export default function SummaryImages({ inquiryId, attachments, selected, disabled, onUploaded, onDeleted, onToggle, onBusy, onUnauthorized }: { inquiryId: string; attachments: Attachment[]; selected: string[]; disabled: boolean; onUploaded: (attachment: Attachment, contextHash: string) => void; onDeleted: (id: string, attachments: Attachment[], contextHash: string) => void; onToggle: (id: string, checked: boolean) => void; onBusy: (busy: boolean) => void; onUnauthorized: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -41,11 +41,21 @@ export default function SummaryImages({ inquiryId, attachments, selected, disabl
     } catch (cause) { setError(cause instanceof ApiError ? errorText(cause) : "แนบรูปไม่สำเร็จ รองรับ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 40 MB ต่อรูป"); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
     finally { setBusy(false); onBusy(false); }
   }
+  // Deleting removes the upload and its file; the saved summary drops it from its selected images.
+  async function remove(attachment: Attachment) {
+    if (!window.confirm(`ลบรูป "${attachment.name || "รูปสรุป"}"? รูปจะถูกลบออกจากเรื่องนี้และร่างเดิมต้องเตรียมใหม่`)) return;
+    setBusy(true); onBusy(true); setError("");
+    try {
+      const value = await api<{ attachments: Attachment[]; context_hash: string }>(`/api/inquiries/${inquiryId}/draft-images/${attachment.id}`, { method: "DELETE" });
+      onDeleted(attachment.id, value.attachments, value.context_hash);
+    } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
+    finally { setBusy(false); onBusy(false); }
+  }
   return <div className="summary-images">
     <div className="section-caption"><strong>รูปสรุปสำหรับ AI ({selected.length}/5)</strong><button type="button" className="button secondary" disabled={disabled || busy || selected.length >= 5} onClick={() => fileRef.current?.click()}>{busy ? "กำลังแนบรูป…" : "+ แนบรูป"}</button></div>
     <input className="sr-only" ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple aria-label="แนบรูปสรุปให้ AI สูงสุด 5 รูป" onChange={e => upload(e.target.files)} disabled={disabled || busy || selected.length >= 5} />
     {error && <div className="notice warning" role="alert">{error}</div>}
-    {attachments.length > 0 && <div className="summary-image-grid">{attachments.map(attachment => <label key={attachment.id} className={selected.includes(attachment.id) ? "selected" : ""}><img src={attachment.url} alt={attachment.name || "รูปสรุปที่แนบ"} /><span><input type="checkbox" checked={selected.includes(attachment.id)} disabled={disabled || busy || (!selected.includes(attachment.id) && selected.length >= 5)} onChange={e => onToggle(attachment.id, e.target.checked)} />ใช้รูปนี้</span></label>)}</div>}
+    {attachments.length > 0 && <div className="summary-image-grid">{attachments.map(attachment => <div key={attachment.id} className={`summary-image ${selected.includes(attachment.id) ? "selected" : ""}`}><label><img src={attachment.url} alt={attachment.name || "รูปสรุปที่แนบ"} /><span><input type="checkbox" checked={selected.includes(attachment.id)} disabled={disabled || busy || (!selected.includes(attachment.id) && selected.length >= 5)} onChange={e => onToggle(attachment.id, e.target.checked)} />ใช้รูปนี้</span></label><button type="button" className="summary-image-delete" aria-label={`ลบรูป ${attachment.name || "รูปสรุป"}`} title="ลบรูปนี้" disabled={disabled || busy} onClick={() => remove(attachment)}><span aria-hidden="true">🗑</span></button></div>)}</div>}
     <p className="muted small">แนบภาพที่มีชื่อชุด สี ไซซ์ และวันที่ได้ หรือเลือกรูปจากแชท รวมสูงสุด 5 รูป รูปที่แนบส่วนนี้ใช้เตรียมร่างภายใน</p>
   </div>;
 }

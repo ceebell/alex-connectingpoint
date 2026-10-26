@@ -54,6 +54,15 @@ pub async fn upload_image(
     ))
 }
 
+pub async fn delete_image(
+    State(state): State<AppState>,
+    Path((inquiry, attachment)): Path<(String, String)>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        crate::db::attachments::remove(&state, id(&inquiry)?, id(&attachment)?).await?,
+    ))
+}
+
 pub async fn extract_customer(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,

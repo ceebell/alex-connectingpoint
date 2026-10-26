@@ -40,16 +40,18 @@ async fn catalog(
         flow.started.notify_one();
         flow.resume.notified().await;
     }
-    let candidate = |id: &str| json!({"productItemId":id,"code":"DR-NINA","name":"Nina dress","color":if mode==5{"blue"}else{"dark brown"},"size":if mode==5{"L"}else{"M"},"rentalPrice":1000,"bail":2000,"mainImage":"/photo.png"});
+    let candidate = |id: &str| json!({"productItemId":id,"code":"DR-NINA","name":"Nina dress","color":if mode==5{"blue"}else{"BR"},"size":if mode==5{"L"}else{"M"},"rentalPrice":1000,"bail":2000,"mainImage":"/photo.png"});
     let items = match mode {
         // Searching inside the resolved category: no keyword, only the category code and options.
         8 => {
             assert_eq!(body["category"], "HT");
+            // "Blush Pink" is searched by the shop's color code.
+            assert_eq!(body["color"], "P|");
             assert_eq!(body["keyword"], "");
             let mut item = candidate("haatiya-1");
             item["code"] = json!("0288HTBP");
             item["name"] = json!("Haatiya - Blush Pink");
-            item["color"] = json!("Blush Pink");
+            item["color"] = json!("P");
             vec![item]
         }
         9 => {
@@ -75,6 +77,14 @@ async fn categories(headers: axum::http::HeaderMap) -> Json<Value> {
     assert_eq!(headers["authorization"], "Bearer fixture-alex-token");
     Json(
         json!([{"code":"HT","description":"Haatiya","state":true},{"code":"OLD","description":"Unknown line","state":false}]),
+    )
+}
+
+// Alex lists color codes with names; the inactive entry must never be used.
+async fn colors(headers: axum::http::HeaderMap) -> Json<Value> {
+    assert_eq!(headers["authorization"], "Bearer fixture-alex-token");
+    Json(
+        json!([{"code":"BR","description":"น้ำตาล","state":true},{"code":"P","description":"ชมพู","state":true},{"code":"OLDP","description":"pink","state":false}]),
     )
 }
 
@@ -122,6 +132,7 @@ async fn fixture(mode: usize) -> (AppState, Flow, tokio::task::JoinHandle<()>, O
         .route("/api/user/login", axum::routing::post(login))
         .route("/api/v2/GetProductItems", axum::routing::post(catalog))
         .route("/api/category", axum::routing::get(categories))
+        .route("/api/color", axum::routing::get(colors))
         .route(
             "/v1/toolsets",
             axum::routing::get(|| async {
@@ -235,6 +246,8 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
             assert_eq!(lookup["status"], "MATCHED");
             assert_eq!(item["product_code"], "DR-NINA");
             assert_eq!(item["product_name"], "Nina dress");
+            // The customer's color wording stays in the draft; Alex's code is used for search only.
+            assert_eq!(item["color"], "dark brown");
             assert_eq!(lookup["selected_product_item_id"], "nina-1");
             assert!(
                 latest["result"]["evidence"]
@@ -264,7 +277,7 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
         if mode != 3 {
             assert_eq!(calls[1]["body"]["keyword"], "nina");
             assert_eq!(calls[1]["body"]["branchId"], "branch-a");
-            assert_eq!(calls[1]["body"]["color"], "dark brown|");
+            assert_eq!(calls[1]["body"]["color"], "BR|");
             assert_eq!(calls[1]["body"]["size"], "M|");
             let suggestions = &result["suggestions"][0]["search"];
             if matched {

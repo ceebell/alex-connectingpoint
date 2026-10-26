@@ -511,6 +511,38 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
             .validate()
             .is_err()
     );
+    // Deleting an upload removes its record and file and drops it from the saved summary.
+    // GridFS files carry the shop scope in metadata, so count them directly.
+    let stored = || async {
+        state
+            .db
+            .collection::<Document>("fs.files")
+            .count_documents(doc! {})
+            .await
+            .unwrap()
+    };
+    let files = stored().await;
+    let delete_path = format!("{upload_path}/{}", ids[4]);
+    let (status, after) = super::request(&state, &delete_path, "DELETE", Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["attachments"].as_array().unwrap().len(), 4);
+    assert!(after["context_hash"].is_string());
+    assert_eq!(all(&state, "inquiry_attachments").await.len(), 4);
+    assert_eq!(stored().await, files - 1);
+    let inquiry = drafts::inquiry(&state, id).await.unwrap();
+    let kept = inquiry
+        .get_document("working_summary")
+        .unwrap()
+        .get_array("image_event_ids")
+        .unwrap();
+    assert_eq!(kept.len(), 4);
+    assert!(!kept.contains(&mongodb::bson::Bson::String(ids[4].clone())));
+    assert_eq!(
+        super::request(&state, &delete_path, "DELETE", Value::Null, true)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
     assert!(all(&state, "alex_submissions").await.is_empty());
     state.db.drop().await.unwrap();
     server.abort();
@@ -668,7 +700,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(group["delivery_provider"], "Flash");
     assert_eq!(group["rental_discount_satang"], 150001);
     let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
-        "shipping_fee_satang":4000,"shipping_note_only":true,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
+        "shipping_fee_satang":4000,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
     // An order discount above the catalog rent is rejected before anything is sent.
     assert_eq!(
         request(
@@ -705,7 +737,8 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     );
     review["source_hash"] = data["source_hash"].clone();
     review["group_key"] = group["key"].clone();
-    review["shipping_note_only"] = json!(false);
+    // Payments use Alex's own choices; an empty one means not paid yet.
+    review["bail_payment_method"] = json!("ทองคำ");
     assert_eq!(
         request(
             &state,
@@ -718,7 +751,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         .0,
         StatusCode::UNPROCESSABLE_ENTITY
     );
-    review["shipping_note_only"] = json!(true);
+    review["bail_payment_method"] = json!("");
     let (status, preview) = request(
         &state,
         &format!("{base}/review"),
@@ -757,11 +790,11 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(payload["orderDetail"]["startDate"], "2026-11-04");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
     assert!(payload["orderDetail"].get("birthDate").is_none());
-    assert!(
-        payload["orderDetail"]["remark1"]
-            .as_str()
-            .unwrap()
-            .contains("40.00")
+    assert_eq!(payload["orderDetail"]["bailPaymentMethod"], "ยังไม่ชำระ");
+    // The shipping fee is written into the note without any acknowledgement step.
+    assert_eq!(
+        payload["orderDetail"]["remark1"],
+        "เข็มกลัดดอกไม้\nค่าจัดส่ง 40.00 บาท (ไม่รวมในยอดค่าเช่า)"
     );
     let record = all(&state, "alex_submissions").await[0].clone();
     assert!(

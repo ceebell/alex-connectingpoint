@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Catalog images are external Alex links; next/image would need a fixed remote host list. */
 import { useEffect, useState } from "react";
-import { api, ApiError, cleanPhone, errorText, Profile, RECEIVING_METHODS, STORE_PICKUP } from "@/lib/api";
+import { api, ApiError, cleanPhone, codeLabel, CodeName, errorText, PAYMENT_METHODS, Profile, RECEIVING_METHODS, STORE_PICKUP, UNPAID } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
@@ -9,7 +9,7 @@ type Group = { key: string; branch_id: string; pickup_date: string; return_date:
 type Submission = { _id: string; status: string; alex_order_id?: string; group: Group; submitted_by: string; created_at: string; verification?: string };
 type Data = { source_hash: string | null; draft_version?: number; groups: Group[]; missing: { field: string; code?: string }[]; has_conflicts: boolean; context_error?: string; submissions: Submission[]; customer: { name: string | null; phone: string | null; address: string | null }; notes: string | null; order_response_configured: boolean };
 type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
-type Review = { review_id: string; group: Group; customer: { name: string; phone: string; address: string }; catalog_rental_satang: number; catalog_deposit_satang: number; rental_fee_satang: number; deposit_satang: number; shipping_fee_satang: number; shipping_note_only: boolean; rental_discount_satang: number; deposit_discount_satang: number; receiving_method: string; rental_payment_method: string; bail_payment_method: string; notes: string; expires_at: string };
+type Review = { review_id: string; group: Group; customer: { name: string; phone: string; address: string }; catalog_rental_satang: number; catalog_deposit_satang: number; rental_fee_satang: number; deposit_satang: number; shipping_fee_satang: number; rental_discount_satang: number; deposit_discount_satang: number; receiving_method: string; rental_payment_method: string; bail_payment_method: string; notes: string; expires_at: string };
 const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const nights = (pickup: string, returned: string) => Math.max(1, Math.round((Date.parse(returned) - Date.parse(pickup)) / 86_400_000));
 const badges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
@@ -23,13 +23,15 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const [groupKey, setGroupKey] = useState("");
   const [name, setName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState("");
   const [shipping, setShipping] = useState("");
-  const [receiving, setReceiving] = useState(""); const [rentalPayment, setRentalPayment] = useState(""); const [bailPayment, setBailPayment] = useState("");
+  const [receiving, setReceiving] = useState(""); const [rentalPayment, setRentalPayment] = useState(UNPAID); const [bailPayment, setBailPayment] = useState(UNPAID);
   const [birth, setBirth] = useState(""); const [notes, setNotes] = useState("");
-  const [shippingNoteOnly, setShippingNoteOnly] = useState(false); const [freePromotion, setFreePromotion] = useState(false); const [discountPromotion, setDiscountPromotion] = useState(false);
+  const [freePromotion, setFreePromotion] = useState(false); const [discountPromotion, setDiscountPromotion] = useState(false);
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [review, setReview] = useState<Review | null>(null); const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false); const [extracting, setExtracting] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
+  // Lines carry Alex color codes (P); show the shop's color names next to them.
+  const [colors, setColors] = useState<CodeName[]>([]);
   const [resolveId, setResolveId] = useState(""); const [resolveOrder, setResolveOrder] = useState(""); const [resolveChecked, setResolveChecked] = useState(false);
   const working = disabled || busy || extracting || loading;
   const group = data?.groups.find(group => group.key === groupKey);
@@ -45,15 +47,16 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     setGroupKey(group.key); setAvailability(null); invalidate();
     setShipping(group.quoted_shipping_fee_satang === null ? group.fulfillment_method === "store_pickup" ? "0" : "" : String(group.quoted_shipping_fee_satang / 100));
     setReceiving(group.fulfillment_method === "store_pickup" ? STORE_PICKUP : group.delivery_provider && RECEIVING_METHODS.includes(group.delivery_provider) ? group.delivery_provider : "Flash");
-    setNotes([commonNotes, group.notes].filter(Boolean).join("\n")); setShippingNoteOnly(false);
+    setNotes([commonNotes, group.notes].filter(Boolean).join("\n"));
   }
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   async function refresh() { const value = await api<Data>(endpoint); setData(value); return value; }
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api<Data>(endpoint), userId ? api<{ profile: Profile | null }>(`/api/line/users/${encodeURIComponent(userId)}/profile`).catch(() => null) : Promise.resolve(null)]).then(([value, profile]) => {
+    Promise.all([api<Data>(endpoint), userId ? api<{ profile: Profile | null }>(`/api/line/users/${encodeURIComponent(userId)}/profile`).catch(() => null) : Promise.resolve(null), api<{ colors: CodeName[] }>("/api/admin/alex/colors").catch(() => ({ colors: [] }))]).then(([value, profile, shopColors]) => {
       if (cancelled) return;
+      setColors(shopColors.colors);
       setData(value); setName(value.customer.name ?? profile?.profile?.display_name ?? ""); setPhone(cleanPhone(value.customer.phone ?? profile?.profile?.phone ?? "")); setAddress(value.customer.address ?? profile?.profile?.address ?? "");
       if (value.groups.length === 1) changeGroup(value.groups[0], value.notes ?? "");
     }).catch(cause => { if (!cancelled) fail(cause); }).finally(() => { if (!cancelled) setLoading(false); });
@@ -72,7 +75,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     setBusy(true); setError(""); invalidate();
     try { setReview(await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
       source_hash: data!.source_hash, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address,
-      shipping_fee_satang: satang(shipping), shipping_note_only: shippingNoteOnly,
+      shipping_fee_satang: satang(shipping),
       receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: birth || null, notes,
       use_free_item_promotion: freePromotion, use_discount_promotion: discountPromotion,
     }) })); }
@@ -125,7 +128,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
           <h4><span aria-hidden="true">👗</span> รายการเช่า <span className="muted small">{pieces} ชิ้น</span></h4>
           <div className="invoice-items">{group.lines.map(line => { const state = availability?.items.find(item => item.product_item_id === line.product_item_id)?.state; const badge = state ? badges[state] : undefined; return <article key={line.item_index} className={`invoice-item ${badge ? `queue-${badge[1]}` : ""}`}>
             <div className="invoice-thumb">{line.image_url ? <img src={line.image_url} alt={`รูปสินค้า ${line.name}`} loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
-            <div className="invoice-item-body"><strong>{line.name}</strong><span className="invoice-code">{line.code}</span><div className="invoice-chips"><span>สี {line.color || "-"}</span><span>ไซซ์ {line.size || "-"}</span><span>× {line.quantity}</span>{badge && <span className={`queue-badge ${badge[1]}`}>{badge[0]}</span>}</div></div>
+            <div className="invoice-item-body"><strong>{line.name}</strong><span className="invoice-code">{line.code}</span><div className="invoice-chips"><span>สี {codeLabel(line.color, colors)}</span><span>ไซซ์ {line.size || "-"}</span><span>× {line.quantity}</span>{badge && <span className={`queue-badge ${badge[1]}`}>{badge[0]}</span>}</div></div>
             <dl className="invoice-item-amounts"><div><dt>ค่าเช่า</dt><dd>{baht(line.rental_fee_satang * line.quantity)}</dd></div><div><dt>ค่าประกัน</dt><dd>{baht(line.deposit_satang * line.quantity)}</dd></div>{line.quantity > 1 && <p className="muted small">ชิ้นละ {baht(line.rental_fee_satang)} / {baht(line.deposit_satang)}</p>}</dl>
           </article>; })}</div>
           <button type="button" className="button info full" disabled={working || !ready} onClick={check}><span aria-hidden="true">📅</span> {busy ? "กำลังตรวจ…" : "เช็คคิวจาก Alex"}</button>
@@ -136,10 +139,10 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
           <div className="field-grid">
             <label>วิธีมารับ<select required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
             <label>ค่าจัดส่ง (บาท)<input required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
-            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select required value={value} onChange={e => { set(e.target.value); invalidate(); }}><option value="">เลือกวิธีชำระ</option><option>โอนเงิน</option><option>เงินสด</option><option>บัตรเครดิต</option></select></label>)}
+            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select value={value} onChange={e => { set(e.target.value); invalidate(); }}>{PAYMENT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>)}
             <label>วันเกิด (ถ้าทราบ)<input type="date" value={birth} onChange={e => { setBirth(e.target.value); invalidate(); }} /></label>
           </div>
-          {Number(shipping) > 0 && <div className="notice warning"><p>รูปแบบสร้างบิลยังไม่มีช่องค่าส่งแยก ค่าส่งจะถูกบันทึกในหมายเหตุ ยอดบิลใน Alex ไม่รวมค่าส่ง</p><label className="checkbox-row"><input type="checkbox" required checked={shippingNoteOnly} onChange={e => { setShippingNoteOnly(e.target.checked); invalidate(); }} />รับทราบและให้บันทึกค่าส่งไว้ในหมายเหตุ</label></div>}
+          {Number(shipping) > 0 && <p className="notice info">ค่าจัดส่ง {baht(satang(shipping))} บาท จะบันทึกต่อท้ายหมายเหตุของออเดอร์ใน Alex (Alex ไม่มีช่องค่าส่งแยก)</p>}
           <label>หมายเหตุ / อุปกรณ์<textarea rows={2} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
           <div className="invoice-options"><label className="checkbox-row"><input type="checkbox" checked={freePromotion} onChange={e => { setFreePromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นของแถม</label><label className="checkbox-row"><input type="checkbox" checked={discountPromotion} onChange={e => { setDiscountPromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นส่วนลด</label></div>
         </section>

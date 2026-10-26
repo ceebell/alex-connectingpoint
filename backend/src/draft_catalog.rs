@@ -4,7 +4,7 @@ use crate::{
     error::AppError,
     models::{
         draft::{DraftItem, DraftResult, Evidence},
-        product::{Candidate, Category, SearchInput, SearchMode},
+        product::{Candidate, CodeName, SearchInput, SearchMode},
     },
     state::AppState,
 };
@@ -115,8 +115,14 @@ async fn candidates(
 }
 
 // Catalog prices are not copied: the cart holds the chosen item and its Alex prices.
+// A color the customer wrote is kept as written; Alex's code is only filled into an empty color.
 fn fill(result: &mut DraftResult, index: usize, candidate: &Candidate) -> Vec<(String, Value)> {
     let item = &mut result.fields.items[index];
+    let catalog_color = item
+        .color
+        .is_none()
+        .then(|| candidate.color.clone())
+        .flatten();
     let mut filled = vec![];
     for (key, target, value) in [
         (
@@ -129,7 +135,7 @@ fn fill(result: &mut DraftResult, index: usize, candidate: &Candidate) -> Vec<(S
             &mut item.product_name,
             Some(candidate.name.clone()),
         ),
-        ("color", &mut item.color, candidate.color.clone()),
+        ("color", &mut item.color, catalog_color),
         ("size", &mut item.size, candidate.size.clone()),
     ] {
         if let Some(value) = value {
@@ -201,7 +207,8 @@ pub async fn enrich(
     let draft_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let inquiry_id = inquiry.get_object_id("_id").map_err(|_| AppError::Data)?;
     let mut lookups = vec![];
-    let mut categories: Option<Vec<Category>> = None;
+    let mut categories: Option<Vec<CodeName>> = None;
+    let mut colors: Option<Vec<CodeName>> = None;
     for index in 0..result.fields.items.len() {
         let mut item = result.fields.items[index].clone();
         // A poster title is an Alex category: resolve its code first, then search inside it.
@@ -231,6 +238,26 @@ pub async fn enrich(
         } else {
             None
         };
+        // Alex filters and labels by color code (P) while images and chats name it (ชมพู, Pink).
+        // Candidates are compared by the resolved code; an unresolved color is never sent as a filter.
+        let mut color_code = None;
+        if let Some(written) = item.color.clone() {
+            if colors.is_none() {
+                colors = Some(
+                    match timeout_at(deadline, alex::colors(state, &session)).await {
+                        Ok(Ok(list)) => list,
+                        _ => vec![],
+                    },
+                );
+            }
+            color_code = colors
+                .as_deref()
+                .and_then(|list| alex::find_color(list, &written))
+                .map(|color| color.code.clone());
+            if let Some(code) = &color_code {
+                item.color = Some(code.clone());
+            }
+        }
         let query = item
             .product_code
             .clone()
@@ -254,7 +281,7 @@ pub async fn enrich(
                 SearchMode::Text
             },
             query,
-            color: item.color.clone(),
+            color: color_code,
             size: item.size.clone(),
             image_event_id: None,
             category: category.as_ref().map(|category| category.code.clone()),

@@ -229,6 +229,12 @@ export default function AdminWorkspace() {
     setImages(previous => checked ? [...new Set([...previous, id])].slice(0, 5) : previous.filter(value => value !== id));
   }
 
+  function deletedSummaryImage(id: string, list: Attachment[], contextHash: string) {
+    setAttachments(list); setContextHash(contextHash);
+    if (images.includes(id)) toggleSummaryImage(id, false);
+    setDrafts(previous => previous.map(draft => ({ ...draft, stale: true }))); setApproveChecked(false);
+  }
+
   function uploadedSummaryImage(attachment: Attachment, contextHash: string) {
     setAttachments(previous => [...new Map([...previous, attachment].map(item => [item.id, item])).values()]);
     toggleSummaryImage(attachment.id, true); setContextHash(contextHash);
@@ -330,7 +336,7 @@ export default function AdminWorkspace() {
             {savedSummary?.redacted && <div className="notice warning">ซ่อนสรุปเดิมเพราะมีข้อความถูกยกเลิก กรุณาตรวจแชทแล้วสรุปใหม่</div>}
             {savedSummary?.stale && !savedSummary.redacted && <div className="notice warning">มีข้อความใหม่หลังบันทึกสรุป กรุณาตรวจแชทก่อนเตรียมร่างอีกครั้ง</div>}
             {summaryConflict && <div className="notice warning"><p>สรุปบนระบบมีการเปลี่ยนแปลง คัดลอกข้อความที่ต้องการเก็บไว้ก่อนโหลด</p><button type="button" className="text-button" disabled={working} onClick={reloadSummary}>โหลดสรุปล่าสุด</button></div>}
-            <SummaryImages inquiryId={selected} attachments={attachments} selected={images} disabled={!!working} onUploaded={uploadedSummaryImage} onToggle={toggleSummaryImage} onBusy={setBusy} onUnauthorized={() => setSession(null)} />
+            <SummaryImages inquiryId={selected} attachments={attachments} selected={images} disabled={!!working} onUploaded={uploadedSummaryImage} onDeleted={deletedSummaryImage} onToggle={toggleSummaryImage} onBusy={setBusy} onUnauthorized={() => setSession(null)} />
             <label className="summary-label">คำบรรยายเพิ่มเติม (ไม่จำเป็นเมื่อแนบรูป)<textarea rows={4} maxLength={20000} value={summary} disabled={working} onChange={e => editSummary(e.target.value)} placeholder="เช่น จำนวนชุดละ 1 ชุด หรือเพิ่มรายละเอียดที่ไม่มีในภาพ หากใช้ปีอื่นให้ระบุปีด้วย" /></label>
             <div className="section-caption small muted"><span>แนบรูปที่เลือก {images.length}/5 รูป</span><span>{summary.length.toLocaleString()}/20,000</span></div>
             <p className="muted small">วันที่ที่ไม่ระบุปีจะใช้ปีปัจจุบันตามเวลาไทย ส่วนวันที่ที่อ่านได้หลายแบบ AI จะถามให้ยืนยัน</p>

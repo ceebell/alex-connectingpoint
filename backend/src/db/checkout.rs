@@ -4,7 +4,10 @@ use crate::{
     error::AppError,
     models::{
         cart::CheckInput as CartCheckInput,
-        checkout::{CheckInput, Group, Line, ResolveInput, ReviewInput, SubmitInput},
+        checkout::{
+            CheckInput, Group, Line, PAYMENT_METHODS, ResolveInput, ReviewInput, SubmitInput,
+            UNPAID,
+        },
         customer::{Actor, ProfileInput, normalize_phone},
         draft::{DraftFields, RECEIVING_METHODS, valid_date},
     },
@@ -368,19 +371,14 @@ fn validate_input(input: &ReviewInput, group: &Group) -> Result<(), AppError> {
         || (group.fulfillment_method == "delivery" && input.customer_address.trim().is_empty())
         || !(0..=10_000_000_000).contains(&input.shipping_fee_satang)
         || !RECEIVING_METHODS.contains(&input.receiving_method.as_str())
-        || [
-            &input.receiving_method,
-            &input.rental_payment_method,
-            &input.bail_payment_method,
-        ]
-        .iter()
-        .any(|value| value.trim().is_empty() || value.len() > 300)
+        || [&input.rental_payment_method, &input.bail_payment_method]
+            .iter()
+            .any(|value| !PAYMENT_METHODS.contains(&value.as_str()))
         || input.notes.chars().count() > 2000
         || input
             .birth_date
             .as_ref()
             .is_some_and(|date| !valid_date(date))
-        || (input.shipping_fee_satang > 0 && !input.shipping_note_only)
     {
         return Err(AppError::Validation(
             "Review customer, prices, payment and shipping fields",
@@ -395,6 +393,14 @@ pub async fn review(
     mut input: ReviewInput,
 ) -> Result<Value, AppError> {
     input.customer_phone = normalize_phone(&input.customer_phone);
+    for method in [
+        &mut input.rental_payment_method,
+        &mut input.bail_payment_method,
+    ] {
+        if method.trim().is_empty() {
+            *method = UNPAID.into();
+        }
+    }
     let source = source(state, id).await?;
     if source.source_hash != input.source_hash {
         return Err(AppError::ContextChanged);
@@ -423,10 +429,14 @@ pub async fn review(
     }
     let rental_fee = rental - group.rental_discount_satang;
     let deposit_fee = deposit - group.deposit_discount_satang;
-    let mut notes = input.notes.clone();
+    // Alex has no shipping field, so a shipping fee always goes into the order note.
+    let mut notes = input.notes.trim().to_string();
     if input.shipping_fee_satang > 0 {
+        if !notes.is_empty() {
+            notes.push('\n');
+        }
         notes.push_str(&format!(
-            "\nค่าจัดส่ง {} บาท (บันทึกหมายเหตุ ไม่รวมในยอดค่าเช่า)",
+            "ค่าจัดส่ง {} บาท (ไม่รวมในยอดค่าเช่า)",
             baht(input.shipping_fee_satang)
         ));
     }
@@ -464,7 +474,7 @@ pub async fn review(
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
         "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
-        "shipping_note_only":input.shipping_note_only,"rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,
+        "rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
     )
 }

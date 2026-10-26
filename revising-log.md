@@ -4,6 +4,23 @@
 
 <!-- entries -->
 
+## 2026-10-26 23:47 — วิธีชำระไม่บังคับ ค่าส่งลงหมายเหตุ ใบสรุปเลื่อนได้ ลบรูปสรุป และค้นสีด้วย code ของ Alex
+- **คำอธิบาย:** ผู้ใช้แจ้ง 5 ข้อ: วิธีชำระค่าเช่า/ค่าประกันไม่บังคับ (ไม่เลือกให้เป็น "ยังไม่ชำระ"), หน้าต่างใบสรุปต้องเลื่อนได้, ค่าส่งถ้ามีให้ลงหมายเหตุ, รูปสรุปสำหรับ AI ลบได้ และค้นสีไม่ได้เพราะ Alex ใช้ code สี (P) แต่คนเขียนชื่อ (ชมพู) — ตรวจ JS ของ Alex พบตัวเลือกชำระเงินจริงและ `GET /api/color` เป็น `{code, description, state}`
+- **โฟลเดอร์ `backend/src/`**
+  - `models/checkout.rs`, `db/checkout.rs` — แก้: `PAYMENT_METHODS` ตามตัวเลือก Alex (ยังไม่ชำระ, เงินสด, โอนเงิน, Alipay/wechat, บัตรเครดิต, ช่องทางอื่น) ค่าว่างเป็น "ยังไม่ชำระ" ค่าอื่นถูกปฏิเสธ; ลบ `shipping_note_only` ค่าส่งเขียนต่อท้ายหมายเหตุอัตโนมัติ (ไม่มีบรรทัดว่างนำหน้า)
+  - `db/attachments.rs`, `routes/drafts.rs`, `routes/mod.rs` — เพิ่ม: `DELETE /api/inquiries/{id}/draft-images/{attachment}` ลบ record และไฟล์ GridFS และดึง id ออกจาก `working_summary.image_event_ids` คืนรายการรูปและ context hash ใหม่; CORS อนุญาต DELETE
+  - `alex.rs`, `models/product.rs` — แก้/เพิ่ม: `Category` เปลี่ยนเป็น `CodeName` ใช้ร่วมกับสี, `alex::colors` (เฉพาะที่ใช้งาน) และ `find_color` (ตรงชื่อ/รหัส แล้วคำสีไทย–อังกฤษ เช่น Pink→ชมพู; ตรงหลายสีไม่เดา); unit test
+  - `draft_catalog.rs`, `routes/products.rs`, `order_draft_prompt.txt` — แก้/เพิ่ม: AI lookup ค้นด้วย code สีที่แปลงได้ (แปลงไม่ได้ไม่ใส่ตัวกรองสี) เทียบตัวเลือกด้วย code และคงสีที่ลูกค้าเขียนไว้ในร่าง; `GET /api/admin/alex/colors`
+  - `tests_rental.rs`, `tests_draft_catalog.rs` — แก้: วิธีชำระผิด 422 / ว่างเป็นยังไม่ชำระ, หมายเหตุค่าส่ง, ลบรูป (record/ไฟล์/สรุป/ลบซ้ำ 404), mock `/api/color` (มีรายการปิดใช้งาน) และค้นด้วย `BR|`/`P|`
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/rental-checkout.tsx`, `lib/api.ts` — แก้: วิธีชำระเป็น dropdown ไม่บังคับ เริ่มต้นยังไม่ชำระ; ลบช่องติ๊กรับทราบค่าส่ง แสดงข้อความว่าค่าส่งจะลงหมายเหตุ; ใบสรุปแสดงชื่อสี (เช่น ชมพู (P)); helper `CodeName`/`findCode`/`codeLabel`
+  - `components/draft-editor.tsx`, `components/invoice.css` — แก้: หน้าต่างใบสรุป render ผ่าน portal ไปที่ body มีหัวคงที่และเนื้อหาเลื่อนในตัว (`overscroll-behavior: contain`) ล็อกการเลื่อนหน้าเบื้องหลังขณะเปิด สูงตามเนื้อหาไม่เกิน 94vh และเต็มจอบนมือถือ
+  - `components/summary-images.tsx`, `components/admin-workspace.tsx`, `components/rental-summary.css` — แก้: ปุ่ม 🗑 มุมรูปสรุปแต่ละรูป (ยืนยันก่อนลบ) ลบแล้วเอาออกจากรูปที่เลือก อัปเดต context hash และทำเครื่องหมายร่างเดิมว่าต้องเตรียมใหม่
+  - `components/order-cart.tsx` — แก้: ช่อง **สี** เป็น dropdown สีของร้าน (ส่ง code) เลือกให้จากผลค้นอัตโนมัติหรือชื่อที่ตรง การ์ดผลค้นหา/ตะกร้าแสดงชื่อสีพร้อม code
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md`, `step-3-products.md` — แก้: วิธีชำระ ค่าส่ง ลบรูป และ endpoint สี
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 44/44 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint และ npm run build ผ่าน; ทดสอบ dialog ใน headless Edge ด้วย CSS ที่ build จริง: เนื้อหาเลื่อนได้ (scrollTop 700) ขณะ dialog สูง 94vh และใบสั้นสูงตามเนื้อหา; render ปุ่มลบรูป; ยังไม่ได้ทดสอบกับ `/api/color` ของร้านจริงหรือส่งบิลจริง; ยังไม่ได้ build release — ใช้ build-all.bat ก่อน rungit.bat
+
 ## 2026-10-26 23:06 — เพิ่ม build-all.bat (backend → frontend)
 - **คำอธิบาย:** ผู้ใช้ขอสคริปต์เดียวที่รัน build-backend.bat แล้วต่อด้วย build-frontend.bat
 - **โฟลเดอร์ `./`**

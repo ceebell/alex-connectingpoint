@@ -1,5 +1,6 @@
 "use client";
 import { ReactNode, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAmounts, emptyRental, Fields, labels, LineEvent, RECEIVING_METHODS, receivingMethod, Rental, STORE_PICKUP } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
@@ -35,13 +36,20 @@ function orderLevel(initial: Fields): Fields {
 }
 
 // The invoice opens as a modal page; the native dialog handles focus and the Escape key.
+// It is portalled to <body> and scrolls in its own body so wheel/touch never reach the panels behind.
 function InvoiceDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose}>
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = overflow; };
+  }, []);
+  return createPortal(<dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose}>
     <div className="invoice-dialog-bar"><button type="button" className="text-button" onClick={() => ref.current?.close()}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button></div>
-    {children}
-  </dialog>;
+    <div className="invoice-dialog-body">{children}</div>
+  </dialog>, document.body);
 }
 
 export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onUnauthorized: () => void }) {

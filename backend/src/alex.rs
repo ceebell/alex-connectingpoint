@@ -1,7 +1,7 @@
 use crate::{
     config::AlexConfig,
     error::AppError,
-    models::product::{Branch, Candidate, Category, SearchInput, SearchMode, satang, valid_id},
+    models::product::{Branch, Candidate, CodeName, SearchInput, SearchMode, satang, valid_id},
     state::AppState,
 };
 use reqwest::Url;
@@ -231,12 +231,16 @@ pub fn product_code_from_url(cfg: &AlexConfig, value: &str) -> Result<String, Ap
     Ok(code)
 }
 
-// Alex's own web app lists product lines from GET /api/category; only active ones are offered.
-pub async fn categories(state: &AppState, session: &Session) -> Result<Vec<Category>, AppError> {
+// Alex's web app reads its code lists (GET /api/category, /api/color) and offers only active entries.
+async fn code_list(
+    state: &AppState,
+    session: &Session,
+    path: &str,
+) -> Result<Vec<CodeName>, AppError> {
     let cfg = config(state)?;
     let response = state
         .http
-        .get(format!("{}/api/category", cfg.api_url))
+        .get(format!("{}/api/{path}", cfg.api_url))
         .bearer_auth(&session.token)
         .send()
         .await
@@ -253,7 +257,7 @@ pub async fn categories(state: &AppState, session: &Session) -> Result<Vec<Categ
             let code = item["code"].as_str()?.trim();
             let name = item["description"].as_str()?.trim();
             (!code.is_empty() && code.len() <= 64 && !name.is_empty() && name.len() <= 200).then(
-                || Category {
+                || CodeName {
                     code: code.into(),
                     name: name.into(),
                 },
@@ -262,8 +266,81 @@ pub async fn categories(state: &AppState, session: &Session) -> Result<Vec<Categ
         .collect())
 }
 
+// Product lines such as "Haatiya".
+pub async fn categories(state: &AppState, session: &Session) -> Result<Vec<CodeName>, AppError> {
+    code_list(state, session, "category").await
+}
+
+// Shop colors: products and the search filter use the code (P), people write the name (ชมพู, Pink).
+pub async fn colors(state: &AppState, session: &Session) -> Result<Vec<CodeName>, AppError> {
+    code_list(state, session, "color").await
+}
+
+// Common color words on posters and in chats, English and Thai.
+const COLOR_WORDS: [(&str, &str); 22] = [
+    ("pink", "ชมพู"),
+    ("brown", "น้ำตาล"),
+    ("black", "ดำ"),
+    ("white", "ขาว"),
+    ("red", "แดง"),
+    ("navy", "กรม"),
+    ("blue", "ฟ้า"),
+    ("blue", "น้ำเงิน"),
+    ("green", "เขียว"),
+    ("yellow", "เหลือง"),
+    ("orange", "ส้ม"),
+    ("purple", "ม่วง"),
+    ("violet", "ม่วง"),
+    ("grey", "เทา"),
+    ("gray", "เทา"),
+    ("gold", "ทอง"),
+    ("silver", "เงิน"),
+    ("cream", "ครีม"),
+    ("beige", "เบจ"),
+    ("nude", "นู้ด"),
+    ("khaki", "กากี"),
+    ("mint", "มิ้นต์"),
+];
+
+// Resolves a written color to one shop color: exact name or code first, then shared color
+// words (e.g. "Blush Pink" -> ชมพู). More than one possible color returns None, never a guess.
+pub fn find_color<'a>(colors: &'a [CodeName], wanted: &str) -> Option<&'a CodeName> {
+    let squash = |value: &str| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let wanted = squash(wanted);
+    if wanted.is_empty() {
+        return None;
+    }
+    if let Some(exact) = colors
+        .iter()
+        .find(|color| squash(&color.name) == wanted || squash(&color.code) == wanted)
+    {
+        return Some(exact);
+    }
+    let words: Vec<_> = COLOR_WORDS
+        .iter()
+        .filter(|(english, thai)| wanted.contains(english) || wanted.contains(thai))
+        .collect();
+    let mut found = colors.iter().filter(|color| {
+        let name = squash(&color.name);
+        name.contains(&wanted)
+            || words
+                .iter()
+                .any(|(english, thai)| name.contains(english) || name.contains(thai))
+    });
+    match (found.next(), found.next()) {
+        (Some(color), None) => Some(color),
+        _ => None,
+    }
+}
+
 // Matches a name read from an image or summary to a category, by name first and then by code.
-pub fn find_category<'a>(categories: &'a [Category], wanted: &str) -> Option<&'a Category> {
+pub fn find_category<'a>(categories: &'a [CodeName], wanted: &str) -> Option<&'a CodeName> {
     let wanted = wanted.split_whitespace().collect::<Vec<_>>().join(" ");
     let same = |value: &str| {
         value
@@ -463,11 +540,11 @@ mod tests {
     #[test]
     fn category_names_resolve_to_alex_codes() {
         let list = vec![
-            Category {
+            CodeName {
                 code: "HT".into(),
                 name: "Haatiya".into(),
             },
-            Category {
+            CodeName {
                 code: "NN".into(),
                 name: "Nina  Dress".into(),
             },
@@ -476,6 +553,28 @@ mod tests {
         assert_eq!(find_category(&list, "nina dress").unwrap().code, "NN");
         assert_eq!(find_category(&list, "ht").unwrap().name, "Haatiya");
         assert!(find_category(&list, "Haati").is_none());
+    }
+
+    #[test]
+    fn written_colors_resolve_to_one_shop_color_code() {
+        let color = |code: &str, name: &str| CodeName {
+            code: code.into(),
+            name: name.into(),
+        };
+        let list = vec![
+            color("P", "ชมพู"),
+            color("BR", "น้ำตาล"),
+            color("DBR", "น้ำตาลเข้ม"),
+            color("BK", "Black"),
+        ];
+        assert_eq!(find_color(&list, "ชมพู").unwrap().code, "P");
+        assert_eq!(find_color(&list, " p ").unwrap().code, "P");
+        assert_eq!(find_color(&list, "Blush Pink").unwrap().code, "P");
+        assert_eq!(find_color(&list, "สีดำ").unwrap().code, "BK");
+        assert_eq!(find_color(&list, "น้ำตาลเข้ม").unwrap().code, "DBR");
+        // Two browns fit "dark brown", so nothing is guessed.
+        assert!(find_color(&list, "dark brown").is_none());
+        assert!(find_color(&list, "lavender").is_none());
     }
 
     #[test]

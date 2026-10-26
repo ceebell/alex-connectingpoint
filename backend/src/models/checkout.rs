@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+// Alex's own payment choices for rent and deposit; the first means not paid yet.
+pub const UNPAID: &str = "ยังไม่ชำระ";
+pub const PAYMENT_METHODS: [&str; 6] = [
+    UNPAID,
+    "เงินสด",
+    "โอนเงิน",
+    "Alipay/wechat",
+    "บัตรเครดิต",
+    "ช่องทางอื่น",
+];
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Line {
     pub item_index: usize,
@@ -48,11 +59,13 @@ pub struct ReviewInput {
     pub customer_phone: String,
     pub customer_address: String,
     pub receiving_method: String,
-    pub rental_payment_method: String,
-    pub bail_payment_method: String,
-    pub shipping_fee_satang: i64,
+    // One of PAYMENT_METHODS; empty means not paid yet.
     #[serde(default)]
-    pub shipping_note_only: bool,
+    pub rental_payment_method: String,
+    #[serde(default)]
+    pub bail_payment_method: String,
+    // Alex has no shipping field, so a shipping fee is always written into the order note.
+    pub shipping_fee_satang: i64,
     pub birth_date: Option<String>,
     #[serde(default)]
     pub use_free_item_promotion: bool,

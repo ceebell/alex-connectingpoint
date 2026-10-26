@@ -1,10 +1,9 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Catalog images are external Alex links; next/image would need a fixed remote host list. */
 import { KeyboardEvent, useEffect, useState } from "react";
-import { api, ApiError, Attachment, Availability, Candidate, CartItem, Draft, DraftItem, errorText, LineEvent } from "@/lib/api";
+import { api, ApiError, Attachment, Availability, Candidate, CartItem, codeLabel, CodeName, Draft, DraftItem, errorText, findCode, LineEvent } from "@/lib/api";
 
 type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
-type Category = { code: string; name: string };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
 type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean };
 type Mode = "code" | "text" | "product_url" | "image";
@@ -17,7 +16,7 @@ const queueStates: Record<string, string> = { AVAILABLE: "ว่าง ณ เ�
 // Short labels shown on each cart card after a queue check.
 const queueBadges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
 
-function CartCard({ item, index, queue, disabled, onQuantity, onRemove }: { item: CartItem; index: number; queue?: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
+function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemove }: { item: CartItem; index: number; queue?: string; colorName: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
   const [text, setText] = useState(String(item.quantity));
   const { candidate } = item;
   function commit() { const next = quantityLimit(Number(text)); setText(String(next)); if (next !== item.quantity) onQuantity(next); }
@@ -26,7 +25,7 @@ function CartCard({ item, index, queue, disabled, onQuantity, onRemove }: { item
   return <article className={`match-card ${badge ? `queue-${badge[1]}` : ""}`} aria-label={`สินค้าในตะกร้า ${index + 1} ${candidate.name}${badge ? ` ${badge[0]}` : ""}`}>
     <div className="match-side">
       <div className="match-image">{candidate.image_url ? <img src={candidate.image_url} alt={`รูปสินค้า ${candidate.name}`} loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
-      <p>สี: {candidate.color || "ไม่ระบุ"}</p><p>ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
+      <p>สี: {colorName}</p><p>ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
     </div>
     <div className="match-main">
       <div className="match-title"><strong>{candidate.name}</strong><span>({candidate.code})</span></div>
@@ -41,12 +40,12 @@ function CartCard({ item, index, queue, disabled, onQuantity, onRemove }: { item
   </article>;
 }
 
-function CandidateTile({ candidate, inCart, disabled, onAdd }: { candidate: Candidate; inCart: number; disabled: boolean; onAdd: () => void }) {
+function CandidateTile({ candidate, inCart, colorName, disabled, onAdd }: { candidate: Candidate; inCart: number; colorName: string; disabled: boolean; onAdd: () => void }) {
   return <article className="candidate-tile">
     <div className="candidate-image">{candidate.image_url ? <img src={candidate.image_url} alt={`รูปสินค้า ${candidate.name}`} loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
     <strong>{candidate.name}</strong>
     <span className="candidate-code">({candidate.code})</span>
-    <p>สี: {candidate.color || "ไม่ระบุ"} · ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
+    <p>สี: {colorName} · ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
     <p className="candidate-price">ค่าเช่า {price(candidate.rental_fee_satang)} · ค่าประกัน {price(candidate.deposit_satang)}</p>
     {candidate.score !== null && <p className="muted small">ความคล้าย {Math.round(candidate.score * 100)}%</p>}
     <button type="button" className="button secondary full" disabled={disabled} onClick={onAdd}>{inCart ? `+ เพิ่มอีก (มี ${inCart})` : "+ เพิ่มลงตะกร้า"}</button>
@@ -61,11 +60,13 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   const [branch, setBranch] = useState("");
   const [mode, setMode] = useState<Mode>(items[0]?.product_code ? "code" : "text");
   const [query, setQuery] = useState(items[0]?.product_code ?? items[0]?.product_name ?? "");
-  const [color, setColor] = useState(items[0]?.color ?? "");
+  // Alex color code; Alex filters by code (P) while images and chats name the color (ชมพู).
+  const [color, setColor] = useState("");
+  const [colors, setColors] = useState<CodeName[]>([]);
   const [size, setSize] = useState(items[0]?.size ?? "");
   // Alex category code; a poster title like "Haatiya" is a category, not a product name.
   const [category, setCategory] = useState("");
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<CodeName[]>([]);
   const [texture, setTexture] = useState("");
   const [image, setImage] = useState("");
   const [result, setResult] = useState<Search | null>(null);
@@ -80,8 +81,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   function keep(value: { items: CartItem[] }) { setCart(value.items); onCart(value.items); }
-  function show(search: Search) { setResult(search); setCategory(search.category ?? ""); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
-  const categoryCode = (name: string | null | undefined, list = categories) => { const wanted = name?.trim().toLowerCase(); return wanted ? list.find(value => value.name.toLowerCase() === wanted || value.code.toLowerCase() === wanted)?.code ?? "" : ""; };
+  function show(search: Search) { setResult(search); setCategory(search.category ?? ""); setColor(search.color ?? ""); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
 
   useEffect(() => {
     let cancelled = false;
@@ -89,11 +89,12 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       api<Settings>("/api/admin/alex"),
       api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart`),
       draft ? api<{ suggestions?: Suggestion[] }>(`/api/inquiries/${inquiryId}/products`).catch(() => ({ suggestions: [] })) : Promise.resolve({ suggestions: [] }),
-      api<{ categories: Category[] }>("/api/admin/alex/categories").catch(() => ({ categories: [] })),
-    ]).then(([settings, cart, found, listed]) => {
+      api<{ categories: CodeName[] }>("/api/admin/alex/categories").catch(() => ({ categories: [] })),
+      api<{ colors: CodeName[] }>("/api/admin/alex/colors").catch(() => ({ colors: [] })),
+    ]).then(([settings, cart, found, listed, shopColors]) => {
       if (cancelled) return;
-      setSettings(settings); setCart(cart.items); onCart(cart.items); setCategories(listed.categories);
-      setCategory(categoryCode(items[0]?.category, listed.categories));
+      setSettings(settings); setCart(cart.items); onCart(cart.items); setCategories(listed.categories); setColors(shopColors.colors);
+      setCategory(findCode(items[0]?.category, listed.categories)); setColor(findCode(items[0]?.color, shopColors.colors));
       const usable = (found.suggestions ?? []).filter(suggestion => suggestion.search?.candidates.length);
       setSuggestions(found.suggestions ?? []);
       const first = usable[0]?.search;
@@ -105,7 +106,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   function pickRequest(item: DraftItem, index: number) {
     const suggestion = suggestions.find(value => value.item_index === index && value.search?.candidates.length);
-    setMode(item.product_code ? "code" : "text"); setQuery(item.product_code ?? item.product_name ?? ""); setCategory(categoryCode(item.category)); setColor(item.color ?? ""); setSize(item.size ?? ""); setError("");
+    setMode(item.product_code ? "code" : "text"); setQuery(item.product_code ?? item.product_name ?? ""); setCategory(findCode(item.category, categories)); setColor(findCode(item.color, colors)); setSize(item.size ?? ""); setError("");
     if (suggestion?.search) { setBranch(suggestion.search.branch_id); show(suggestion.search); } else { setResult(null); setChoices([]); }
   }
 
@@ -153,20 +154,20 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
         {mode === "image" ? <label>รูปอ้างอิง<select value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>
           : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในประเภท/สาขา" : "เช่น 0291FRLDBRM"} /></label>}
         <label className="span-2">ประเภท<select value={category} disabled={working} onChange={e => setCategory(e.target.value)}><option value="">ทุกประเภท</option>{categories.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{category && !categories.some(value => value.code === category) && <option value={category}>{category}</option>}</select></label>
-        <label>สี<input maxLength={200} value={color} disabled={working} onKeyDown={enter} onChange={e => setColor(e.target.value)} placeholder="เช่น น้ำตาล" /></label>
+        <label>สี<select value={color} disabled={working} onChange={e => setColor(e.target.value)}><option value="">ทุกสี</option>{colors.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{color && !colors.some(value => value.code === color) && <option value={color}>{color}</option>}</select></label>
         <label>ไซซ์<input maxLength={200} value={size} disabled={working} onKeyDown={enter} onChange={e => setSize(e.target.value)} placeholder="เช่น M" /></label>
       </div>
       <details className="product-filters"><summary>ตัวกรองเพิ่มเติม</summary><div className="field-grid"><label>ลาย/เนื้อผ้า (รหัส)<input maxLength={200} value={texture} disabled={working} onKeyDown={enter} onChange={e => setTexture(e.target.value)} /></label></div></details>
       <button type="button" className="button search full" disabled={working || !branch || (mode === "image" && !image)} onClick={() => search()}><span aria-hidden="true">🔎</span> {busy ? "กำลังค้นหา…" : "ค้นหาสินค้าใน Alex"}</button>
       {result && <p className="muted small">พบ {choices.length} ตัวเลือก · หน้าที่ {result.page}{result.method === "admin_input" ? " · ผลค้นอัตโนมัติจากรูป/สรุป" : result.method === "image_code" ? " · อ่านรหัสจากรูปแล้วยืนยันใน Alex" : result.method === "image_similarity" ? " · เรียงตามความคล้ายของรูป" : ""}</p>}
       {result && !choices.length && <div className="notice info">ยังไม่พบตัวเลือก ลองปรับชื่อ สี หรือไซซ์{result.has_more ? " หรือโหลดหน้าถัดไป" : ""}</div>}
-      {choices.length > 0 && <div className="candidate-grid">{choices.map(candidate => <CandidateTile key={`${candidate.search_id}:${candidate.product_item_id}`} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} disabled={working} onAdd={() => add(candidate)} />)}</div>}
+      {choices.length > 0 && <div className="candidate-grid">{choices.map(candidate => <CandidateTile key={`${candidate.search_id}:${candidate.product_item_id}`} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add(candidate)} />)}</div>}
       {result?.has_more && <button type="button" className="text-button full" disabled={working} onClick={() => search(true)}>โหลดหน้าถัดไป</button>}
     </section>
     <section className="order-section section-cart">
       <h3 className="form-heading"><span aria-hidden="true">🛒</span> ตะกร้าสินค้า ({cart.reduce((sum, item) => sum + item.quantity, 0)} ชิ้น)</h3>
       {!cart.length ? <p className="muted small">ยังไม่มีสินค้าในตะกร้า ค้นหาแล้วกด “เพิ่มลงตะกร้า”</p> : <>
-        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
+        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} colorName={codeLabel(item.candidate.color, colors)} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
         <p className="cart-total">ค่าเช่ารวม {price(rentalTotal)} บาท · ค่าประกันรวม {price(depositTotal)} บาท</p>
       </>}
     </section>

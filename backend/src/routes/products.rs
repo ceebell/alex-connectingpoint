@@ -29,6 +29,13 @@ pub async fn categories(State(state): State<AppState>) -> Result<Json<Value>, Ap
     ))
 }
 
+pub async fn colors(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    let session = alex::login(&state).await?;
+    Ok(Json(
+        json!({"colors":alex::colors(&state, &session).await?}),
+    ))
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,

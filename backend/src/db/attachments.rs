@@ -41,6 +41,40 @@ pub async fn list(state: &AppState, inquiry: ObjectId) -> Result<Vec<Value>, App
     records.iter().map(view).collect()
 }
 
+// Removes an admin upload and its stored file. The saved summary drops it from its selected
+// images so it never points at a missing file; like an upload, this changes the context hash.
+pub async fn remove(
+    state: &AppState,
+    inquiry_id: ObjectId,
+    attachment_id: ObjectId,
+) -> Result<Value, AppError> {
+    let inquiry = drafts::inquiry(state, inquiry_id).await?;
+    if inquiry.get_str("status").ok() == Some("CLOSED") {
+        return Err(AppError::DraftConflict);
+    }
+    let mut filter = state.scope();
+    filter.extend(doc! {"_id":attachment_id,"inquiry_id":inquiry_id});
+    let record = state
+        .collection("inquiry_attachments")
+        .find_one_and_delete(filter)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if let Ok(media_id) = record.get_object_id("media_id") {
+        let _ = state.db.gridfs_bucket(None).delete(media_id.into()).await;
+    }
+    let mut scope = state.scope();
+    scope.insert("_id", inquiry_id);
+    state
+        .collection("inquiries")
+        .update_one(
+            scope,
+            doc! {"$pull":{"working_summary.image_event_ids":attachment_id.to_hex()}},
+        )
+        .await?;
+    let snapshot = drafts::snapshot(state, &inquiry).await?;
+    Ok(json!({"attachments":list(state, inquiry_id).await?,"context_hash":snapshot.hash}))
+}
+
 pub async fn upload(
     state: &AppState,
     inquiry_id: ObjectId,

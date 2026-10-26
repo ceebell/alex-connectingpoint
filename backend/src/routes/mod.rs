@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -48,11 +48,16 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             post(drafts::upload_image).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
         )
         .route(
+            "/api/inquiries/{id}/draft-images/{attachment}",
+            delete(drafts::delete_image),
+        )
+        .route(
             "/api/inquiries/{id}/customer-extract",
             post(drafts::extract_customer),
         )
         .route("/api/admin/alex", get(products::settings))
         .route("/api/admin/alex/categories", get(products::categories))
+        .route("/api/admin/alex/colors", get(products::colors))
         .route("/api/inquiries/{id}/products", get(products::list))
         .route(
             "/api/inquiries/{id}/products/search",
@@ -130,7 +135,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         router = router.layer(
             CorsLayer::new()
                 .allow_origin(origin)
-                .allow_methods([Method::GET, Method::POST])
+                .allow_methods([Method::GET, Method::POST, Method::DELETE])
                 .allow_headers([
                     axum::http::header::CONTENT_TYPE,
                     axum::http::header::AUTHORIZATION,

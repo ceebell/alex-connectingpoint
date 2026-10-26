@@ -54,6 +54,7 @@ Credentials และ token อยู่ฝั่ง backend การค้น�
 | Endpoint | หน้าที่ |
 | --- | --- |
 | `GET /api/admin/alex` | สถานะ config และสาขาที่ login ได้ โดยไม่คืน credentials |
+| `GET /api/admin/alex/colors` | สีของร้านจาก Alex `GET /api/color` เป็น `{code, name}` (ค้นด้วย code เช่น `P` แต่แสดงชื่อ เช่น ชมพู) ช่อง **สี** ในส่วนค้นหาเป็น dropdown และ AI lookup แปลงสีที่เขียน (ชื่อ/รหัสตรงตัว หรือคำสีไทย–อังกฤษ เช่น Pink→ชมพู) เป็น code ถ้าตรงได้หลายสีจะไม่เดาและไม่ใส่ตัวกรองสี |
 | `GET /api/admin/alex/categories` | ประเภทสินค้าที่ใช้งานอยู่จาก Alex `GET /api/category` เป็น `{code, name}` ให้ช่อง **ประเภท** ในส่วนค้นหาชุด |
 | `GET /api/inquiries/{id}/products` | ผลจับคู่เฉพาะร่างล่าสุดและสถานะยืนยันครบ |
 | `POST /api/inquiries/{id}/products/search` | ค้นด้วย mode `code`, `text`, `product_url`, `image` |

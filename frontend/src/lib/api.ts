@@ -68,12 +68,19 @@ export type Rental = { pickup_date: string | null; return_date: string | null; f
 // Alex's own receiving-method choices; the shop ships by Flash unless told otherwise.
 export const STORE_PICKUP = "มารับเอง";
 export const RECEIVING_METHODS = [STORE_PICKUP, "Line Man", "Grab", "Kerry", "Flash", "ขนส่งอื่น"];
+// Alex's own payment choices for rent and deposit; "ยังไม่ชำระ" is the default.
+export const UNPAID = "ยังไม่ชำระ";
+export const PAYMENT_METHODS = [UNPAID, "เงินสด", "โอนเงิน", "Alipay/wechat", "บัตรเครดิต", "ช่องทางอื่น"];
 const carriers: Record<string, string> = { flash: "Flash", flashexpress: "Flash", "แฟลช": "Flash", kerry: "Kerry", kerryexpress: "Kerry", "เคอรี่": "Kerry", grab: "Grab", grabexpress: "Grab", "แกร็บ": "Grab", lineman: "Line Man", "ไลน์แมน": "Line Man", "ขนส่งอื่น": "ขนส่งอื่น" };
 export const receivingMethod = (carrier: string): string | undefined => carriers[carrier.replace(/\s/g, "").toLowerCase()];
 export type Amounts = { rental_fee_satang: number | null; deposit_satang: number | null; shipping_fee_satang?: number | null; rental_discount_satang?: number | null; deposit_discount_satang?: number | null };
 // rental/amounts/notes per item are retired; older drafts may still return them and the editor lifts them to the order.
 export type DraftItem = { product_code: string | null; product_name?: string | null; category?: string | null; color: string | null; size: string | null; quantity: number | null; rental?: Partial<Rental> | null; amounts?: Partial<Amounts> | null; notes?: string | null };
 export type Candidate = { product_item_id: string; code: string; name: string; color: string | null; size: string | null; rental_fee_satang: number | null; deposit_satang: number | null; image_url: string | null; score: number | null };
+// An Alex code list entry: category "Haatiya" (HT) or color "ชมพู" (P). Search filters use the code.
+export type CodeName = { code: string; name: string };
+export const findCode = (written: string | null | undefined, list: CodeName[]) => { const wanted = written?.trim().toLowerCase(); return wanted ? list.find(value => value.name.toLowerCase() === wanted || value.code.toLowerCase() === wanted)?.code ?? "" : ""; };
+export const codeLabel = (code: string | null | undefined, list: CodeName[]) => { if (!code) return "ไม่ระบุ"; const found = list.find(value => value.code === code); return found ? `${found.name} (${code})` : code; };
 export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string };
 export type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
