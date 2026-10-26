@@ -1,5 +1,5 @@
 use crate::{
-    db::{events, inquiries, media},
+    db::{events, inquiries, media, users},
     error::AppError,
     state::AppState,
 };
@@ -31,6 +31,11 @@ pub async fn process(state: &AppState, record: &Document) -> Result<(), AppError
         return events::finish(state, record, "DONE").await;
     }
     let linked = inquiries::link(state, &event).await?;
+    if let Some(user) = event.source.as_ref().and_then(|s| s.user_id.as_deref())
+        && users::refresh_profile(state, user).await.is_err()
+    {
+        tracing::warn!("LINE profile refresh failed; will retry on a later message");
+    }
     // A retry keeps its original inquiry even if another inquiry has since opened.
     let inquiry = record
         .get_object_id("inquiry_id")

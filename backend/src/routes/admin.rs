@@ -99,7 +99,45 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<Document>>, AppError> {
-    Ok(Json(page(&state, "inquiries", query).await?))
+    let mut inquiries = page(&state, "inquiries", query).await?;
+    let ids: Vec<String> = inquiries
+        .iter()
+        .filter_map(|i| i.get_str("line_user_id").ok().map(String::from))
+        .collect();
+    let profiles = crate::db::users::profiles(&state, ids).await?;
+    // Users seen before profile caching get it fetched in the background once.
+    let missing: Vec<String> = profiles
+        .iter()
+        .filter(|(_, p)| p.get_datetime("profile_checked_at").is_err())
+        .map(|(id, _)| id.clone())
+        .take(20)
+        .collect();
+    if !missing.is_empty() {
+        let background = state.clone();
+        tokio::spawn(async move {
+            for id in missing {
+                if crate::db::users::refresh_profile(&background, &id)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("LINE profile refresh failed");
+                }
+            }
+        });
+    }
+    for inquiry in &mut inquiries {
+        if let Some(profile) = inquiry
+            .get_str("line_user_id")
+            .ok()
+            .and_then(|id| profiles.get(id))
+        {
+            inquiry.insert(
+                "customer",
+                doc! {"display_name":profile.get_str("display_name").ok(),"picture_url":profile.get_str("picture_url").ok()},
+            );
+        }
+    }
+    Ok(Json(inquiries))
 }
 
 pub async fn events(

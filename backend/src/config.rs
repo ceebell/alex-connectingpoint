@@ -29,6 +29,7 @@ pub struct Config {
     pub line_login_channel_secret: Option<String>,
     pub line_login_redirect_uri: Option<String>,
     pub admin_line_user_ids: Vec<String>,
+    pub oa_connector_enabled: bool,
 }
 
 impl Config {
@@ -71,6 +72,7 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect(),
+            oa_connector_enabled: env::var("OA_CONNECTOR_ENABLED").is_ok_and(|v| v == "true"),
         })
     }
 

@@ -1,12 +1,13 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
-import { api, ApiError, errorText, Profile } from "@/lib/api";
+import { api, ApiError, Customer, errorText, Profile } from "@/lib/api";
+import { CustomerAvatar } from "./chat-message";
 
 type Form = { display_name: string; phone: string; address: string; notes: string };
 const toForm = (profile: Profile | null): Form => ({ display_name: profile?.display_name ?? "", phone: profile?.phone ?? "", address: profile?.address ?? "", notes: profile?.notes ?? "" });
 const time = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 
-export default function CustomerProfile({ userId, onUnauthorized }: { userId: string; onUnauthorized: () => void }) {
+export default function CustomerProfile({ userId, line, onUnauthorized }: { userId: string; line?: Customer; onUnauthorized: () => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [form, setForm] = useState<Form>(toForm(null));
   const [loading, setLoading] = useState(true);
@@ -37,12 +38,12 @@ export default function CustomerProfile({ userId, onUnauthorized }: { userId: st
     } finally { setBusy(false); }
   }
 
-  const field = (key: keyof Form, label: string, multiline = false, max = 200) => <label className={multiline ? "span-2" : ""}>{label}{multiline ? <textarea rows={key === "notes" ? 6 : 3} maxLength={max} value={form[key]} disabled={busy} onChange={e => setForm({ ...form, [key]: e.target.value })} /> : <input value={form[key]} maxLength={max} inputMode={key === "phone" ? "tel" : undefined} autoComplete="off" disabled={busy} onChange={e => setForm({ ...form, [key]: e.target.value })} />}</label>;
+  const field = (key: keyof Form, label: string, multiline = false, max = 200) => <label className={multiline ? "span-2" : ""}>{label}{multiline ? <textarea rows={key === "notes" ? 6 : 3} maxLength={max} value={form[key]} disabled={busy} onChange={e => setForm({ ...form, [key]: e.target.value })} /> : <input value={form[key]} maxLength={max} placeholder={key === "display_name" && line?.display_name ? `ชื่อใน LINE: ${line.display_name}` : undefined} inputMode={key === "phone" ? "tel" : undefined} autoComplete="off" disabled={busy} onChange={e => setForm({ ...form, [key]: e.target.value })} />}</label>;
 
   if (loading) return <p role="status" className="muted">กำลังโหลดข้อมูลลูกค้า…</p>;
   return <form className="draft-form" onSubmit={save}>
     <div className="step-caption"><span aria-hidden="true">👤</span><div><h3>ข้อมูลลูกค้า</h3><p className="muted small">ใช้ร่วมกันทุกเรื่องของลูกค้าคนนี้ · เก็บในฐานข้อมูลบน server ลูกค้าไม่เห็น</p></div></div>
-    <p className="user-ref small muted">LINE: {userId}</p>
+    <div className="customer-row"><CustomerAvatar customer={line} /><div><strong>{line?.display_name || "ไม่ทราบชื่อใน LINE"}</strong><p className="user-ref small muted">LINE: {userId}</p></div></div>
     <div className="field-grid">{field("display_name", "ชื่อลูกค้า")}{field("phone", "เบอร์โทร", false, 40)}{field("address", "ที่อยู่", true, 1000)}{field("notes", "โน้ตภายใน", true, 5000)}</div>
     {notice && <div className={`notice ${notice.kind}`} role={notice.kind === "warning" ? "alert" : "status"}>{notice.text}</div>}
     {profile && <p className="muted small">บันทึกล่าสุดโดย {profile.updated_by} · {time(profile.updated_at)} · ครั้งที่ {profile.version}</p>}

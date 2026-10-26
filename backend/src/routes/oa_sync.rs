@@ -7,11 +7,21 @@ use crate::{
 use axum::{Json, extract::State, http::HeaderMap};
 use serde_json::{Value, json};
 
+// Replies are sent from Alex by default; the OA Manager browser connector is opt-in.
+fn enabled(state: &AppState) -> Result<(), AppError> {
+    if state.config.oa_connector_enabled {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
+}
+
 pub async fn ingest(
     State(state): State<AppState>,
     headers: HeaderMap,
     input: Result<Json<OaBatch>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, AppError> {
+    enabled(&state)?;
     super::admin::require_token(&state, &headers)?;
     let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     Ok(Json(oa_sync::ingest(&state, input).await?))
@@ -21,11 +31,15 @@ pub async fn heartbeat(
     headers: HeaderMap,
     input: Result<Json<OaHeartbeat>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, AppError> {
+    enabled(&state)?;
     super::admin::require_token(&state, &headers)?;
     let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     oa_sync::heartbeat(&state, input).await?;
     Ok(Json(json!({"status":"ok"})))
 }
 pub async fn status(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    if !state.config.oa_connector_enabled {
+        return Ok(Json(json!({"state":"NOT_CONFIGURED"})));
+    }
     Ok(Json(oa_sync::status(&state).await?))
 }

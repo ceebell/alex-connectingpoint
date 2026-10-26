@@ -4,6 +4,25 @@
 
 <!-- entries -->
 
+## 2026-10-26 00:04 — ชื่อ/รูปโปรไฟล์ LINE ของลูกค้า, แสดงสติกเกอร์ และปิดตัวเชื่อม OA เป็นค่าเริ่มต้น
+- **คำอธิบาย:** ผู้ใช้เข้า LINE Login ได้แล้ว ยืนยันว่าตอบลูกค้าจาก Alex อย่างเดียว (ข้อความที่ตอบใน OA Manager/แอป LINE OA ไม่มี API ทางการให้ดึง) ตรวจ server พบตัวเชื่อม OA ยังส่ง heartbeat NEEDS_LOGIN ทำให้หน้าแชทแสดงข้อความสับสน จึงเพิ่มสวิตช์ปิดตัวเชื่อม; ผู้ใช้ขอให้ดึงชื่อ/รูปลูกค้าและแสดงสติกเกอร์ด้วย
+- **โฟลเดอร์ `backend/src/`**
+  - `config.rs`, `routes/oa_sync.rs` — แก้: `OA_CONNECTOR_ENABLED` (ค่าเริ่มต้น false) เมื่อปิด status คืน NOT_CONFIGURED และ endpoint ingest/heartbeat ของตัวเชื่อมตอบ 404 ก่อนแตะ DB
+  - `db/users.rs`, `worker.rs` — เพิ่ม/แก้: `refresh_profile` เรียก Messaging API Get profile เก็บ display_name/picture_url (เฉพาะ https)/profile_status ใน line_users ดึงซ้ำไม่เกินวันละครั้ง ไม่เก็บ statusMessage; 404 = UNAVAILABLE; ล้มเหลวไม่ทำให้ event ล้ม; `profiles` สำหรับ join
+  - `routes/admin.rs` — แก้: `/api/inquiries` แนบ `customer {display_name, picture_url}` และดึงโปรไฟล์ลูกค้าเก่าเบื้องหลังครั้งละไม่เกิน 20 คน
+  - `tests.rs`, `tests_oa_sync.rs`, `tests_line.rs` — เพิ่ม/แก้: test ตัวเชื่อมที่ปิดอยู่, mock Get profile, cache รายวัน, UNAVAILABLE และ customer ในรายการ inquiry
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/chat-message.tsx` — แก้: avatar รูปโปรไฟล์ลูกค้า (fallback ตัวอักษร), ชื่อลูกค้าเป็นผู้ส่ง, สติกเกอร์จาก stickershop.line-scdn.net ตาม stickerId พร้อม alt จาก keywords และ fallback เป็นข้อความเมื่อโหลดไม่ได้
+  - `components/admin-workspace.tsx`, `components/customer-profile.tsx`, `lib/api.ts`, `app/globals.css` — แก้: ชื่อ/รูปในรายการ (ค้นหาด้วยชื่อได้), หัวแชท, แท็บลูกค้า (placeholder ชื่อใน LINE), types Customer/sticker และสไตล์
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `docker-stack.line.yml`, `.env.example` — แก้: `OA_CONNECTOR_ENABLED` (ตรวจด้วย docker stack config)
+  - `docs/step-2-admin.md`, `docs/line-oa-auto-sync.md` — แก้: โปรไฟล์/สติกเกอร์ ข้อจำกัด CDN ที่ไม่ใช่ API ทางการ และการเปิดตัวเชื่อมกลับ
+- **โฟลเดอร์ `dist/` (build จริงบน local)**
+  - `line-linux/` — rel-20261025170323-3ccacb444b06
+  - `frontend-linux/` — front-20261025170420-588f29abdf8d (checksum 2108 ไฟล์ผ่าน และไม่มีไฟล์ release ถูก gitignore)
+- **ผลตรวจสอบ:** cargo fmt/clippy -D warnings ผ่าน; cargo test รวม MongoDB integration ผ่าน 21/21; npm lint/build ผ่าน; Chrome headless กับ backend local + mock LINE: Get profile เรียก 1 ครั้งต่อ 2 ข้อความ, avatar/ชื่อในรายการ หัวแชท ผู้ส่ง และแท็บลูกค้าถูกต้อง, สติกเกอร์ 52002734 โหลดจาก LINE CDN จริงได้, ไม่มีบรรทัดสถานะตัวเชื่อม, ไม่ล้นที่ 390px, ไม่มี page error
+- **ขอบเขต:** ยังไม่ commit/push/deploy; ตัวเชื่อม OA container บน server ยังรันอยู่ (ผู้ใช้ปิดเองด้วย sudo); หยุดบริการทดสอบที่สร้างเองแล้ว
+
 ## 2026-10-25 23:36 — แก้ frontend release ขึ้น Git ไม่ครบ (checksum mismatch บน server)
 - **คำอธิบาย:** `docker-build.sh --full-stack` บน server ล้มด้วย "Frontend checksum mismatch" เพราะ `.gitignore` มี `data/` ซึ่ง ignore โฟลเดอร์ชื่อ data ทุกระดับ ทำให้ `dist/frontend-linux/node_modules/caniuse-lite/data/` 588 ไฟล์ไม่เข้า Git (local 2011 ไฟล์ใน node_modules, Git 1423) จึงจำกัดให้ ignore เฉพาะ `/data/` ที่ root ตามเจตนาเดิม (ข้อมูล MongoDB dev)
 - **โฟลเดอร์ `./`**

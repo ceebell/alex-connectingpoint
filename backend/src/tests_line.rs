@@ -14,6 +14,23 @@ struct MockLine {
     pushes: Arc<Mutex<Vec<(String, Value)>>>,
     accepted: Arc<Mutex<HashSet<String>>>,
     failed_once: Arc<Mutex<HashSet<String>>>,
+    profiles: Arc<Mutex<Vec<String>>>,
+}
+
+async fn profile(
+    AxumState(mock): AxumState<MockLine>,
+    axum::extract::Path(user): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if headers["authorization"] != "Bearer test-only-token" {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    mock.profiles.lock().await.push(user.clone());
+    if user == "Ublocked" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    AxumJson(json!({"userId":user,"displayName":"คุณบี ลูกค้า","pictureUrl":"https://profile.line-scdn.net/0h-test","statusMessage":"private"}))
+        .into_response()
 }
 
 async fn token(Form(form): Form<HashMap<String, String>>) -> Response {
@@ -73,6 +90,7 @@ async fn mock_line() -> (String, MockLine) {
         .route("/oauth2/v2.1/token", post(token))
         .route("/oauth2/v2.1/verify", post(verify))
         .route("/v2/bot/message/push", post(push))
+        .route("/v2/bot/profile/{user}", axum::routing::get(profile))
         .with_state(mock.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -408,5 +426,59 @@ async fn mongo_replies_are_pushed_once_recorded_and_join_the_context() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(error["error"]["code"], "REPLY_UNAVAILABLE");
     assert_eq!(mock.pushes.lock().await.len(), 2);
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn mongo_line_profiles_are_cached_daily_and_shown_on_inquiries() {
+    let (base, mock) = mock_line().await;
+    let mut cfg = line_config(&base);
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    cfg.burst_ms = 0;
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    for (id, user, at) in [
+        ("p-1", "Ufriend", 1),
+        ("p-2", "Ufriend", 2),
+        ("p-3", "Ublocked", 3),
+    ] {
+        events::persist(&state, &event(id, user, at)).await.unwrap();
+    }
+    drain(&state).await;
+    // Two messages from the same user within a day fetch the profile once.
+    assert_eq!(*mock.profiles.lock().await, vec!["Ufriend", "Ublocked"]);
+    let users = all(&state, "line_users").await;
+    let friend = users
+        .iter()
+        .find(|u| u.get_str("line_user_id").unwrap() == "Ufriend")
+        .unwrap();
+    assert_eq!(friend.get_str("display_name").unwrap(), "คุณบี ลูกค้า");
+    assert_eq!(
+        friend.get_str("picture_url").unwrap(),
+        "https://profile.line-scdn.net/0h-test"
+    );
+    assert!(friend.get("statusMessage").is_none() && friend.get("status_message").is_none());
+    let blocked = users
+        .iter()
+        .find(|u| u.get_str("line_user_id").unwrap() == "Ublocked")
+        .unwrap();
+    assert_eq!(blocked.get_str("profile_status").unwrap(), "UNAVAILABLE");
+    let (status, list) = request(&state, "/api/inquiries", "GET", json!(null), true).await;
+    assert_eq!(status, StatusCode::OK);
+    let friend_inquiry = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["line_user_id"] == "Ufriend")
+        .unwrap();
+    assert_eq!(friend_inquiry["customer"]["display_name"], "คุณบี ลูกค้า");
+    let blocked_inquiry = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["line_user_id"] == "Ublocked")
+        .unwrap();
+    assert!(blocked_inquiry["customer"]["display_name"].is_null());
     state.db.drop().await.unwrap();
 }

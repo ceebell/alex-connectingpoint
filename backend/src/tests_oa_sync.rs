@@ -31,6 +31,38 @@ async fn oa_connector_auth_and_dto_checks_happen_before_database_access() {
 }
 
 #[tokio::test]
+async fn disabled_oa_connector_is_hidden_and_rejected_before_database_access() {
+    let mut cfg = config();
+    cfg.oa_connector_enabled = false;
+    let client = mongodb::Client::with_uri_str(&cfg.mongodb_uri)
+        .await
+        .unwrap();
+    let state = AppState {
+        db: client.database(&cfg.mongodb_db),
+        config: Arc::new(cfg),
+        http: reqwest::Client::new(),
+        login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
+    };
+    let batch = json!({"bot_id":"test-destination","chat_id":"chat","anchor_message_ids":["known"],"messages":[{"id":"msg","text":"fixture","sent_at_ms":1000}]});
+    for (path, body) in [
+        ("/api/connectors/line-oa/messages", batch),
+        (
+            "/api/connectors/line-oa/status",
+            json!({"state":"SYNCING","synced":0,"pending":0}),
+        ),
+    ] {
+        assert_eq!(
+            request(&state, path, "POST", body, true).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let (status, body) =
+        request(&state, "/api/line/oa-sync/status", "GET", Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"state":"NOT_CONFIGURED"}));
+}
+
+#[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
 async fn oa_sync_uses_webhook_anchors_deduplicates_and_preserves_context_pagination() {
     let mut cfg = config();

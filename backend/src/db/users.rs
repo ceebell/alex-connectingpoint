@@ -101,3 +101,81 @@ pub async fn messages(
         .try_collect()
         .await?)
 }
+
+const PROFILE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+
+fn https_url(value: Option<&str>) -> Option<String> {
+    value
+        .filter(|u| u.starts_with("https://") && u.len() <= 500 && !u.contains(char::is_whitespace))
+        .map(String::from)
+}
+
+// Cache the LINE display name and picture via the official Get profile API.
+// Best effort: failures never block message processing and retry on a later message.
+pub async fn refresh_profile(state: &AppState, user_id: &str) -> Result<(), AppError> {
+    let mut filter = state.scope();
+    filter.insert("line_user_id", user_id);
+    let Some(user) = state
+        .collection("line_users")
+        .find_one(filter.clone())
+        .await?
+    else {
+        return Ok(());
+    };
+    let now = DateTime::now();
+    if user
+        .get_datetime("profile_checked_at")
+        .is_ok_and(|at| now.timestamp_millis() - at.timestamp_millis() < PROFILE_TTL_MS)
+    {
+        return Ok(());
+    }
+    let response = state
+        .http
+        .get(format!(
+            "{}/v2/bot/profile/{user_id}",
+            state.config.line_api_base
+        ))
+        .bearer_auth(&state.config.channel_access_token)
+        .send()
+        .await?;
+    let update = match response.status().as_u16() {
+        200 => {
+            let body: serde_json::Value = response.json().await?;
+            let name: Option<String> = body["displayName"]
+                .as_str()
+                .map(|n| n.chars().take(100).collect());
+            doc! {"$set":{"display_name":name,"picture_url":https_url(body["pictureUrl"].as_str()),
+            "profile_status":"OK","profile_checked_at":now}}
+        }
+        // Not a friend of the OA, blocked it, or the account was deleted.
+        404 => {
+            doc! {"$set":{"profile_status":"UNAVAILABLE","profile_checked_at":now},"$unset":{"picture_url":""}}
+        }
+        _ => return Err(AppError::Media("LINE profile unavailable")),
+    };
+    state
+        .collection("line_users")
+        .update_one(filter, update)
+        .await?;
+    Ok(())
+}
+
+// Display names and pictures keyed by LINE user ID for inquiry lists.
+pub async fn profiles(
+    state: &AppState,
+    user_ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, Document>, AppError> {
+    let mut filter = state.scope();
+    filter.insert("line_user_id", doc! {"$in":user_ids});
+    let records: Vec<Document> = state
+        .collection("line_users")
+        .find(filter)
+        .projection(doc! {"line_user_id":1,"display_name":1,"picture_url":1,"profile_checked_at":1})
+        .await?
+        .try_collect()
+        .await?;
+    Ok(records
+        .into_iter()
+        .filter_map(|r| Some((r.get_str("line_user_id").ok()?.to_string(), r)))
+        .collect())
+}

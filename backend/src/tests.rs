@@ -54,6 +54,7 @@ fn config() -> Config {
         line_login_channel_secret: None,
         line_login_redirect_uri: None,
         admin_line_user_ids: vec![],
+        oa_connector_enabled: true,
     }
 }
 
