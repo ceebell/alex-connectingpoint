@@ -59,6 +59,21 @@ async fn catalog(
             assert_eq!(body["keyword"], "Unknown line");
             vec![]
         }
+        // A bill line's search word is not in the category, so the category's items are listed.
+        10 => {
+            assert_eq!(body["category"], "HT");
+            if body["keyword"] == "Lyn Dress" {
+                vec![]
+            } else {
+                assert_eq!(body["keyword"], "");
+                assert_eq!(body["color"], "P|");
+                assert_eq!(body["size"], "M|");
+                let mut item = candidate("haatiya-1");
+                item["name"] = json!("Haatiya - Blush Pink");
+                item["color"] = json!("P");
+                vec![item]
+            }
+        }
         1 => vec![candidate("nina-1"), candidate("nina-2")],
         2 => vec![],
         6 if body["pageNumber"] == 1 => (0..15)
@@ -100,13 +115,14 @@ async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Valu
     if flow.mode.load(Ordering::SeqCst) == 4 {
         fields.amounts.rental_fee_satang = None;
     }
-    if [8, 9].contains(&flow.mode.load(Ordering::SeqCst)) {
-        fields.items[0].product_name = None;
+    if [8, 9, 10].contains(&flow.mode.load(Ordering::SeqCst)) {
+        fields.items[0].product_name =
+            (flow.mode.load(Ordering::SeqCst) == 10).then(|| "Lyn Dress".into());
         fields.items[0].color = Some("Blush Pink".into());
-        fields.items[0].category = Some(if flow.mode.load(Ordering::SeqCst) == 8 {
-            "haatiya".into()
-        } else {
+        fields.items[0].category = Some(if flow.mode.load(Ordering::SeqCst) == 9 {
             "Unknown line".into()
+        } else {
+            "haatiya".into()
         });
     }
     let image = data["selected_image_event_refs"]
@@ -313,8 +329,8 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
 async fn poster_titles_are_searched_as_alex_categories_by_code() {
-    for mode in [8, 9] {
-        let (state, _flow, server, id) = fixture(mode).await;
+    for mode in [8, 9, 10] {
+        let (state, flow, server, id) = fixture(mode).await;
         let job = enqueue(&state, id, true).await;
         draft_worker::process(&state, &job).await.unwrap();
         let inquiry = drafts::inquiry(&state, id).await.unwrap();
@@ -328,6 +344,39 @@ async fn poster_titles_are_searched_as_alex_categories_by_code() {
             assert_eq!(item["product_name"], "Haatiya - Blush Pink");
             let suggestions = products::list(&state, id).await.unwrap();
             assert_eq!(suggestions["suggestions"][0]["search"]["category"], "HT");
+        } else if mode == 10 {
+            // Listed from the category for the admin to pick; the name did not match, so nothing is filled.
+            assert_eq!(lookup["status"], "NEEDS_SELECTION");
+            assert!(lookup.get("selected_product_item_id").is_none());
+            assert!(item["product_code"].is_null());
+            assert_eq!(item["product_name"], "Lyn Dress");
+            let keywords: Vec<_> = flow
+                .calls
+                .lock()
+                .await
+                .iter()
+                .filter(|call| call["operation"] == "catalog")
+                .map(|call| call["body"]["keyword"].clone())
+                .collect();
+            assert_eq!(
+                keywords,
+                [json!("Lyn Dress"), json!("Lyn Dress"), json!("")]
+            );
+            let suggestions = products::list(&state, id).await.unwrap();
+            assert_eq!(
+                suggestions["suggestions"][0]["search"]["candidates"][0]["product_item_id"],
+                "haatiya-1"
+            );
+            assert!(
+                latest["result"]["questions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|question| question
+                        .as_str()
+                        .unwrap()
+                        .contains("ไม่พบ Lyn Dress ในประเภท Haatiya"))
+            );
         } else {
             // An inactive or unknown category is never used; the title is searched as a name.
             assert_eq!(lookup["status"], "NOT_FOUND");

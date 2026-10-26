@@ -72,9 +72,15 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const setReceiving = (method: string) => setFields(current => ({ ...current, rental: { ...current.rental, fulfillment_method: method === STORE_PICKUP ? "store_pickup" : "delivery", delivery_provider: method === STORE_PICKUP ? null : method } }));
   const setAmount = (key: keyof Amounts, value: string) => setFields(current => ({ ...current, amounts: { ...current.amounts, [key]: value ? Math.round(Number(value) * 100) : null } }));
   const text = (key: "intent" | "customer_name" | "customer_phone" | "customer_address" | "branch") => <label className={key === "customer_address" ? "span-2" : ""}>{labels[key]}{key === "customer_address" ? <textarea rows={3} value={fields[key] ?? ""} maxLength={1000} disabled={busy} onChange={e => setFields({ ...fields, [key]: e.target.value || null })} /> : <input value={fields[key] ?? ""} maxLength={200} disabled={busy} inputMode={key === "customer_phone" ? "tel" : undefined} onChange={e => setFields({ ...fields, [key]: (key === "customer_phone" ? cleanPhone(e.target.value) : e.target.value) || null })} />}</label>;
-  const money = (key: keyof Amounts, label: string, max?: number) => <label>{label} (บาท)<input type="number" min="0" max={max === undefined ? undefined : max / 100} step="0.01" disabled={busy} value={amount(key) == null ? "" : amount(key)! / 100} onChange={e => setAmount(key, e.target.value)} /></label>;
-  const rentalDiscount = amount("rental_discount_satang") ?? 0;
-  const depositDiscount = amount("deposit_discount_satang") ?? 0;
+  const money = (key: keyof Amounts, label: string, max?: number, auto?: number) => <label>{label} (บาท)<input type="number" min="0" max={max === undefined ? undefined : max / 100} step="0.01" disabled={busy} placeholder={auto ? `อัตโนมัติ ${price(auto)}` : undefined} value={amount(key) == null ? "" : amount(key)! / 100} onChange={e => setAmount(key, e.target.value)} /></label>;
+  // Same rule as the bill on the server: with no written discount, a fee quoted below the Alex prices in the cart is the discount.
+  const fromQuote = (quoted: number | null, catalog: number) => !cart.length || quoted == null ? 0 : Math.max(0, catalog - quoted);
+  const autoRental = fromQuote(amount("rental_fee_satang"), rentalTotal);
+  const autoDeposit = fromQuote(amount("deposit_satang"), depositTotal);
+  const rentalDiscount = amount("rental_discount_satang") ?? autoRental;
+  const depositDiscount = amount("deposit_discount_satang") ?? autoDeposit;
+  const usesAuto = (amount("rental_discount_satang") == null && autoRental > 0) || (amount("deposit_discount_satang") == null && autoDeposit > 0);
+  const aboveCatalog = !!cart.length && ((amount("rental_fee_satang") ?? 0) > rentalTotal || (amount("deposit_satang") ?? 0) > depositTotal);
   const tooMuch = !!cart.length && (rentalDiscount > rentalTotal || depositDiscount > depositTotal);
 
   return <div className="draft-form">
@@ -100,10 +106,12 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <h3 className="form-heading"><span aria-hidden="true">🏷️</span> ส่วนลดและค่าจัดส่ง <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
       <p className="muted small">ตามแค็ตตาล็อก: ค่าเช่า {price(rentalTotal)} บาท · ค่าประกัน {price(depositTotal)} บาท{amount("rental_fee_satang") != null && <><br />ราคาที่แจ้งลูกค้า: ค่าเช่า {price(amount("rental_fee_satang"))} บาท{amount("deposit_satang") != null && ` · ค่าประกัน ${price(amount("deposit_satang"))} บาท`}</>}</p>
       <div className="field-grid">
-        {money("rental_discount_satang", "ส่วนลดค่าเช่า", cart.length ? rentalTotal : undefined)}
-        {money("deposit_discount_satang", "ส่วนลดค่าประกัน", cart.length ? depositTotal : undefined)}
+        {money("rental_discount_satang", "ส่วนลดค่าเช่า", cart.length ? rentalTotal : undefined, autoRental)}
+        {money("deposit_discount_satang", "ส่วนลดค่าประกัน", cart.length ? depositTotal : undefined, autoDeposit)}
         {money("shipping_fee_satang", "ค่าจัดส่ง")}
       </div>
+      {usesAuto && <p className="notice info">ส่วนลดที่เว้นว่างคิดจากราคาที่แจ้งลูกค้าเทียบกับราคาใน Alex{autoRental > 0 && ` · ค่าเช่า ${price(autoRental)} บาท`}{autoDeposit > 0 && ` · ค่าประกัน ${price(autoDeposit)} บาท`} — กรอก 0 ถ้าไม่ต้องการให้ส่วนลด</p>}
+      {aboveCatalog && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex กรุณาตรวจสินค้าในตะกร้า</p>}
       {!!cart.length && <p className={tooMuch ? "notice warning" : "cart-total"}>{tooMuch ? "ส่วนลดมากกว่ายอดตามแค็ตตาล็อก" : `ยอดหลังหักส่วนลด: ค่าเช่า ${price(rentalTotal - rentalDiscount)} บาท · ค่าประกัน ${price(depositTotal - depositDiscount)} บาท`}</p>}
       <label className="order-notes">หมายเหตุ / อุปกรณ์<textarea rows={3} value={fields.notes ?? ""} maxLength={3000} disabled={busy} onChange={e => setFields({ ...fields, notes: e.target.value || null })} /></label>
     </section>

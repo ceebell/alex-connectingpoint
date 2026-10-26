@@ -626,17 +626,22 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         .get_object_id("_id")
         .unwrap();
     // One inquiry is one order: dates, notes and discounts are order-level; products come from the cart.
-    let order = |pickup: &str, returned: &str, method: &str, discount: i64| -> DraftFields {
+    // No written discount means the quoted fees are compared with the Alex prices in the cart.
+    let order = |pickup: &str,
+                 returned: &str,
+                 method: &str,
+                 discount: Option<i64>|
+     -> DraftFields {
         serde_json::from_value(json!({"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
             "items":[{"product_name":"nina","quantity":1}],
             "rental":{"pickup_date":pickup,"return_date":returned,"fulfillment_method":method,"delivery_provider":if method=="delivery"{json!("Flash")}else{Value::Null},"return_shipping_deadline":"16:00"},
-            "amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":0},"notes":"เข็มกลัดดอกไม้"})).unwrap()
+            "amounts":{"rental_fee_satang":55000,"deposit_satang":150000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":discount.map(|_| 0)},"notes":"เข็มกลัดดอกไม้"})).unwrap()
     };
     manual(
         &state,
         id,
         0,
-        order("2026-11-04", "2026-11-08", "delivery", 150001),
+        order("2026-11-04", "2026-11-08", "delivery", Some(150001)),
     )
     .await;
     let base = format!("/api/inquiries/{id}/checkout");
@@ -698,7 +703,9 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(data["groups"].as_array().unwrap().len(), 1);
     let group = &data["groups"][0];
     assert_eq!(group["delivery_provider"], "Flash");
+    // A written discount wins over the quoted-price difference.
     assert_eq!(group["rental_discount_satang"], 150001);
+    assert_eq!(group["deposit_discount_satang"], 0);
     let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
         "shipping_fee_satang":4000,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
     // An order discount above the catalog rent is rejected before anything is sent.
@@ -718,11 +725,14 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         &state,
         id,
         1,
-        order("2026-11-04", "2026-11-08", "delivery", 95000),
+        order("2026-11-04", "2026-11-08", "delivery", None),
     )
     .await;
     let data = checkout::list(&state, id).await.unwrap();
     let group = data["groups"][0].clone();
+    // Catalog rent 1500.00 quoted at 550.00 and deposit 2000.01 quoted at 1500.00.
+    assert_eq!(group["rental_discount_satang"], 95000);
+    assert_eq!(group["deposit_discount_satang"], 50001);
     assert_eq!(
         request(
             &state,
@@ -763,6 +773,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(status, StatusCode::OK);
     assert_eq!(preview["rental_discount_satang"], 95000);
     assert_eq!(preview["rental_fee_satang"], 55000);
+    assert_eq!(preview["deposit_satang"], 150000);
     assert_eq!(preview["customer"]["phone"], "0812345678");
     assert_eq!(mock.orders.load(Ordering::SeqCst), 0);
     let submit = json!({"review_id":preview["review_id"],"confirmed":true});
@@ -785,7 +796,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
     let payload = mock.payloads.lock().await[0].clone();
     assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.00");
-    assert_eq!(payload["orderDetail"]["bailDiscount"], "0.00");
+    assert_eq!(payload["orderDetail"]["bailDiscount"], "500.01");
     assert_eq!(payload["orderDetail"]["customerPhone"], "0812345678");
     assert_eq!(payload["orderDetail"]["startDate"], "2026-11-04");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
@@ -831,7 +842,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         &state,
         id,
         2,
-        order("2026-11-12", "2026-11-15", "store_pickup", 0),
+        order("2026-11-12", "2026-11-15", "store_pickup", Some(0)),
     )
     .await;
     let data = checkout::list(&state, id).await.unwrap();

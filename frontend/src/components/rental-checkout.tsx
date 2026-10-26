@@ -157,6 +157,8 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
             {totals.shipping > 0 && <div><dt>ค่าจัดส่ง <span className="muted small">(หมายเหตุใน Alex)</span></dt><dd>{baht(totals.shipping)}</dd></div>}
           </dl>
           <div className="invoice-grand"><span>ยอดรวมทั้งหมด</span><strong>{baht(totals.rentNet + totals.depositNet + totals.shipping)} <small>บาท</small></strong></div>
+          {(group.quoted_rental_fee_satang !== null || group.quoted_deposit_satang !== null) && <p className="muted small">ราคาที่แจ้งลูกค้า:{group.quoted_rental_fee_satang !== null && ` ค่าเช่า ${baht(group.quoted_rental_fee_satang)}`}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${baht(group.quoted_deposit_satang)}`} · ส่วนลดที่ไม่ได้กรอกคิดจากส่วนต่างกับราคาใน Alex</p>}
+          {((group.quoted_rental_fee_satang ?? 0) > catalogRental || (group.quoted_deposit_satang ?? 0) > catalogDeposit) && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex</p>}
           <p className="muted small">ส่วนลดแก้ได้ที่แท็บร่างล่าสุด{review ? " · ยอดนี้ตรวจกับราคาและคิวใน Alex แล้ว" : " · ยอดจะตรวจกับ Alex อีกครั้งเมื่อเตรียมบิล"}</p>
         </section>
         {!review && <button className="button primary full" disabled={working || !ready || !!pending}><span aria-hidden="true">🧾</span> ตรวจคิวและเตรียมบิล</button>}

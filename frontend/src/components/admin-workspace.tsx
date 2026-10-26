@@ -224,6 +224,14 @@ export default function AdminWorkspace() {
     summaryDirty.current = true; setSummaryEdited(true); setSummary(text);
   }
 
+  // A bill the admin already sent in the chat can be copied into the summary; the AI still reads only the summary.
+  const chatBill = [...messages].reverse().map(event => ({ event, text: event.payload?.message?.type === "text" ? event.payload.message.text ?? "" : "" }))
+    .find(({ event, text }) => (event.sender_role === "admin" || event.direction === "outbound") && !event.withdrawn && text.includes("ค่าเช่า") && text.includes("ค่าประกัน"));
+  function applyChatBill(text: string) {
+    if (summary.trim() && summary.trim() !== text.trim() && !window.confirm("แทนที่คำบรรยายเดิมด้วยสรุปบิลจากแชท?")) return;
+    editSummary(text.trim());
+  }
+
   function toggleSummaryImage(id: string, checked: boolean) {
     summaryDirty.current = true; setSummaryEdited(true);
     setImages(previous => checked ? [...new Set([...previous, id])].slice(0, 5) : previous.filter(value => value !== id));
@@ -337,7 +345,8 @@ export default function AdminWorkspace() {
             {savedSummary?.stale && !savedSummary.redacted && <div className="notice warning">มีข้อความใหม่หลังบันทึกสรุป กรุณาตรวจแชทก่อนเตรียมร่างอีกครั้ง</div>}
             {summaryConflict && <div className="notice warning"><p>สรุปบนระบบมีการเปลี่ยนแปลง คัดลอกข้อความที่ต้องการเก็บไว้ก่อนโหลด</p><button type="button" className="text-button" disabled={working} onClick={reloadSummary}>โหลดสรุปล่าสุด</button></div>}
             <SummaryImages inquiryId={selected} attachments={attachments} selected={images} disabled={!!working} onUploaded={uploadedSummaryImage} onDeleted={deletedSummaryImage} onToggle={toggleSummaryImage} onBusy={setBusy} onUnauthorized={() => setSession(null)} />
-            <label className="summary-label">คำบรรยายเพิ่มเติม (ไม่จำเป็นเมื่อแนบรูป)<textarea rows={4} maxLength={20000} value={summary} disabled={working} onChange={e => editSummary(e.target.value)} placeholder="เช่น จำนวนชุดละ 1 ชุด หรือเพิ่มรายละเอียดที่ไม่มีในภาพ หากใช้ปีอื่นให้ระบุปีด้วย" /></label>
+            <label className="summary-label">คำบรรยายเพิ่มเติม (ไม่จำเป็นเมื่อแนบรูป)<textarea rows={4} maxLength={20000} value={summary} disabled={working} onChange={e => editSummary(e.target.value)} placeholder="วางสรุปบิล เช่น ชื่อ Vappen / Lyn Dress - Yellow / size M / 3 วัน พร้อมค่าเช่า ค่าประกัน วันลูกค้ารับชุดและส่งคืนชุด หรือเพิ่มรายละเอียดที่ไม่มีในภาพ" /></label>
+            {chatBill && <button type="button" className="button secondary full" disabled={working || summary.trim() === chatBill.text.trim()} onClick={() => applyChatBill(chatBill.text)}><span aria-hidden="true">📋</span> ใช้สรุปบิลล่าสุดจากแชท ({time(chatBill.event.event_at)})</button>}
             <div className="section-caption small muted"><span>แนบรูปที่เลือก {images.length}/5 รูป</span><span>{summary.length.toLocaleString()}/20,000</span></div>
             <p className="muted small">วันที่ที่ไม่ระบุปีจะใช้ปีปัจจุบันตามเวลาไทย ส่วนวันที่ที่อ่านได้หลายแบบ AI จะถามให้ยืนยัน</p>
             <p className="muted small" role="status">{summaryEdited ? "มีการแก้ไขที่ยังไม่ได้บันทึก" : savedSummary ? `บันทึกแล้ว · ${savedSummary.updated_by} · ${time(savedSummary.updated_at)}` : "ยังไม่ได้บันทึกสรุป"}</p>

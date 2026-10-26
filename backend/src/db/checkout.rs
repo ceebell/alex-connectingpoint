@@ -62,6 +62,14 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     if branches.len() > 1 {
         missing.push(json!({"field":"mixed_branches"}));
     }
+    let catalog_rental: i64 = lines
+        .iter()
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum();
+    let catalog_deposit: i64 = lines
+        .iter()
+        .map(|line| line.deposit_satang * line.quantity)
+        .sum();
     let mut groups = Vec::new();
     if let (true, Some(branch), Some(pickup), Some(returned), Some(method)) = (
         missing.is_empty(),
@@ -92,8 +100,16 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             quoted_rental_fee_satang: fields.amounts.rental_fee_satang,
             quoted_deposit_satang: fields.amounts.deposit_satang,
             quoted_shipping_fee_satang: fields.amounts.shipping_fee_satang,
-            rental_discount_satang: fields.amounts.rental_discount_satang.unwrap_or(0),
-            deposit_discount_satang: fields.amounts.deposit_discount_satang.unwrap_or(0),
+            rental_discount_satang: discount(
+                fields.amounts.rental_discount_satang,
+                fields.amounts.rental_fee_satang,
+                catalog_rental,
+            ),
+            deposit_discount_satang: discount(
+                fields.amounts.deposit_discount_satang,
+                fields.amounts.deposit_satang,
+                catalog_deposit,
+            ),
         });
     }
     let has_conflicts = draft
@@ -110,6 +126,13 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         missing,
         has_conflicts,
     })
+}
+
+// A fee quoted to the customer below the Alex catalog total is the discount the admin gave
+// (quoted rent 500 on a 700 catalog price is a 200 discount). A discount written in the draft
+// always wins, and a quote above the catalog never becomes a negative discount.
+fn discount(explicit: Option<i64>, quoted: Option<i64>, catalog: i64) -> i64 {
+    explicit.unwrap_or_else(|| quoted.map_or(0, |quoted| (catalog - quoted).max(0)))
 }
 
 // Bill lines from cart records, the codes that lack a catalog price, and the branches in use.
@@ -807,4 +830,18 @@ pub async fn resolve(
             .await?
             .ok_or(AppError::Data)?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quoted_fees_below_the_catalog_become_discounts() {
+        assert_eq!(discount(None, Some(50_000), 70_000), 20_000);
+        assert_eq!(discount(Some(5_000), Some(50_000), 70_000), 5_000);
+        assert_eq!(discount(Some(0), Some(50_000), 70_000), 0);
+        assert_eq!(discount(None, Some(80_000), 70_000), 0);
+        assert_eq!(discount(None, None, 70_000), 0);
+    }
 }

@@ -288,7 +288,8 @@ pub async fn enrich(
             texture: None,
             page: 1,
         };
-        let (candidates, more) =
+        let options = (input.color.clone(), input.size.clone());
+        let (mut found, mut more) =
             match timeout_at(deadline, candidates(state, &session, &item, &mut input)).await {
                 Ok(Ok(value)) => value,
                 _ => {
@@ -303,14 +304,42 @@ pub async fn enrich(
                     continue;
                 }
             };
-        let selected = if !more && candidates.len() == 1 && options_match(&item, &candidates[0]) {
-            candidates.first()
+        // A bill line names a category and a search word ("Vappen / Lyn Dress - Yellow"). When the
+        // word finds nothing in that category, its items are offered for selection, never auto-filled.
+        let mut whole_category = None;
+        if let (Some(category), Some(wanted)) = (&category, input.query.clone())
+            && found.is_empty()
+            && !more
+        {
+            let broad = DraftItem {
+                product_code: None,
+                product_name: None,
+                ..item.clone()
+            };
+            input.mode = SearchMode::Text;
+            input.query = None;
+            (input.color, input.size) = options;
+            input.page = 1;
+            if let Ok(Ok((items, has_more))) =
+                timeout_at(deadline, candidates(state, &session, &broad, &mut input)).await
+                && !items.is_empty()
+            {
+                (found, more) = (items, has_more);
+                whole_category = Some((wanted, category.name.clone()));
+            }
+        }
+        let selected = if whole_category.is_none()
+            && !more
+            && found.len() == 1
+            && options_match(&item, &found[0])
+        {
+            found.first()
         } else {
             None
         };
         let status = if selected.is_some() {
             "MATCHED"
-        } else if candidates.is_empty() && !more {
+        } else if found.is_empty() && !more {
             "NOT_FOUND"
         } else {
             "NEEDS_SELECTION"
@@ -321,7 +350,7 @@ pub async fn enrich(
         record.extend(doc! {"_id":search_id,"inquiry_id":inquiry_id,"draft_id":draft_id,
             "draft_version":input.draft_version,"summary_revision":drafts::summary_revision(inquiry),
             "context_hash":context_hash,"input":bson::to_document(&input).map_err(|_|AppError::Data)?,
-            "method":"admin_input","has_more":more,"candidates":bson::to_bson(&candidates).map_err(|_|AppError::Data)?,
+            "method":"admin_input","has_more":more,"candidates":bson::to_bson(&found).map_err(|_|AppError::Data)?,
             "created_at":now,"updated_at":now,"expires_at":DateTime::from_millis(now.timestamp_millis()+1_800_000)});
         state
             .collection("product_searches")
@@ -343,6 +372,14 @@ pub async fn enrich(
                 result,
                 format!(
                     "ไม่พบสินค้ารายการ {} ใน Alex กรุณาตรวจชื่อ สี และไซซ์ในส่วนค้นหาชุด",
+                    index + 1
+                ),
+            );
+        } else if let Some((wanted, category)) = &whole_category {
+            question(
+                result,
+                format!(
+                    "ไม่พบ {wanted} ในประเภท {category} จึงแสดงสินค้าในประเภทนี้ กรุณาเลือกสินค้ารายการ {} แล้วเพิ่มลงตะกร้า",
                     index + 1
                 ),
             );
