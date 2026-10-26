@@ -6,13 +6,39 @@ import { api, ApiError, Attachment, Draft, errorText, LineEvent } from "@/lib/ap
 type Candidate = { product_item_id: string; code: string; name: string; color: string | null; size: string | null; rental_fee_satang: number | null; deposit_satang: number | null; image_url: string | null; score: number | null };
 type Search = { search_id: string; branch_id: string; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null };
 type Choice = Candidate & { search_id: string };
-type Match = { item_index: number; branch_id: string; revision: number; candidate: Candidate; confirmed_by: string; confirmed_at: string; method: string; differences: string[] };
+type Match = { item_index: number; branch_id: string; revision: number; quantity?: number; candidate: Candidate; confirmed_by: string; confirmed_at: string; method: string; differences: string[] };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
 type Matches = { matches: Match[]; product_verified: boolean; suggestions?: Suggestion[] };
 type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean };
 type Mode = "code" | "text" | "product_url" | "image";
 const money = (value: number | null) => value === null ? "ไม่ระบุ" : `${(value / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
+const quantityLimit = (value: number) => Math.min(999, Math.max(1, Math.round(value) || 1));
 const date = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
+
+function MatchCard({ match, quantity, branch, disabled, onQuantity, onRemove }: { match: Match; quantity: number; branch: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
+  const [text, setText] = useState(String(quantity));
+  const { candidate } = match;
+  function commit() { const next = quantityLimit(Number(text)); setText(String(next)); if (next !== quantity) onQuantity(next); }
+  return <article className="match-card" aria-label={`รายการ ${match.item_index + 1} ${candidate.name}`}>
+    <div className="match-image">{candidate.image_url ? <img src={candidate.image_url} alt={`รูปสินค้า ${candidate.code}`} loading="lazy" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
+    <div className="match-info">
+      <span className="match-index">รายการ {match.item_index + 1}</span>
+      <strong className="match-name">{candidate.name}</strong>
+      <span className="match-code">({candidate.code})</span>
+      <p>สี: {candidate.color || "ไม่ระบุ"}</p><p>ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
+      <dl className="match-price"><dt>ราคา:</dt><dd>{money(candidate.rental_fee_satang)}</dd><dt>ค่าประกัน:</dt><dd>{money(candidate.deposit_satang)}</dd></dl>
+    </div>
+    <div className="match-actions">
+      <div className="quantity-stepper" role="group" aria-label={`จำนวนรายการ ${match.item_index + 1}`}>
+        <button type="button" aria-label="ลดจำนวน" disabled={disabled || quantity <= 1} onClick={() => { setText(String(quantity - 1)); onQuantity(quantity - 1); }}>−</button>
+        <input type="number" min={1} max={999} aria-label="จำนวน" value={text} disabled={disabled} onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit(); } }} />
+        <button type="button" aria-label="เพิ่มจำนวน" disabled={disabled || quantity >= 999} onClick={() => { setText(String(quantity + 1)); onQuantity(quantity + 1); }}>+</button>
+      </div>
+      <button type="button" className="match-remove" disabled={disabled} onClick={onRemove}><span aria-hidden="true">✕</span> เอาออก</button>
+    </div>
+    <p className="match-meta">{branch} · ยืนยันโดย {match.confirmed_by} · {date(match.confirmed_at)}{match.differences.length > 0 && " · ยืนยันค่าจาก Alex ที่ต่างจากร่างแล้ว"}</p>
+  </article>;
+}
 
 export default function ProductMatcher({ inquiryId, draft, contextHash, messages, attachments = [], disabled, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; contextHash: string; messages: LineEvent[]; attachments?: Attachment[]; disabled: boolean; onUnauthorized: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -31,6 +57,7 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
   const [selected, setSelected] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const [differenceAcknowledged, setDifferenceAcknowledged] = useState(false);
+  const [quantity, setQuantity] = useState(String(draft?.result?.fields.items[0]?.quantity ?? 1));
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!!draft?.result?.fields.items.length);
   const [error, setError] = useState("");
@@ -93,11 +120,20 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
       await api(`/api/inquiries/${inquiryId}/products/confirm`, { method: "POST", body: JSON.stringify({
         search_id: choice.search_id, product_item_id: choice.product_item_id,
         expected_revision: matches.matches.find(match => match.item_index === index)?.revision ?? 0,
-        acknowledge_difference: differenceAcknowledged,
+        acknowledge_difference: differenceAcknowledged, quantity: quantityLimit(Number(quantity)),
       }) });
       setMatches(await api<Matches>(`/api/inquiries/${inquiryId}/products`));
       setSelected(""); setAcknowledged(false); setDifferenceAcknowledged(false);
     } catch (cause) { fail(cause); } finally { setBusy(false); }
+  }
+
+  async function updateMatch(match: Match, quantity: number | null) {
+    if (unavailable) return;
+    if (quantity === null && !window.confirm(`เอาชุด ${match.candidate.code} ออกจากรายการ ${match.item_index + 1}? ต้องค้นและยืนยันชุดใหม่อีกครั้ง`)) return;
+    setBusy(true); setError("");
+    try { setMatches(await api<Matches>(`/api/inquiries/${inquiryId}/products/match`, { method: "POST", body: JSON.stringify({ item_index: match.item_index, expected_revision: match.revision, quantity }) })); }
+    catch (cause) { fail(cause); await api<Matches>(`/api/inquiries/${inquiryId}/products`).then(setMatches).catch(() => {}); }
+    finally { setBusy(false); }
   }
 
   if (!fields?.items.length) return <div className="notice info">เตรียมร่างและบันทึกรายการสินค้าก่อน แล้วกลับมาเลือกชุดจาก Alex</div>;
@@ -109,10 +145,10 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
     {(draft?.stale || draft?.redacted) && <div className="notice warning">ร่างหรือบริบทเปลี่ยน กรุณาตรวจและบันทึกร่างใหม่ก่อนเลือกสินค้า</div>}
     {matches.product_verified && <div className="notice success" role="status">ยืนยัน Product ID ครบ {fields.items.length} รายการแล้ว พร้อมนำไปตรวจคิวในขั้นถัดไป</div>}
     {suggestion && <div className={`notice ${suggestion.status === "MATCHED" ? "info" : "warning"}`} role="status">{({ MATCHED: "ค้นจากรูปหรือสรุปใน Alex แล้ว และเติมข้อมูลสินค้าลงร่างให้แล้ว กรุณาตรวจและยืนยันชุดด้านล่าง", NEEDS_SELECTION: "พบตัวเลือกจาก Alex กรุณาเลือกสินค้า สี และไซซ์ที่ต้องการ", NOT_FOUND: "ยังไม่พบสินค้าใน Alex กรุณาตรวจชื่อ สี และไซซ์แล้วค้นอีกครั้ง", BRANCH_REQUIRED: "กรุณาเลือกสาขาที่ต้องการค้นสินค้า", MISSING_QUERY: "ต้องระบุชื่อหรือรหัสสินค้าจากรูปหรือสรุปก่อนค้น", NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าการเชื่อมต่อ Alex", FAILED: "ค้นสินค้าอัตโนมัติไม่สำเร็จ กรุณากดค้นอีกครั้ง", EXPIRED: "ผลค้นหาเดิมหมดอายุ กรุณาค้นใหม่" } as Record<string, string>)[suggestion.status] ?? "กรุณาตรวจผลค้นหาสินค้าจาก Alex"}</div>}
-    {matches.matches.map(match => <div className="product-match" key={match.item_index}><strong>รายการ {match.item_index + 1} · {match.candidate.code}</strong><p>{match.candidate.color || "ไม่ระบุสี"} · {match.candidate.size || "ไม่ระบุไซซ์"} · {settings?.branches.find(branch => branch.id === match.branch_id)?.name ?? match.branch_id}</p><code>{match.candidate.product_item_id}</code><p className="muted small">ยืนยันโดย {match.confirmed_by} · {date(match.confirmed_at)}</p>{match.differences.length > 0 && <p className="muted small">แอดมินยืนยันค่าจาก Alex ที่ต่างจากข้อความในร่างแล้ว</p>}</div>)}
+    {matches.matches.map(match => { const current = match.quantity ?? fields.items[match.item_index]?.quantity ?? 1; return <MatchCard key={`${match.item_index}-${match.revision}`} match={match} quantity={current} branch={settings?.branches.find(branch => branch.id === match.branch_id)?.name ?? match.branch_id} disabled={unavailable} onQuantity={next => updateMatch(match, next)} onRemove={() => updateMatch(match, null)} />; })}
     <form onSubmit={e => { e.preventDefault(); void search(); }}>
       <fieldset disabled={unavailable}>
-        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setMode(fields.items[next].product_code ? "code" : "text"); setQuery(fields.items[next].product_code ?? fields.items[next].product_name ?? ""); setColor(fields.items[next].color ?? ""); setSize(fields.items[next].size ?? ""); applySuggestion(next, matches); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || item.product_name || "ยังไม่มีชื่อ/รหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
+        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setMode(fields.items[next].product_code ? "code" : "text"); setQuery(fields.items[next].product_code ?? fields.items[next].product_name ?? ""); setColor(fields.items[next].color ?? ""); setSize(fields.items[next].size ?? ""); setQuantity(String(fields.items[next].quantity ?? 1)); applySuggestion(next, matches); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || item.product_name || "ยังไม่มีชื่อ/รหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
         <label>สาขาที่ได้รับสิทธิ์<select value={branch} onChange={e => { setBranch(e.target.value); clearSearch(); }} required><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
         <label>ค้นหาจาก<select value={mode} onChange={e => { setMode(e.target.value as Mode); setQuery(""); clearSearch(); }}><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="text">ชื่อหรือคำบรรยาย / ดูแค็ตตาล็อก</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้าที่อนุญาต</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากบทสนทนา</option></select></label>
         {mode === "image" && <label>รูปอ้างอิง<select value={image} onChange={e => { setImage(e.target.value); clearSearch(); }} required><option value="">เลือกรูปจากบทสนทนา</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>}
@@ -131,6 +167,7 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
     {result?.has_more && <button type="button" className="button secondary full" disabled={unavailable} onClick={() => search(true)}>โหลดหน้าถัดไป</button>}
     {choice && <div className="product-confirm">
       {differing.length > 0 && <div className="notice warning"><strong>ค่าจาก Alex ต่างจากร่าง</strong><ul>{differing.map(([label, original, catalog]) => <li key={label}>{label}: ในร่าง {original} → Alex {catalog || "ไม่ระบุ"}</li>)}</ul><label className="checkbox-row"><input type="checkbox" checked={differenceAcknowledged} onChange={e => setDifferenceAcknowledged(e.target.checked)} disabled={unavailable} />ตรวจแล้วและยืนยันเลือกค่าจาก Alex ที่ต่างตามรายการนี้</label></div>}
+      <label className="confirm-quantity">จำนวน<input type="number" min={1} max={999} value={quantity} disabled={unavailable} onChange={e => setQuantity(e.target.value)} onBlur={() => setQuantity(String(quantityLimit(Number(quantity))))} /></label>
       <label className="checkbox-row"><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} disabled={unavailable} />ตรวจชุด {choice.code} สี ไซซ์ และสาขาแล้ว เป็นรายการที่ต้องการเช่า</label>
       <button type="button" className="button primary full" disabled={unavailable || !acknowledged || (differing.length > 0 && !differenceAcknowledged)} onClick={confirm}>ยืนยันชุดสำหรับรายการ {index + 1}</button>
     </div>}

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, ApiError, errorText, Profile } from "@/lib/api";
+import { api, ApiError, cleanPhone, errorText, Profile } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number };
@@ -12,13 +12,13 @@ type Review = { review_id: string; group: Group; customer: { name: string; phone
 const money = (value: number) => `${(value / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
 const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
 const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่ง / รอตรวจผล", SUBMIT_UNKNOWN: "ต้องตรวจผลใน Alex", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
-const missingLabels: Record<string, string> = { product_match: "ยืนยันชุดในแท็บเลือกชุด", pickup_date: "วันรับ/เริ่มเช่าพร้อมปี", return_date: "วันคืนพร้อมปี", fulfillment_method: "วิธีรับสินค้า", quantity: "จำนวน", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
+const missingLabels: Record<string, string> = { product_match: "ยืนยันชุดในแท็บเลือกชุด", pickup_date: "วันรับชุดพร้อมปี", return_date: "วันคืนชุดพร้อมปี", fulfillment_method: "วิธีรับสินค้า", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
 
 export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthorized }: { inquiryId: string; userId?: string; disabled: boolean; onUnauthorized: () => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [groupKey, setGroupKey] = useState("");
   const [name, setName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState("");
-  const [rentalFee, setRentalFee] = useState(""); const [deposit, setDeposit] = useState(""); const [shipping, setShipping] = useState("");
+  const [rentalDiscount, setRentalDiscount] = useState("0"); const [depositDiscount, setDepositDiscount] = useState("0"); const [shipping, setShipping] = useState("");
   const [receiving, setReceiving] = useState(""); const [rentalPayment, setRentalPayment] = useState(""); const [bailPayment, setBailPayment] = useState("");
   const [birth, setBirth] = useState(""); const [notes, setNotes] = useState("");
   const [shippingNoteOnly, setShippingNoteOnly] = useState(false); const [freePromotion, setFreePromotion] = useState(false); const [discountPromotion, setDiscountPromotion] = useState(false);
@@ -31,13 +31,15 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
   const group = data?.groups.find(group => group.key === groupKey);
   const pending = data?.submissions.some(submission => ["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status));
   const ready = !!group && !!data?.source_hash && !data.has_conflicts;
+  const catalogRental = group?.lines.reduce((sum, line) => sum + line.rental_fee_satang * line.quantity, 0) ?? 0;
+  const catalogDeposit = group?.lines.reduce((sum, line) => sum + line.deposit_satang * line.quantity, 0) ?? 0;
+  const satang = (value: string) => Math.round(Number(value || 0) * 100);
   const endpoint = `/api/inquiries/${inquiryId}/checkout`;
 
   function invalidate() { setReview(null); setConfirmed(false); }
   function changeGroup(group: Group, commonNotes = data?.notes ?? "") {
     setGroupKey(group.key); setAvailability(null); invalidate();
-    setRentalFee(group.quoted_rental_fee_satang === null ? "" : String(group.quoted_rental_fee_satang / 100));
-    setDeposit(group.quoted_deposit_satang === null ? "" : String(group.quoted_deposit_satang / 100));
+    setRentalDiscount("0"); setDepositDiscount("0");
     setShipping(group.quoted_shipping_fee_satang === null ? group.fulfillment_method === "store_pickup" ? "0" : "" : String(group.quoted_shipping_fee_satang / 100));
     setReceiving(group.delivery_provider ?? (group.fulfillment_method === "store_pickup" ? "รับหน้าร้าน" : ""));
     setNotes([commonNotes, group.notes].filter(Boolean).join("\n")); setShippingNoteOnly(false);
@@ -49,7 +51,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
     let cancelled = false;
     Promise.all([api<Data>(endpoint), userId ? api<{ profile: Profile | null }>(`/api/line/users/${encodeURIComponent(userId)}/profile`).catch(() => null) : Promise.resolve(null)]).then(([value, profile]) => {
       if (cancelled) return;
-      setData(value); setName(value.customer.name ?? profile?.profile?.display_name ?? ""); setPhone(value.customer.phone ?? profile?.profile?.phone ?? ""); setAddress(value.customer.address ?? profile?.profile?.address ?? "");
+      setData(value); setName(value.customer.name ?? profile?.profile?.display_name ?? ""); setPhone(cleanPhone(value.customer.phone ?? profile?.profile?.phone ?? "")); setAddress(value.customer.address ?? profile?.profile?.address ?? "");
       if (value.groups.length === 1) changeGroup(value.groups[0], value.notes ?? "");
     }).catch(cause => { if (!cancelled) fail(cause); }).finally(() => { if (!cancelled) setLoading(false); });
     const timer = setInterval(() => { api<Data>(endpoint).then(value => { if (!cancelled) { setData(value); setNow(Date.now()); } }).catch(() => {}); }, 10000);
@@ -67,7 +69,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
     setBusy(true); setError(""); invalidate();
     try { setReview(await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
       source_hash: data!.source_hash, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address,
-      rental_fee_satang: Math.round(Number(rentalFee) * 100), deposit_satang: Math.round(Number(deposit) * 100), shipping_fee_satang: Math.round(Number(shipping) * 100), shipping_note_only: shippingNoteOnly,
+      rental_discount_satang: satang(rentalDiscount), deposit_discount_satang: satang(depositDiscount), shipping_fee_satang: satang(shipping), shipping_note_only: shippingNoteOnly,
       receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: birth || null, notes,
       use_free_item_promotion: freePromotion, use_discount_promotion: discountPromotion,
     }) })); }
@@ -104,15 +106,16 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
       {group && <><div className="bill-lines">{group.lines.map(line => <div key={line.item_index}><strong>{line.code} · {line.name}</strong><p>{line.color || "ไม่ระบุสี"} · {line.size || "ไม่ระบุไซซ์"} · จำนวน {line.quantity}</p></div>)}</div><button type="button" className="button secondary full" disabled={working || !ready} onClick={check}>{busy ? "กำลังตรวจ…" : "เช็คคิวจาก Alex"}</button>
         {availability && <div className={`notice ${availability.state === "AVAILABLE" ? "success" : "warning"}`} role="status"><strong>{states[availability.state]}</strong>{availability.items.map(item => <p key={item.item_index}>{item.code} × {item.quantity}: {states[item.state]}</p>)}<p className="small">ผลตรวจยังไม่กันคิว ระบบจะตรวจซ้ำก่อนส่งออเดอร์</p></div>}
         <form onSubmit={e => { e.preventDefault(); void prepare(); }}>
-          <CustomerExtractButton inquiryId={inquiryId} disabled={working} onBusyChange={setExtracting} onUnauthorized={onUnauthorized} onFill={value => { setName(current => value.display_name ?? current); setPhone(current => value.phone ?? current); setAddress(current => value.address ?? current); invalidate(); }} />
+          <CustomerExtractButton inquiryId={inquiryId} disabled={working} onBusyChange={setExtracting} onUnauthorized={onUnauthorized} onFill={value => { setName(current => value.display_name ?? current); setPhone(current => value.phone ? cleanPhone(value.phone) : current); setAddress(current => value.address ?? current); invalidate(); }} />
           <fieldset disabled={working || !ready || !!pending}><div className="field-grid">
-            <label>ชื่อลูกค้า<input required value={name} maxLength={200} onChange={e => { setName(e.target.value); invalidate(); }} /></label><label>เบอร์โทร<input required value={phone} maxLength={40} onChange={e => { setPhone(e.target.value); invalidate(); }} /></label>
+            <label>ชื่อลูกค้า<input required value={name} maxLength={200} onChange={e => { setName(e.target.value); invalidate(); }} /></label><label>เบอร์โทร<input required value={phone} maxLength={40} inputMode="tel" onChange={e => { setPhone(cleanPhone(e.target.value)); invalidate(); }} /></label>
             <label className="span-2">ที่อยู่<textarea rows={3} required={group.fulfillment_method === "delivery"} value={address} maxLength={1000} onChange={e => { setAddress(e.target.value); invalidate(); }} /></label>
             <label>วิธีรับ / ชื่อขนส่ง<input required value={receiving} maxLength={100} onChange={e => { setReceiving(e.target.value); invalidate(); }} /></label><label>วันเกิด (ถ้าทราบ)<input type="date" value={birth} onChange={e => { setBirth(e.target.value); invalidate(); }} /></label>
-            {([["ค่าเช่าที่ตกลง (บาท)", rentalFee, setRentalFee], ["มัดจำที่ตกลง (บาท)", deposit, setDeposit], ["ค่าจัดส่ง (บาท)", shipping, setShipping]] as const).map(([label, value, set]) => <label key={label}>{label}<input required type="number" min="0" step="0.01" value={value} onChange={e => { set(e.target.value); invalidate(); }} /></label>)}
-            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระมัดจำ", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select required value={value} onChange={e => { set(e.target.value); invalidate(); }}><option value="">เลือกวิธีชำระ</option><option>โอนเงิน</option><option>เงินสด</option><option>บัตรเครดิต</option></select></label>)}
+            <p className="span-2 muted small">ค่าเช่าแค็ตตาล็อก {money(catalogRental)} · ค่าประกัน {money(catalogDeposit)}{group.quoted_rental_fee_satang !== null && group.quoted_rental_fee_satang !== catalogRental && <><br />ราคาที่แจ้งลูกค้าในร่าง: ค่าเช่า {money(group.quoted_rental_fee_satang)}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${money(group.quoted_deposit_satang)}`}</>}</p>
+            {([["ส่วนลดค่าเช่า (บาท)", rentalDiscount, setRentalDiscount, catalogRental], ["ส่วนลดค่าประกัน (บาท)", depositDiscount, setDepositDiscount, catalogDeposit], ["ค่าจัดส่ง (บาท)", shipping, setShipping, null]] as const).map(([label, value, set, max]) => <label key={label}>{label}<input required type="number" min="0" max={max === null ? undefined : max / 100} step="0.01" value={value} onChange={e => { set(e.target.value); invalidate(); }} /></label>)}
+            <p className="span-2 muted small">ยอดหลังหักส่วนลด: ค่าเช่า {money(catalogRental - satang(rentalDiscount))} · ค่าประกัน {money(catalogDeposit - satang(depositDiscount))}</p>
+            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select required value={value} onChange={e => { set(e.target.value); invalidate(); }}><option value="">เลือกวิธีชำระ</option><option>โอนเงิน</option><option>เงินสด</option><option>บัตรเครดิต</option></select></label>)}
           </div>
-          <button type="button" className="text-button full" onClick={() => { setRentalFee(String(group.lines.reduce((sum, line) => sum + line.rental_fee_satang * line.quantity, 0) / 100)); setDeposit(String(group.lines.reduce((sum, line) => sum + line.deposit_satang * line.quantity, 0) / 100)); invalidate(); }}>ใช้ราคาและมัดจำจากแค็ตตาล็อก</button>
           {Number(shipping) > 0 && <div className="notice warning"><p>รูปแบบสร้างบิลที่ได้รับยังไม่มีช่องค่าส่งแยก การส่งรอบนี้บันทึกค่าส่งในหมายเหตุ โดยยอดค่าเช่าใน Alex จะไม่รวมค่าส่ง</p><label className="checkbox-row"><input type="checkbox" required checked={shippingNoteOnly} onChange={e => { setShippingNoteOnly(e.target.checked); invalidate(); }} />รับทราบและให้บันทึกค่าส่งไว้ในหมายเหตุ</label></div>}
           <label>หมายเหตุ / อุปกรณ์<textarea rows={3} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
           <label className="checkbox-row"><input type="checkbox" checked={freePromotion} onChange={e => { setFreePromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นของแถม</label><label className="checkbox-row"><input type="checkbox" checked={discountPromotion} onChange={e => { setDiscountPromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นส่วนลด</label>
@@ -121,7 +124,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
         </form>
       </>}
     </>}
-    {review && <section className="bill-review"><h3>ตรวจบิลก่อนส่งเข้า Alex</h3><p>{review.customer.name} · {review.customer.phone}</p><p>{review.customer.address}</p><p>{review.group.lines.map(line => `${line.code} × ${line.quantity}`).join(", ")}<br />{day(review.group.pickup_date)} – {day(review.group.return_date)}</p><dl><div><dt>ค่าเช่าแค็ตตาล็อก</dt><dd>{money(review.catalog_rental_satang)}</dd></div><div><dt>ส่วนลดค่าเช่า</dt><dd>{money(review.rental_discount_satang)}</dd></div><div><dt>ค่าเช่าที่ตกลง</dt><dd>{money(review.rental_fee_satang)}</dd></div><div><dt>มัดจำที่ตกลง</dt><dd>{money(review.deposit_satang)}</dd></div><div><dt>ค่าส่ง (บันทึกหมายเหตุ)</dt><dd>{money(review.shipping_fee_satang)}</dd></div></dl><p>รับ/ส่ง: {review.receiving_method}<br />ชำระค่าเช่า: {review.rental_payment_method} · มัดจำ: {review.bail_payment_method}</p><p>{review.notes}</p>
+    {review && <section className="bill-review"><h3>ตรวจบิลก่อนส่งเข้า Alex</h3><p>{review.customer.name} · {review.customer.phone}</p><p>{review.customer.address}</p><p>{review.group.lines.map(line => `${line.code} × ${line.quantity}`).join(", ")}<br />{day(review.group.pickup_date)} – {day(review.group.return_date)}</p><dl><div><dt>ค่าเช่าแค็ตตาล็อก</dt><dd>{money(review.catalog_rental_satang)}</dd></div><div><dt>ส่วนลดค่าเช่า</dt><dd>{money(review.rental_discount_satang)}</dd></div><div><dt>ค่าเช่าสุทธิ</dt><dd>{money(review.rental_fee_satang)}</dd></div><div><dt>ค่าประกันแค็ตตาล็อก</dt><dd>{money(review.catalog_deposit_satang)}</dd></div><div><dt>ส่วนลดค่าประกัน</dt><dd>{money(review.deposit_discount_satang)}</dd></div><div><dt>ค่าประกันสุทธิ</dt><dd>{money(review.deposit_satang)}</dd></div><div><dt>ค่าส่ง (บันทึกหมายเหตุ)</dt><dd>{money(review.shipping_fee_satang)}</dd></div></dl><p>รับ/ส่ง: {review.receiving_method}<br />ชำระค่าเช่า: {review.rental_payment_method} · ค่าประกัน: {review.bail_payment_method}</p><p>{review.notes}</p>
       {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ ระบบจะให้ตรวจผลใน Alex และบันทึกเลขออเดอร์ก่อนส่งรายการอื่น</p>}
       <label className="checkbox-row"><input type="checkbox" checked={confirmed} disabled={working} onChange={e => setConfirmed(e.target.checked)} />ตรวจลูกค้า รายการ วันที่ ยอด และส่วนลดแล้ว ยืนยันสร้างออเดอร์จริงใน Alex</label>
       <button type="button" className="button primary full" disabled={working || !confirmed || !!pending || now > new Date(review.expires_at).getTime()} onClick={submit}>{busy ? "กำลังส่งออเดอร์…" : "ส่งสร้างบิล / ออเดอร์ใน Alex"}</button>

@@ -61,6 +61,10 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             post(products::confirm),
         )
         .route(
+            "/api/inquiries/{id}/products/match",
+            post(products::update_match),
+        )
+        .route(
             "/api/inquiries/{id}/product-searches/{search}/images/{product}",
             get(products::image),
         )

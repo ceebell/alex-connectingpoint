@@ -5,7 +5,10 @@ use crate::{
     models::{
         customer::Actor,
         draft::DraftFields,
-        product::{Candidate, ConfirmInput, SearchInput, SearchMode, valid_id},
+        product::{
+            Candidate, ConfirmInput, MatchUpdateInput, SearchInput, SearchMode, valid_id,
+            valid_quantity,
+        },
     },
     state::AppState,
 };
@@ -145,6 +148,12 @@ pub async fn confirm(
     {
         return Err(AppError::BadRequest);
     }
+    if input
+        .quantity
+        .is_some_and(|quantity| !valid_quantity(quantity))
+    {
+        return Err(AppError::Validation("Quantity must be between 1 and 999"));
+    }
     let search_id = ObjectId::parse_str(&input.search_id).map_err(|_| AppError::BadRequest)?;
     let record = search_record(state, inquiry_id, search_id).await?;
     let (inquiry, draft, fields, snapshot) = current(state, inquiry_id).await?;
@@ -227,7 +236,7 @@ pub async fn confirm(
     let values = doc! {"search_id":search_id,"candidate":bson::to_document(&selected).map_err(|_| AppError::Data)?,
     "branch_id":&query.branch_id,"draft_version":query.draft_version,"context_hash":snapshot.hash,
     "summary_revision":drafts::summary_revision(&inquiry),"confirmed_by":&actor.name,"confirmed_by_id":&actor.id,
-    "draft_item":bson::to_document(item).map_err(|_| AppError::Data)?,"differences":differences,"differences_acknowledged":input.acknowledge_difference,
+    "draft_item":bson::to_document(item).map_err(|_| AppError::Data)?,"quantity":input.quantity.or(item.quantity).unwrap_or(1),"differences":differences,"differences_acknowledged":input.acknowledge_difference,
     "confirmed_at":now,"updated_at":now,"method":record.get_str("method").map_err(|_| AppError::Data)?,
     "image_event_id":record.get_document("input").ok().and_then(|input| input.get_str("image_event_id").ok())};
     let saved = if input.expected_revision == 0 {
@@ -253,6 +262,41 @@ pub async fn confirm(
             .ok_or(AppError::ProductConflict)?
     };
     match_view(saved, inquiry_id)
+}
+
+// Sets the quantity of a confirmed outfit, or removes the confirmation when quantity is None.
+pub async fn update_match(
+    state: &AppState,
+    inquiry_id: ObjectId,
+    input: MatchUpdateInput,
+) -> Result<Value, AppError> {
+    if input.expected_revision < 1
+        || input.expected_revision == i64::MAX
+        || input
+            .quantity
+            .is_some_and(|quantity| !valid_quantity(quantity))
+    {
+        return Err(AppError::BadRequest);
+    }
+    let (_, draft, _, _) = current(state, inquiry_id).await?;
+    let mut identity = state.scope();
+    identity.extend(doc! {"inquiry_id":inquiry_id,"draft_id":draft.get_object_id("_id").map_err(|_| AppError::Data)?,
+        "item_index":input.item_index as i64,"revision":input.expected_revision});
+    let matches = state.collection("product_matches");
+    let Some(quantity) = input.quantity else {
+        if matches.delete_one(identity).await?.deleted_count == 0 {
+            return Err(AppError::ProductConflict);
+        }
+        return list(state, inquiry_id).await;
+    };
+    matches
+        .find_one_and_update(
+            identity,
+            doc! {"$set":{"quantity":quantity,"updated_at":DateTime::now()},"$inc":{"revision":1_i64}},
+        )
+        .await?
+        .ok_or(AppError::ProductConflict)?;
+    list(state, inquiry_id).await
 }
 
 fn match_view(mut record: Document, inquiry: ObjectId) -> Result<Value, AppError> {

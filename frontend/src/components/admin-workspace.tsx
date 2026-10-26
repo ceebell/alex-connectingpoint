@@ -1,5 +1,5 @@
 "use client";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order } from "@/lib/api";
 import DraftEditor from "./draft-editor";
@@ -18,6 +18,16 @@ const loginParams = () => new URLSearchParams(typeof window === "undefined" ? ""
 const loginErrors: Record<string, string> = { LINE_CANCELLED: "ยกเลิกการเข้าสู่ระบบด้วย LINE", LINE_STATE_INVALID: "การเข้าสู่ระบบหมดเวลาหรือไม่ถูกต้อง กรุณาลองใหม่", LINE_LOGIN_FAILED: "เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่", LINE_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่า LINE Login กรุณาติดต่อผู้ดูแลระบบ", LINE_NOT_ALLOWED: "บัญชี LINE นี้ยังไม่มีสิทธิ์เข้าหลังบ้าน" };
 type OaStatus = { state: string; synced?: number; pending?: number };
 const oaStates: Record<string, string> = { NOT_CONFIGURED: "รอเปิดตัวเชื่อม OA บน Ubuntu", NEEDS_LOGIN: "ตัวเชื่อมรอล็อกอิน LINE กรุณาติดต่อผู้ดูแลระบบ", READY: "อ่าน OA ได้ ยังไม่มีข้อความแอดมินใหม่ที่จับคู่ได้", SYNCING: "กำลังรับข้อความแอดมินจาก OA อัตโนมัติ", UNLINKED: "มีข้อความ OA รอจับคู่กับบทสนทนาลูกค้า", UNSUPPORTED_SCHEMA: "รูปแบบข้อมูล OA ยังไม่รองรับ กรุณาติดต่อผู้พัฒนา", OFFLINE: "ตัวเชื่อม OA ขาดการติดต่อ", LINE_UNAVAILABLE: "ตัวเชื่อมติดต่อ LINE ไม่สำเร็จ", BACKEND_UNAVAILABLE: "backend ของตัวเชื่อมยังไม่พร้อม", BACKEND_UPDATE_REQUIRED: "ต้องอัปเดต backend เพื่อเปิดตัวเชื่อม OA", STOPPED: "ตัวเชื่อม OA หยุดทำงาน" };
+// The admin can drag the chat/draft divider; the width is a per-browser convenience only.
+const draftWidthKey = "workspace.draft-width";
+function storedDraftWidth() { try { const value = Number(window.localStorage.getItem(draftWidthKey)); return value >= 320 ? value : null; } catch { return null; } }
+function saveDraftWidth(value: number | null) { try { if (value) window.localStorage.setItem(draftWidthKey, String(value)); else window.localStorage.removeItem(draftWidthKey); } catch {} }
+// Keep the chat column at least 260px wide and the draft panel at least 320px.
+function clampDraftWidth(workspace: HTMLElement | null, width: number) {
+  if (!workspace) return width;
+  const list = (workspace.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
+  return Math.round(Math.max(320, Math.min(width, workspace.clientWidth - list - 260)));
+}
 function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
   return [...new Map([...previous, ...incoming].map(message => [message._id, message])).values()].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime() || (a.event_id ?? a._id).localeCompare(b.event_id ?? b._id));
 }
@@ -68,6 +78,8 @@ export default function AdminWorkspace() {
   const [order, setOrder] = useState<Order | null>(null);
   const [approveChecked, setApproveChecked] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [draftWidth, setDraftWidth] = useState<number | null>(storedDraftWidth);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -77,6 +89,31 @@ export default function AdminWorkspace() {
   const current = inquiries.find(inquiry => inquiry._id === selected);
   const canApprove = !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => {
+    const fit = () => { if (window.innerWidth > 850) setDraftWidth(width => width === null ? null : clampDraftWidth(workspaceRef.current, width)); };
+    window.addEventListener("resize", fit); return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  function startResize(event: PointerEvent<HTMLDivElement>) {
+    const workspace = workspaceRef.current;
+    if (!workspace || event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const right = workspace.getBoundingClientRect().right;
+    let width = handle.parentElement?.offsetWidth ?? 0;
+    handle.setPointerCapture(event.pointerId); document.body.classList.add("resizing-panels");
+    const move = (moved: globalThis.PointerEvent) => { width = clampDraftWidth(workspace, right - moved.clientX); setDraftWidth(width); };
+    const stop = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", stop); handle.removeEventListener("pointercancel", stop); document.body.classList.remove("resizing-panels"); saveDraftWidth(width); };
+    handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", stop); handle.addEventListener("pointercancel", stop);
+  }
+  function keyResize(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Home") { event.preventDefault(); setDraftWidth(null); saveDraftWidth(null); return; }
+    const step = event.key === "ArrowLeft" ? 24 : event.key === "ArrowRight" ? -24 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = clampDraftWidth(workspaceRef.current, (draftWidth ?? event.currentTarget.parentElement?.offsetWidth ?? 400) + step);
+    setDraftWidth(next); saveDraftWidth(next);
+  }
 
   useEffect(() => {
     // Show the LINE Login result once, then drop it from the address bar.
@@ -278,7 +315,7 @@ export default function AdminWorkspace() {
     <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span> โหลดข้อมูลล่าสุด</button></div></header>
       <div className="stats"><div><span className="stat-icon blue" aria-hidden="true">▤</span><div><span>inquiry ที่โหลดมา</span><strong>{inquiries.length}</strong></div></div><div><span className="stat-icon sky" aria-hidden="true">✓</span><div><span>ข้อความประมวลผลแล้ว</span><strong>{counts.DONE ?? 0}</strong></div></div><div><span className="stat-icon orange" aria-hidden="true">!</span><div><span>เหตุการณ์รอแอดมินตรวจ</span><strong>{(counts.NEEDS_ADMIN ?? 0) + (counts.FAILED ?? 0)}</strong></div></div></div>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
-      <div className="workspace"><section className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
+      <div className="workspace" ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
         {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
@@ -290,7 +327,7 @@ export default function AdminWorkspace() {
         {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
         <div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
-      <section className="draft-panel"><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["products", "เลือกชุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"], ["customer", "ลูกค้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+      <section className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["products", "เลือกชุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"], ["customer", "ลูกค้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>
           {job && ["PENDING", "PROCESSING"].includes(job.status) && <div className="notice info" role="status">{job.status === "PROCESSING" ? "กำลังอ่านรูปหรือสรุปและค้นหาสินค้าใน Alex…" : "รับงานแล้ว กำลังรอประมวลผล…"} คุณกลับมาเปิดเรื่องนี้ใหม่เพื่อตรวจผลได้</div>}
           {tab === "summary" && <>

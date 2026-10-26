@@ -2,7 +2,10 @@ use crate::{
     db::drafts,
     draft_worker::ask_hermes_json,
     error::AppError,
-    models::{customer::ProfileInput, draft::Evidence},
+    models::{
+        customer::{ProfileInput, normalize_phone},
+        draft::Evidence,
+    },
     state::AppState,
 };
 use mongodb::bson::oid::ObjectId;
@@ -157,6 +160,9 @@ pub async fn extract(state: &AppState, id: ObjectId) -> Result<Value, AppError> 
         return Err(AppError::ContextChanged);
     }
     let mut result = serde_json::to_value(result).map_err(|_| AppError::Data)?;
+    if let Some(phone) = result["fields"]["phone"].as_str() {
+        result["fields"]["phone"] = json!(normalize_phone(phone));
+    }
     result["context_hash"] = json!(snapshot.hash);
     Ok(result)
 }

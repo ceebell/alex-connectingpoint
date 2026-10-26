@@ -1,5 +1,5 @@
-use crate::error::AppError;
-use serde::{Deserialize, Serialize};
+use crate::{error::AppError, models::customer::normalize_phone};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_DRAFT_IMAGES: usize = 5;
 
@@ -36,13 +36,17 @@ pub struct DraftItem {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Rental {
-    pub usage_date: Option<String>,
     pub pickup_date: Option<String>,
     pub return_date: Option<String>,
     pub fulfillment_method: Option<String>,
-    pub dispatch_date: Option<String>,
     pub delivery_provider: Option<String>,
     pub return_shipping_deadline: Option<String>,
+    // Retired: Alex books only pickup and return dates. Older drafts may still carry these keys,
+    // so they are accepted on input but never stored, validated or shown again.
+    #[serde(default, skip_serializing)]
+    pub usage_date: IgnoredAny,
+    #[serde(default, skip_serializing)]
+    pub dispatch_date: IgnoredAny,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -73,6 +77,18 @@ pub struct DraftResult {
     pub conflicts: Vec<String>,
     #[serde(default)]
     pub questions: Vec<String>,
+}
+
+impl DraftResult {
+    // Evidence for retired rental dates has no stored value to support, so it is dropped with them.
+    pub fn drop_retired_evidence(&mut self) {
+        self.evidence.retain(|item| {
+            !matches!(
+                item.field.rsplit('.').next(),
+                Some("usage_date" | "dispatch_date")
+            )
+        });
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -218,6 +234,18 @@ impl DraftFields {
         Ok(())
     }
 
+    // Applied after evidence checks: these are house rules, not facts read from a source.
+    pub fn normalize(&mut self) {
+        self.customer_phone = self
+            .customer_phone
+            .as_deref()
+            .map(normalize_phone)
+            .filter(|phone| !phone.is_empty());
+        for item in &mut self.items {
+            item.quantity.get_or_insert(1);
+        }
+    }
+
     pub fn missing_fields(&self) -> Vec<String> {
         let values = self.values();
         let mut missing = Vec::new();
@@ -271,7 +299,6 @@ impl DraftItem {
     pub fn effective_rental(&self, common: &Rental) -> Rental {
         let own = self.rental.as_ref().unwrap_or(common);
         Rental {
-            usage_date: own.usage_date.clone().or_else(|| common.usage_date.clone()),
             pickup_date: own
                 .pickup_date
                 .clone()
@@ -284,10 +311,6 @@ impl DraftItem {
                 .fulfillment_method
                 .clone()
                 .or_else(|| common.fulfillment_method.clone()),
-            dispatch_date: own
-                .dispatch_date
-                .clone()
-                .or_else(|| common.dispatch_date.clone()),
             delivery_provider: own
                 .delivery_provider
                 .clone()
@@ -296,21 +319,14 @@ impl DraftItem {
                 .return_shipping_deadline
                 .clone()
                 .or_else(|| common.return_shipping_deadline.clone()),
+            ..Default::default()
         }
     }
 }
 
 impl Rental {
     pub fn validate(&self) -> Result<(), AppError> {
-        for date in [
-            &self.usage_date,
-            &self.pickup_date,
-            &self.return_date,
-            &self.dispatch_date,
-        ]
-        .into_iter()
-        .flatten()
-        {
+        for date in [&self.pickup_date, &self.return_date].into_iter().flatten() {
             if !valid_date(date) {
                 return Err(AppError::Validation(
                     "Dates must be valid Gregorian YYYY-MM-DD values",

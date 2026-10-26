@@ -151,8 +151,12 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             parts.push(json!({"type":"text","text":format!("Image evidence source: {source_type}:{image_id}")}));
             parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{}",STANDARD.encode(bytes))}}));
         }
-        serde_json::from_value(ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?)
-            .map_err(|_| AppError::HermesFailed)?
+        let mut result: DraftResult = serde_json::from_value(
+            ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?,
+        )
+        .map_err(|_| AppError::HermesFailed)?;
+        result.drop_retired_evidence();
+        result
     };
     validate_evidence(&result, &sources, &images)?;
     let catalog_lookup = if input.fields.is_none() {
@@ -169,6 +173,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         vec![]
     };
     validate_evidence(&result, &sources, &images)?;
+    result.fields.normalize();
     let values = result.fields.values();
     let mut confirmed = BTreeSet::new();
     if let Some(previous) = &previous {

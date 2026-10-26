@@ -27,6 +27,14 @@ fn clean(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+// Phone numbers are stored without spaces or dashes, e.g. "081-234 5678" -> "0812345678".
+pub fn normalize_phone(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect()
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileInput {
@@ -42,7 +50,7 @@ impl ProfileInput {
         let input = Self {
             expected_version: self.expected_version,
             display_name: clean(self.display_name),
-            phone: clean(self.phone),
+            phone: clean(self.phone.as_deref().map(normalize_phone)),
             address: clean(self.address),
             notes: clean(self.notes),
         };
@@ -51,7 +59,7 @@ impl ProfileInput {
             || !valid_text(&input.address, 1000)
             || !valid_text(&input.notes, 5000)
             || input.phone.as_ref().is_some_and(|p| {
-                p.len() > 40 || !p.chars().all(|c| c.is_ascii_digit() || " +-()".contains(c))
+                p.len() > 40 || !p.chars().all(|c| c.is_ascii_digit() || "+()".contains(c))
             })
         {
             return Err(AppError::Validation("Invalid customer profile"));
@@ -95,7 +103,8 @@ mod tests {
         .validate()
         .unwrap();
         assert_eq!(input.display_name.as_deref(), Some("คุณเอ"));
-        assert_eq!(input.phone.as_deref(), Some("081-234-5678"));
+        assert_eq!(input.phone.as_deref(), Some("0812345678"));
+        assert_eq!(normalize_phone(" 08 1234\t5678- "), "0812345678");
         assert_eq!(input.notes, None);
         for bad in [
             ProfileInput {

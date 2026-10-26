@@ -64,6 +64,12 @@ fn image_only_requests_accept_five_and_keep_per_item_dates() {
         {"product_name":"Haatiya","color":"Blush Pink","size":"M","quantity":1,"rental":{"pickup_date":"2026-11-12","usage_date":"2026-11-14","return_date":"2026-11-15","fulfillment_method":"store_pickup"}}]})).unwrap();
     assert!(fields.validate().is_ok());
     assert!(fields.missing_fields().is_empty());
+    // Retired usage dates in older drafts are accepted but never stored again.
+    assert!(
+        !serde_json::to_string(&fields)
+            .unwrap()
+            .contains("usage_date")
+    );
     assert_eq!(
         fields.items[1]
             .effective_rental(&fields.rental)
@@ -219,15 +225,17 @@ async fn ai_mock(
         assert!(!data.to_string().contains("0812345678"));
         let refs = data["selected_image_event_refs"].as_array().unwrap();
         let year = data["current_year"].as_u64().unwrap();
-        let fields = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")},"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"},
+        let raw = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")},"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"},
             {"product_name":"Haatiya","color":"Blush Pink","size":"M","rental":{"pickup_date":format!("{year}-11-12"),"usage_date":format!("{year}-11-14"),"return_date":format!("{year}-11-15")},"notes":"ต้องยืนยันราคาที่ตกลง"}]});
-        let fields: DraftFields = serde_json::from_value(fields).unwrap();
+        let fields: DraftFields = serde_json::from_value(raw.clone()).unwrap();
         let mut evidence = Vec::new();
         for key in fields.values().keys() {
             let index = if key.starts_with("items.1.") { 1 } else { 0 };
             evidence.push(json!({"field":key,"source_type":"admin_attachment","source_ref":refs[index],"quote":"ข้อความบนรูปสรุป"}));
         }
-        json!({"fields":fields,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
+        // An older prompt shape still cites retired dates; the worker drops them instead of failing.
+        evidence.push(json!({"field":"items.0.rental.dispatch_date","source_type":"admin_attachment","source_ref":refs[0],"quote":"ส่ง 4/11"}));
+        json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
     };
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
 }
@@ -395,10 +403,18 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     )
     .unwrap();
     let year = request["current_year"].as_u64().unwrap();
-    assert_eq!(
-        saved[0]["result"]["fields"]["items"][0]["rental"]["dispatch_date"],
-        format!("{year}-11-04")
+    assert!(
+        saved[0]["result"]["fields"]["items"][0]["rental"]
+            .get("dispatch_date")
+            .is_none()
     );
+    assert!(
+        saved[0]["result"]["fields"]["items"][1]["rental"]
+            .get("usage_date")
+            .is_none()
+    );
+    // Unstated quantities default to one instead of becoming a question.
+    assert_eq!(saved[0]["result"]["fields"]["items"][0]["quantity"], 1);
     assert_eq!(
         saved[0]["result"]["fields"]["items"][1]["rental"]["return_date"],
         format!("{year}-11-15")
@@ -524,6 +540,39 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
         assert_eq!(request(&state,&format!("/api/inquiries/{id}/products/confirm"),"POST",json!({"search_id":result["search_id"],"product_item_id":product,"expected_revision":0,"acknowledge_difference":true}),true).await.0,StatusCode::OK);
     }
     let base = format!("/api/inquiries/{id}/checkout");
+    // The quantity chosen with the outfit drives the bill line; stale revisions are rejected.
+    let match_path = format!("/api/inquiries/{id}/products/match");
+    let quantity = |revision: i64, quantity: Value| json!({"item_index":0,"expected_revision":revision,"quantity":quantity});
+    assert_eq!(
+        request(&state, &match_path, "POST", quantity(5, json!(2)), true)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        request(&state, &match_path, "POST", quantity(1, json!(1000)), true)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, updated) = request(&state, &match_path, "POST", quantity(1, json!(2)), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["matches"][0]["quantity"], 2);
+    let doubled = checkout::list(&state, id).await.unwrap();
+    let line = doubled["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["pickup_date"] == "2026-11-04")
+        .unwrap()["lines"][0]
+        .clone();
+    assert_eq!(line["quantity"], 2);
+    assert_eq!(
+        request(&state, &match_path, "POST", quantity(2, json!(1)), true)
+            .await
+            .0,
+        StatusCode::OK
+    );
     let data = checkout::list(&state, id).await.unwrap();
     assert_eq!(data["groups"].as_array().unwrap().len(), 2);
     let group = data["groups"]
@@ -566,8 +615,8 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
             .1["state"],
         "AVAILABLE"
     );
-    let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
-        "rental_fee_satang":55000,"deposit_satang":0,"shipping_fee_satang":4000,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
+    let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
+        "rental_discount_satang":95000,"deposit_discount_satang":0,"shipping_fee_satang":4000,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
     assert_eq!(
         request(
             &state,
@@ -581,6 +630,20 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
         StatusCode::UNPROCESSABLE_ENTITY
     );
     review["shipping_note_only"] = json!(true);
+    review["rental_discount_satang"] = json!(150001);
+    assert_eq!(
+        request(
+            &state,
+            &format!("{base}/review"),
+            "POST",
+            review.clone(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    review["rental_discount_satang"] = json!(95000);
     let (status, preview) = request(
         &state,
         &format!("{base}/review"),
@@ -591,6 +654,8 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(preview["rental_discount_satang"], 95000);
+    assert_eq!(preview["rental_fee_satang"], 55000);
+    assert_eq!(preview["customer"]["phone"], "0812345678");
     assert_eq!(mock.orders.load(Ordering::SeqCst), 0);
     let submit = json!({"review_id":preview["review_id"],"confirmed":true});
     let result = request(
@@ -612,6 +677,8 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
     let payload = mock.payloads.lock().await[0].clone();
     assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.00");
+    assert_eq!(payload["orderDetail"]["bailDiscount"], "0.00");
+    assert_eq!(payload["orderDetail"]["customerPhone"], "0812345678");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
     assert!(payload["orderDetail"].get("birthDate").is_none());
     assert!(

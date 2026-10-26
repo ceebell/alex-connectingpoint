@@ -87,6 +87,21 @@ pub struct ConfirmInput {
     pub expected_revision: i64,
     #[serde(default)]
     pub acknowledge_difference: bool,
+    // Defaults to the draft quantity, then 1.
+    pub quantity: Option<i64>,
+}
+
+// Changes or removes the confirmed outfit of one draft item; the revision guards concurrent edits.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatchUpdateInput {
+    pub item_index: usize,
+    pub expected_revision: i64,
+    pub quantity: Option<i64>,
+}
+
+pub fn valid_quantity(value: i64) -> bool {
+    (1..=999).contains(&value)
 }
 
 pub fn valid_id(value: &str) -> bool {

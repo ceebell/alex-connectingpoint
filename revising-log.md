@@ -4,6 +4,29 @@
 
 <!-- entries -->
 
+## 2026-10-26 15:04 — ปรับความกว้างแชท/ร่าง, การ์ดชุดพร้อมจำนวน, ส่วนลด และกติกาเบอร์/จำนวน/วันที่
+- **คำอธิบาย:** ผู้ใช้ขอให้ UI ปรับความกว้างซ้าย-ขวาได้ บันทึกเบอร์โดยไม่มีช่องว่าง/ขีดกลาง ใช้จำนวน 1 เมื่อไม่ระบุ มีช่องจำนวนในแท็บเลือกชุดและแสดงชุดเป็นการ์ดแบบหน้าร้าน Alex (รูป ชื่อ รหัส สี ไซซ์ ราคา ค่าประกัน −/+ เอาออก) ใช้แค่วันรับชุด/วันคืนชุดตามที่ Alex ใช้ และกรอกส่วนลดค่าเช่า/ส่วนลดค่าประกันเอง (ผู้ใช้เลือก: เพิ่มช่องส่วนลด, จำนวนอยู่แท็บเลือกชุด, ตัดวันใช้งาน/วันส่งชุดออกทั้งหมด)
+- **โฟลเดอร์ `backend/src/`**
+  - `models/customer.rs` — แก้: เพิ่ม `normalize_phone` ตัด whitespace และ `-` ใช้ตอนบันทึกโปรไฟล์ อนุญาตเฉพาะตัวเลข `+()` หลังตัด และอัปเดตเทสต์
+  - `models/draft.rs` — แก้: `Rental` เหลือ pickup/return/วิธีรับ/ขนส่ง/เวลาส่งคืน ส่วน `usage_date`/`dispatch_date` รับจากร่างเก่าได้แต่ไม่เก็บ ไม่ validate และไม่แสดง (`IgnoredAny` + `skip_serializing`); เพิ่ม `DraftResult::drop_retired_evidence` และ `DraftFields::normalize` (เบอร์โทร, quantity ว่าง → 1)
+  - `draft_worker.rs` — แก้: ทิ้ง evidence ของวันที่เลิกใช้ก่อนตรวจ และ normalize หลังตรวจ evidence ทั้งร่าง AI และร่างที่แอดมินแก้
+  - `order_draft_prompt.txt` — แก้: schema ไม่มีวันใช้งาน/วันส่งชุด, ห้ามคัดลอกสองวันนี้เป็นวันรับ/คืน, ไม่ถามจำนวนเมื่อไม่ระบุ (backend ใช้ 1)
+  - `customer_extract.rs` — แก้: เบอร์ที่ค้นจากแชทส่งกลับแบบตัดช่องว่าง/ขีดกลางแล้ว
+  - `models/product.rs`, `db/products.rs`, `routes/products.rs`, `routes/mod.rs` — เพิ่ม/แก้: confirm รับ `quantity` (ค่าเริ่มต้นจากร่างหรือ 1) และเก็บใน `product_matches`; เพิ่ม `POST /api/inquiries/{id}/products/match` ตั้งจำนวน 1–999 หรือเอาชุดออก (`quantity:null`) โดยกัน revision ซ้อน
+  - `models/checkout.rs`, `db/checkout.rs` — แก้: ใบตรวจบิลรับ `rental_discount_satang`/`deposit_discount_satang` (ค่าเริ่มต้น 0, ห้ามเกินยอดแค็ตตาล็อก) ส่งเป็น `rentalDiscount`/`bailDiscount` แทนการคำนวณจากราคาที่ตกลง; จำนวนในบิลใช้ค่าจากแท็บเลือกชุด → ร่าง → 1 และไม่ขาดข้อมูล "จำนวน" อีก; ไม่ใส่วันส่ง/วันใช้งานในหมายเหตุ Alex; normalize เบอร์ก่อนตรวจและสร้าง payload
+  - `tests_rental.rs`, `tests_customers.rs` — แก้: ทดสอบร่างเก่าที่มีวันเลิกใช้, AI ที่ยังอ้าง dispatch_date, quantity default 1, ตั้งจำนวนผ่าน match (revision เก่า 409, เกิน 999 400, บิลได้จำนวน 2), ส่วนลดเกินยอด 422, payload `bailDiscount` และ `customerPhone` ที่ normalize แล้ว
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx`, `app/globals.css` — แก้: เส้นแบ่งแชท/ร่างลากปรับความกว้างได้ (ลูกศรซ้าย/ขวาบนคีย์บอร์ด, Home หรือดับเบิลคลิกคืนค่าเดิม) จำกัดแชท ≥260px ร่าง ≥320px จำค่าใน localStorage แบบ try/catch ซ่อนเมื่อจอ ≤850px
+  - `components/product-matcher.tsx`, `components/product-matcher.css` — แก้: ชุดที่ยืนยันแสดงเป็นการ์ด (รูป ชื่อ รหัส สี ไซซ์ ราคา ค่าประกัน ปุ่ม −/จำนวน/+ และ เอาออก) และมีช่องจำนวนก่อนยืนยันชุด
+  - `components/rental-checkout.tsx` — แก้: ช่องส่วนลดค่าเช่า/ส่วนลดค่าประกันแทนค่าเช่า/มัดจำที่ตกลง แสดงยอดแค็ตตาล็อก ราคาที่แจ้งในร่าง และยอดหลังหักส่วนลด ใบตรวจแสดงทั้งสองส่วนลด ลบปุ่มใช้ราคาแค็ตตาล็อก
+  - `components/draft-editor.tsx`, `components/draft-item-editor.tsx`, `components/customer-profile.tsx`, `lib/api.ts` — แก้: เหลือวันรับชุด/วันคืนชุด, รายการใหม่จำนวน 1, เบอร์ตัดช่องว่าง/ขีดกลางขณะพิมพ์ (`cleanPhone`), `filledKeys` ข้ามคีย์วันที่เลิกใช้เพื่อไม่ให้ยืนยันร่างเก่าล้ม
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md` — แก้: กติกาเบอร์, การ์ด/จำนวนในแท็บเลือกชุด, ช่องส่วนลด และวันที่ที่ Alex ใช้
+- **โฟลเดอร์ `dist/` (build บน Docker Desktop local)**
+  - `line-linux/` — แก้: backend release `rel-20261026080252-fca3e52c531b`
+  - `frontend-linux/` — แก้: frontend release `front-20261026080355-58508bd94ccf`
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 40/40 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint (max-warnings 0) และ npm run build ผ่าน; git diff --check ผ่าน ไม่เพิ่ม dependency; ยังไม่ได้ลองลากเส้นแบ่งหรือดูการ์ดในเบราว์เซอร์จริง และยังไม่ได้ทดสอบกับ Alex จริง
+
 ## 2026-10-26 13:54 — เปลี่ยนบัญชี Alex ให้ตรงกับ username/password ในไฟล์อ้างอิงของผู้ใช้
 - **คำอธิบาย:** ผู้ใช้ย้ำให้ใช้บัญชีใน prompts/alex_login.md ตรวจ request ของไฟล์โดยไม่แสดงรหัสผ่านหรือ token พบว่า username/password บน server เดิมไม่ตรงและเป็นคนละ shopInfoId จึงแก้ค่าฝั่ง server ให้ใช้บัญชีตามไฟล์จริง ผลค้น nina ที่เคยเป็น 0 มาจากบัญชีเก่า
 - **Server `Hermes:~/alex-connectingpoint/`**

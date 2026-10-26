@@ -4,7 +4,7 @@ use crate::{
     error::AppError,
     models::{
         checkout::{CheckInput, Group, Line, ResolveInput, ReviewInput, SubmitInput},
-        customer::{Actor, ProfileInput},
+        customer::{Actor, ProfileInput, normalize_phone},
         draft::{DraftFields, valid_date},
         product::Candidate,
     },
@@ -67,9 +67,6 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         if rental.fulfillment_method.is_none() {
             absent.push("fulfillment_method");
         }
-        if item.quantity.is_none() {
-            absent.push("quantity");
-        }
         if !absent.is_empty() {
             missing.push(json!({"item_index":index,"fields":absent}));
             continue;
@@ -122,12 +119,6 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         if let Some(note) = &item.notes {
             notes.push(note.clone());
         }
-        if let Some(date) = &rental.dispatch_date {
-            notes.push(format!("ส่งชุด {date}"));
-        }
-        if let Some(date) = &rental.usage_date {
-            notes.push(format!("ใช้งาน {date}"));
-        }
         if let Some(time) = &rental.return_shipping_deadline {
             notes.push(format!("ส่งคืนก่อน {time}"));
         }
@@ -143,7 +134,12 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             name: candidate.name,
             color: candidate.color,
             size: candidate.size,
-            quantity: item.quantity.ok_or(AppError::Data)?,
+            // The quantity set while choosing the outfit wins; unspecified quantities mean one.
+            quantity: record
+                .get_i64("quantity")
+                .ok()
+                .or(item.quantity)
+                .unwrap_or(1),
             rental_fee_satang: rental_fee,
             deposit_satang: deposit,
         });
@@ -388,8 +384,8 @@ fn validate_input(input: &ReviewInput, group: &Group) -> Result<(), AppError> {
         || input.customer_phone.trim().is_empty()
         || (group.fulfillment_method == "delivery" && input.customer_address.trim().is_empty())
         || [
-            input.rental_fee_satang,
-            input.deposit_satang,
+            input.rental_discount_satang,
+            input.deposit_discount_satang,
             input.shipping_fee_satang,
         ]
         .into_iter()
@@ -415,7 +411,12 @@ fn validate_input(input: &ReviewInput, group: &Group) -> Result<(), AppError> {
     Ok(())
 }
 
-pub async fn review(state: &AppState, id: ObjectId, input: ReviewInput) -> Result<Value, AppError> {
+pub async fn review(
+    state: &AppState,
+    id: ObjectId,
+    mut input: ReviewInput,
+) -> Result<Value, AppError> {
+    input.customer_phone = normalize_phone(&input.customer_phone);
     let source = source(state, id).await?;
     if source.source_hash != input.source_hash {
         return Err(AppError::ContextChanged);
@@ -437,11 +438,13 @@ pub async fn review(state: &AppState, id: ObjectId, input: ReviewInput) -> Resul
         .iter()
         .map(|line| line.deposit_satang * line.quantity)
         .sum();
-    if input.rental_fee_satang > rental || input.deposit_satang > deposit {
+    if input.rental_discount_satang > rental || input.deposit_discount_satang > deposit {
         return Err(AppError::Validation(
-            "Agreed prices exceed catalog totals; negative discounts are unsupported",
+            "Discounts cannot exceed the catalog rental or deposit totals",
         ));
     }
+    let rental_fee = rental - input.rental_discount_satang;
+    let deposit_fee = deposit - input.deposit_discount_satang;
     let mut notes = input.notes.clone();
     if input.shipping_fee_satang > 0 {
         notes.push_str(&format!(
@@ -452,7 +455,7 @@ pub async fn review(state: &AppState, id: ObjectId, input: ReviewInput) -> Resul
     let mut detail = json!({"branchId":group.branch_id,"customerId":"","customerName":input.customer_name,"customerAddress":input.customer_address,"customerPhone":input.customer_phone,
         "lineId":"","howToKnowShop":"","accountNumber":"","accountName":"","bankName":"","startDate":group.pickup_date,"endDate":group.return_date,
         "receivingMethod":input.receiving_method,"remark1":notes,"rentalPaymentMethod":input.rental_payment_method,"bailPaymentMethod":input.bail_payment_method,
-        "pointDiscount":0,"voucherDiscount":0,"rentalDiscount":baht(rental-input.rental_fee_satang),"bailDiscount":baht(deposit-input.deposit_satang),
+        "pointDiscount":0,"voucherDiscount":0,"rentalDiscount":baht(input.rental_discount_satang),"bailDiscount":baht(input.deposit_discount_satang),
         "useFreeItemPromotion":input.use_free_item_promotion,"useDiscountPromotion":input.use_discount_promotion});
     if let Some(birth) = &input.birth_date {
         detail["birthDate"] = json!(birth);
@@ -482,8 +485,8 @@ pub async fn review(state: &AppState, id: ObjectId, input: ReviewInput) -> Resul
     state.collection("bill_reviews").insert_one(record).await?;
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
-        "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":input.rental_fee_satang,"deposit_satang":input.deposit_satang,"shipping_fee_satang":input.shipping_fee_satang,
-        "shipping_note_only":input.shipping_note_only,"rental_discount_satang":rental-input.rental_fee_satang,"deposit_discount_satang":deposit-input.deposit_satang,
+        "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
+        "shipping_note_only":input.shipping_note_only,"rental_discount_satang":input.rental_discount_satang,"deposit_discount_satang":input.deposit_discount_satang,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
     )
 }

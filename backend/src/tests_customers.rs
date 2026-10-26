@@ -175,7 +175,6 @@ async fn mongo_customer_profiles_and_order_approval() {
             ..Default::default()
         }],
         rental: Rental {
-            usage_date: None,
             pickup_date: Some("2026-11-15".into()),
             return_date: Some("2026-11-18".into()),
             fulfillment_method: Some("store_pickup".into()),

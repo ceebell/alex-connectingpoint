@@ -43,8 +43,11 @@ pub struct ReviewInput {
     pub receiving_method: String,
     pub rental_payment_method: String,
     pub bail_payment_method: String,
-    pub rental_fee_satang: i64,
-    pub deposit_satang: i64,
+    // Discounts off the catalog totals, sent to Alex as rentalDiscount/bailDiscount.
+    #[serde(default)]
+    pub rental_discount_satang: i64,
+    #[serde(default)]
+    pub deposit_discount_satang: i64,
     pub shipping_fee_satang: i64,
     #[serde(default)]
     pub shipping_note_only: bool,

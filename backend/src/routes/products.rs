@@ -2,7 +2,7 @@ use crate::{
     alex,
     db::products,
     error::AppError,
-    models::product::{ConfirmInput, SearchInput},
+    models::product::{ConfirmInput, MatchUpdateInput, SearchInput},
     state::AppState,
 };
 use axum::{
@@ -56,6 +56,17 @@ pub async fn confirm(
     let actor = super::session::actor(&state, &headers);
     Ok(Json(
         products::confirm(&state, id(&inquiry)?, input, &actor).await?,
+    ))
+}
+
+pub async fn update_match(
+    State(state): State<AppState>,
+    Path(inquiry): Path<String>,
+    input: Result<Json<MatchUpdateInput>, JsonRejection>,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    Ok(Json(
+        products::update_match(&state, id(&inquiry)?, input).await?,
     ))
 }
 
