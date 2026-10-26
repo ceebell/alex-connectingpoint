@@ -46,14 +46,38 @@ pub struct Rental {
     pub pickup_date: Option<String>,
     pub return_date: Option<String>,
     pub fulfillment_method: Option<String>,
+    // One of RECEIVING_METHODS when fulfillment is delivery.
     pub delivery_provider: Option<String>,
-    pub return_shipping_deadline: Option<String>,
-    // Retired: Alex books only pickup and return dates. Older drafts may still carry these keys,
-    // so they are accepted on input but never stored, validated or shown again.
+    // Retired: Alex books only pickup and return dates, and a return-by time belongs in notes.
+    // Older drafts may still carry these keys, so they are accepted but never stored again.
     #[serde(default, skip_serializing)]
     pub usage_date: IgnoredAny,
     #[serde(default, skip_serializing)]
     pub dispatch_date: IgnoredAny,
+    #[serde(default, skip_serializing)]
+    pub return_shipping_deadline: IgnoredAny,
+}
+
+// Alex's own "receiving method" choices; store pickup is the first one.
+pub const STORE_PICKUP: &str = "มารับเอง";
+pub const RECEIVING_METHODS: [&str; 6] =
+    [STORE_PICKUP, "Line Man", "Grab", "Kerry", "Flash", "ขนส่งอื่น"];
+
+// Maps a carrier name as written (e.g. "flash express", "เคอรี่") to an Alex receiving method.
+pub fn receiving_method(carrier: &str) -> Option<&'static str> {
+    let key: String = carrier
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase();
+    match key.as_str() {
+        "flash" | "flashexpress" | "แฟลช" => Some("Flash"),
+        "kerry" | "kerryexpress" | "เคอรี่" => Some("Kerry"),
+        "grab" | "grabexpress" | "แกร็บ" => Some("Grab"),
+        "lineman" | "ไลน์แมน" => Some("Line Man"),
+        "ขนส่งอื่น" => Some("ขนส่งอื่น"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -111,7 +135,11 @@ impl DraftResult {
             let per_item = parts.len() >= 3
                 && parts[0] == "items"
                 && matches!(parts[2], "rental" | "amounts" | "notes");
-            !per_item && !matches!(parts.last(), Some(&("usage_date" | "dispatch_date")))
+            !per_item
+                && !matches!(
+                    parts.last(),
+                    Some(&("usage_date" | "dispatch_date" | "return_shipping_deadline"))
+                )
         });
     }
 }
@@ -254,16 +282,38 @@ impl DraftFields {
     }
 
     // Applied after evidence checks: these are house rules, not facts read from a source.
-    // The shop ships by Flash unless the order says otherwise.
+    // The shop ships by Flash unless the order says otherwise; carriers use Alex's choices, and
+    // an unlisted carrier becomes "ขนส่งอื่น" with its name kept in the notes.
     pub fn normalize(&mut self) {
         let method = self
             .rental
             .fulfillment_method
             .get_or_insert_with(|| "delivery".into());
         if method == "delivery" {
-            self.rental
-                .delivery_provider
-                .get_or_insert_with(|| "Flash".into());
+            let written = self.rental.delivery_provider.take();
+            let carrier = match written.as_deref() {
+                None => "Flash",
+                Some(name) => receiving_method(name).unwrap_or_else(|| {
+                    let note = format!("ขนส่ง: {name}");
+                    if !self
+                        .notes
+                        .as_deref()
+                        .is_some_and(|notes| notes.contains(&note))
+                    {
+                        self.notes = Some(
+                            [self.notes.take(), Some(note)]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        );
+                    }
+                    "ขนส่งอื่น"
+                }),
+            };
+            self.rental.delivery_provider = Some(carrier.into());
+        } else {
+            self.rental.delivery_provider = None;
         }
         self.customer_phone = self
             .customer_phone
@@ -311,23 +361,6 @@ impl Rental {
             && !["store_pickup", "delivery"].contains(&method.as_str())
         {
             return Err(AppError::Validation("Unknown fulfillment method"));
-        }
-        if let Some(time) = &self.return_shipping_deadline {
-            let parts: Vec<_> = time.split(':').collect();
-            if time.len() != 5
-                || parts.len() != 2
-                || time.bytes().enumerate().any(|(index, byte)| {
-                    if index == 2 {
-                        byte != b':'
-                    } else {
-                        !byte.is_ascii_digit()
-                    }
-                })
-                || parts[0].parse::<u8>().ok().is_none_or(|h| h > 23)
-                || parts[1].parse::<u8>().ok().is_none_or(|m| m > 59)
-            {
-                return Err(AppError::Validation("Shipping deadline must be HH:MM"));
-            }
         }
         Ok(())
     }

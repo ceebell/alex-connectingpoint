@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, ApiError, cleanPhone, errorText, Profile } from "@/lib/api";
+import { api, ApiError, cleanPhone, errorText, Profile, RECEIVING_METHODS, STORE_PICKUP } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
@@ -12,7 +12,7 @@ type Review = { review_id: string; group: Group; customer: { name: string; phone
 const money = (value: number) => `${(value / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
 const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
 const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่ง / รอตรวจผล", SUBMIT_UNKNOWN: "ต้องตรวจผลใน Alex", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
-const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีรับสินค้า", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
+const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
 
 export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthorized }: { inquiryId: string; userId?: string; disabled: boolean; onUnauthorized: () => void }) {
   const [data, setData] = useState<Data | null>(null);
@@ -40,7 +40,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
   function changeGroup(group: Group, commonNotes = data?.notes ?? "") {
     setGroupKey(group.key); setAvailability(null); invalidate();
     setShipping(group.quoted_shipping_fee_satang === null ? group.fulfillment_method === "store_pickup" ? "0" : "" : String(group.quoted_shipping_fee_satang / 100));
-    setReceiving(group.delivery_provider ?? (group.fulfillment_method === "store_pickup" ? "รับหน้าร้าน" : ""));
+    setReceiving(group.fulfillment_method === "store_pickup" ? STORE_PICKUP : group.delivery_provider && RECEIVING_METHODS.includes(group.delivery_provider) ? group.delivery_provider : "Flash");
     setNotes([commonNotes, group.notes].filter(Boolean).join("\n")); setShippingNoteOnly(false);
   }
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
@@ -109,7 +109,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
           <fieldset disabled={working || !ready || !!pending}><div className="field-grid">
             <label>ชื่อลูกค้า<input required value={name} maxLength={200} onChange={e => { setName(e.target.value); invalidate(); }} /></label><label>เบอร์โทร<input required value={phone} maxLength={40} inputMode="tel" onChange={e => { setPhone(cleanPhone(e.target.value)); invalidate(); }} /></label>
             <label className="span-2">ที่อยู่<textarea rows={3} required={group.fulfillment_method === "delivery"} value={address} maxLength={1000} onChange={e => { setAddress(e.target.value); invalidate(); }} /></label>
-            <label>วิธีรับ / ชื่อขนส่ง<input required value={receiving} maxLength={100} onChange={e => { setReceiving(e.target.value); invalidate(); }} /></label><label>วันเกิด (ถ้าทราบ)<input type="date" value={birth} onChange={e => { setBirth(e.target.value); invalidate(); }} /></label>
+            <label>วิธีมารับ<select required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label><label>วันเกิด (ถ้าทราบ)<input type="date" value={birth} onChange={e => { setBirth(e.target.value); invalidate(); }} /></label>
             <p className="span-2 muted small">ค่าเช่าแค็ตตาล็อก {money(catalogRental)} · ค่าประกัน {money(catalogDeposit)}{group.quoted_rental_fee_satang !== null && group.quoted_rental_fee_satang !== catalogRental && <><br />ราคาที่แจ้งลูกค้าในร่าง: ค่าเช่า {money(group.quoted_rental_fee_satang)}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${money(group.quoted_deposit_satang)}`}</>}</p>
             <label>ค่าจัดส่ง (บาท)<input required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
             <p className="span-2 muted small">ส่วนลดของออเดอร์ (แก้ที่แท็บร่างล่าสุด): ค่าเช่า {money(group.rental_discount_satang)} · ค่าประกัน {money(group.deposit_discount_satang)}<br />ยอดหลังหักส่วนลด: ค่าเช่า {money(catalogRental - group.rental_discount_satang)} · ค่าประกัน {money(catalogDeposit - group.deposit_discount_satang)}</p>
@@ -123,7 +123,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, onUnauthor
         </form>
       </>}
     </>}
-    {review && <section className="bill-review"><h3>ตรวจบิลก่อนส่งเข้า Alex</h3><p>{review.customer.name} · {review.customer.phone}</p><p>{review.customer.address}</p><p>{review.group.lines.map(line => `${line.code} × ${line.quantity}`).join(", ")}<br />{day(review.group.pickup_date)} – {day(review.group.return_date)}</p><dl><div><dt>ค่าเช่าแค็ตตาล็อก</dt><dd>{money(review.catalog_rental_satang)}</dd></div><div><dt>ส่วนลดค่าเช่า</dt><dd>{money(review.rental_discount_satang)}</dd></div><div><dt>ค่าเช่าสุทธิ</dt><dd>{money(review.rental_fee_satang)}</dd></div><div><dt>ค่าประกันแค็ตตาล็อก</dt><dd>{money(review.catalog_deposit_satang)}</dd></div><div><dt>ส่วนลดค่าประกัน</dt><dd>{money(review.deposit_discount_satang)}</dd></div><div><dt>ค่าประกันสุทธิ</dt><dd>{money(review.deposit_satang)}</dd></div><div><dt>ค่าส่ง (บันทึกหมายเหตุ)</dt><dd>{money(review.shipping_fee_satang)}</dd></div></dl><p>รับ/ส่ง: {review.receiving_method}<br />ชำระค่าเช่า: {review.rental_payment_method} · ค่าประกัน: {review.bail_payment_method}</p><p>{review.notes}</p>
+    {review && <section className="bill-review"><h3>ตรวจบิลก่อนส่งเข้า Alex</h3><p>{review.customer.name} · {review.customer.phone}</p><p>{review.customer.address}</p><p>{review.group.lines.map(line => `${line.code} × ${line.quantity}`).join(", ")}<br />{day(review.group.pickup_date)} – {day(review.group.return_date)}</p><dl><div><dt>ค่าเช่าแค็ตตาล็อก</dt><dd>{money(review.catalog_rental_satang)}</dd></div><div><dt>ส่วนลดค่าเช่า</dt><dd>{money(review.rental_discount_satang)}</dd></div><div><dt>ค่าเช่าสุทธิ</dt><dd>{money(review.rental_fee_satang)}</dd></div><div><dt>ค่าประกันแค็ตตาล็อก</dt><dd>{money(review.catalog_deposit_satang)}</dd></div><div><dt>ส่วนลดค่าประกัน</dt><dd>{money(review.deposit_discount_satang)}</dd></div><div><dt>ค่าประกันสุทธิ</dt><dd>{money(review.deposit_satang)}</dd></div><div><dt>ค่าส่ง (บันทึกหมายเหตุ)</dt><dd>{money(review.shipping_fee_satang)}</dd></div></dl><p>วิธีมารับ: {review.receiving_method}<br />ชำระค่าเช่า: {review.rental_payment_method} · ค่าประกัน: {review.bail_payment_method}</p><p>{review.notes}</p>
       {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ ระบบจะให้ตรวจผลใน Alex และบันทึกเลขออเดอร์ก่อนส่งรายการอื่น</p>}
       <label className="checkbox-row"><input type="checkbox" checked={confirmed} disabled={working} onChange={e => setConfirmed(e.target.checked)} />ตรวจลูกค้า รายการ วันที่ ยอด และส่วนลดแล้ว ยืนยันสร้างออเดอร์จริงใน Alex</label>
       <button type="button" className="button primary full" disabled={working || !confirmed || !!pending || now > new Date(review.expires_at).getTime()} onClick={submit}>{busy ? "กำลังส่งออเดอร์…" : "ส่งสร้างบิล / ออเดอร์ใน Alex"}</button>

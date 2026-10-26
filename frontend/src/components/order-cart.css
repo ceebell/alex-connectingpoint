@@ -5,7 +5,6 @@
 .product-filters{border:1px solid #e2e8f0;border-radius:8px;padding:10px}
 .product-filters summary{cursor:pointer;color:#0369a1;font-size:14px}.product-filters .field-grid{margin-top:12px}
 .match-card{position:relative;display:grid;grid-template-columns:minmax(118px,40%) minmax(0,1fr);gap:14px 18px;align-items:stretch;border:1px solid #e2e8f0;border-radius:8px;background:white;padding:18px 16px 16px;box-shadow:0 1px 4px #0f172a0d}
-.match-number{position:absolute;top:-9px;left:-7px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:#be185d;color:white;font-size:12px;font-weight:500;display:grid;place-items:center}
 .match-side{min-width:0}.match-side p{font-size:15px;line-height:1.6;color:#1e293b}
 .match-image{width:100px;height:125px;margin-bottom:6px;border-radius:4px;background:#f8fafc;display:grid;place-items:center;overflow:hidden;font-size:30px}
 .match-image img{width:100%;height:100%;object-fit:cover}
@@ -25,6 +24,9 @@
 .candidate-image{width:100%;aspect-ratio:4/5;border-radius:4px;background:#f8fafc;display:grid;place-items:center;overflow:hidden;font-size:30px;margin-bottom:6px}.candidate-image img{width:100%;height:100%;object-fit:cover}
 .candidate-tile strong{font-size:15px;font-weight:600;color:#1d4ed8;line-height:1.4;overflow-wrap:anywhere}.candidate-code{font-size:12px;font-weight:600;color:#475569;overflow-wrap:anywhere}
 .candidate-tile p{font-size:13px;line-height:1.6;color:#334155}.candidate-tile .candidate-price{color:#15803d;font-weight:600}.candidate-tile .button{margin-top:auto;font-size:14px;min-height:38px}
+.match-bottom{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.queue-badge{border-radius:6px;padding:4px 12px;font-size:14px;font-weight:600;border:1px solid}.queue-badge.blocked{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}.queue-badge.free{background:#f0fdf4;border-color:#86efac;color:#15803d}.queue-badge.unknown{background:#fff7ed;border-color:#fdba74;color:#c2410c}
+.match-card.queue-blocked{border-color:#f87171;box-shadow:inset 4px 0 #dc2626}
 .cart-list{display:flex;flex-direction:column;gap:14px;padding-top:6px}
 .cart-total{font-size:14px;font-weight:500;color:#15803d;text-align:right}
 .queue-check{display:flex;flex-direction:column;gap:8px}

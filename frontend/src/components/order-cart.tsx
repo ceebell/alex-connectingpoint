@@ -13,22 +13,24 @@ export const price = (value: number | null) => value === null ? "ไม่ระ
 const quantityLimit = (value: number) => Math.min(999, Math.max(1, Math.round(value) || 1));
 const date = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 const lookupStates: Record<string, string> = { MATCHED: "พบตรงหนึ่งรายการ", NEEDS_SELECTION: "พบหลายตัวเลือก", NOT_FOUND: "ยังไม่พบใน Alex", BRANCH_REQUIRED: "ต้องเลือกสาขา", MISSING_QUERY: "ไม่มีชื่อหรือรหัส", NOT_CONFIGURED: "ยังไม่เชื่อม Alex", FAILED: "ค้นอัตโนมัติไม่สำเร็จ", EXPIRED: "ผลค้นหาหมดอายุ กรุณาค้นใหม่" };
-const queueStates: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้" };
+const queueStates: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ติดคิว", UNKNOWN: "ยังตรวจไม่ได้" };
+// Short labels shown on each cart card after a queue check.
+const queueBadges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
 
-function CartCard({ item, index, disabled, onQuantity, onRemove }: { item: CartItem; index: number; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
+function CartCard({ item, index, queue, disabled, onQuantity, onRemove }: { item: CartItem; index: number; queue?: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
   const [text, setText] = useState(String(item.quantity));
   const { candidate } = item;
   function commit() { const next = quantityLimit(Number(text)); setText(String(next)); if (next !== item.quantity) onQuantity(next); }
   function step(next: number) { setText(String(next)); onQuantity(next); }
-  return <article className="match-card" aria-label={`สินค้าในตะกร้า ${index + 1} ${candidate.name}`}>
-    <span className="match-number" aria-hidden="true">{index + 1}</span>
+  const badge = queue ? queueBadges[queue] : undefined;
+  return <article className={`match-card ${badge ? `queue-${badge[1]}` : ""}`} aria-label={`สินค้าในตะกร้า ${index + 1} ${candidate.name}${badge ? ` ${badge[0]}` : ""}`}>
     <div className="match-side">
       <div className="match-image">{candidate.image_url ? <img src={candidate.image_url} alt={`รูปสินค้า ${candidate.name}`} loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
       <p>สี: {candidate.color || "ไม่ระบุ"}</p><p>ไซซ์: {candidate.size || "ไม่ระบุ"}</p>
     </div>
     <div className="match-main">
       <div className="match-title"><strong>{candidate.name}</strong><span>({candidate.code})</span></div>
-      <dl className="match-price"><dt>ราคา:</dt><dd>{price(candidate.rental_fee_satang)}</dd><dt>ค่าประกัน:</dt><dd>{price(candidate.deposit_satang)}</dd></dl>
+      <div className="match-bottom"><dl className="match-price"><dt>ราคา:</dt><dd>{price(candidate.rental_fee_satang)}</dd><dt>ค่าประกัน:</dt><dd>{price(candidate.deposit_satang)}</dd></dl>{badge && <span className={`queue-badge ${badge[1]}`}>{badge[0]}</span>}</div>
     </div>
     <div className="quantity-stepper" role="group" aria-label={`จำนวน ${candidate.name}`}>
       <button type="button" aria-label="ลดจำนวน" disabled={disabled || item.quantity <= 1} onClick={() => step(item.quantity - 1)}>−</button>
@@ -52,7 +54,7 @@ function CandidateTile({ candidate, inCart, disabled, onAdd }: { candidate: Cand
 }
 
 // Searches Alex and keeps the inquiry cart; the cart is independent of draft versions.
-export default function OrderCart({ inquiryId, draft, items, messages, attachments, disabled, onCart, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; items: DraftItem[]; messages: LineEvent[]; attachments: Attachment[]; disabled: boolean; onCart: (items: CartItem[]) => void; onUnauthorized: () => void }) {
+export default function OrderCart({ inquiryId, draft, items, messages, attachments, availability, disabled, onCart, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; items: DraftItem[]; messages: LineEvent[]; attachments: Attachment[]; availability: Availability | null; disabled: boolean; onCart: (items: CartItem[]) => void; onUnauthorized: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -164,7 +166,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
     <section className="order-section">
       <h3 className="form-heading"><span aria-hidden="true">🛒</span> ตะกร้าสินค้า ({cart.reduce((sum, item) => sum + item.quantity, 0)} ชิ้น)</h3>
       {!cart.length ? <p className="muted small">ยังไม่มีสินค้าในตะกร้า ค้นหาแล้วกด “เพิ่มลงตะกร้า”</p> : <>
-        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
+        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
         <p className="cart-total">ค่าเช่ารวม {price(rentalTotal)} บาท · ค่าประกันรวม {price(depositTotal)} บาท</p>
       </>}
     </section>
@@ -172,13 +174,12 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 }
 
 // Checks the cart against Alex for the dates on screen; it reads only and reserves nothing.
-export function QueueCheck({ inquiryId, pickup, returned, count, disabled, onUnauthorized }: { inquiryId: string; pickup: string | null; returned: string | null; count: number; disabled: boolean; onUnauthorized: () => void }) {
-  const [result, setResult] = useState<Availability | null>(null);
+export function QueueCheck({ inquiryId, pickup, returned, count, result, disabled, onResult, onUnauthorized }: { inquiryId: string; pickup: string | null; returned: string | null; count: number; result: Availability | null; disabled: boolean; onResult: (result: Availability) => void; onUnauthorized: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function check() {
     setBusy(true); setError("");
-    try { setResult(await api<Availability>(`/api/inquiries/${inquiryId}/cart/availability`, { method: "POST", body: JSON.stringify({ pickup_date: pickup, return_date: returned }) })); }
+    try { onResult(await api<Availability>(`/api/inquiries/${inquiryId}/cart/availability`, { method: "POST", body: JSON.stringify({ pickup_date: pickup, return_date: returned }) })); }
     catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); } finally { setBusy(false); }
   }
   const ready = !!pickup && !!returned && count > 0;

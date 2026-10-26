@@ -6,7 +6,7 @@ use crate::{
         cart::CheckInput as CartCheckInput,
         checkout::{CheckInput, Group, Line, ResolveInput, ReviewInput, SubmitInput},
         customer::{Actor, ProfileInput, normalize_phone},
-        draft::{DraftFields, valid_date},
+        draft::{DraftFields, RECEIVING_METHODS, valid_date},
     },
     state::AppState,
 };
@@ -85,11 +85,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             fulfillment_method: method,
             delivery_provider: rental.delivery_provider.clone(),
             lines,
-            notes: rental
-                .return_shipping_deadline
-                .as_ref()
-                .map(|time| format!("ส่งคืนก่อน {time}"))
-                .unwrap_or_default(),
+            notes: String::new(),
             quoted_rental_fee_satang: fields.amounts.rental_fee_satang,
             quoted_deposit_satang: fields.amounts.deposit_satang,
             quoted_shipping_fee_satang: fields.amounts.shipping_fee_satang,
@@ -371,6 +367,7 @@ fn validate_input(input: &ReviewInput, group: &Group) -> Result<(), AppError> {
         || input.customer_phone.trim().is_empty()
         || (group.fulfillment_method == "delivery" && input.customer_address.trim().is_empty())
         || !(0..=10_000_000_000).contains(&input.shipping_fee_satang)
+        || !RECEIVING_METHODS.contains(&input.receiving_method.as_str())
         || [
             &input.receiving_method,
             &input.rental_payment_method,

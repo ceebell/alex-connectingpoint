@@ -72,9 +72,8 @@ fn image_only_requests_accept_five_and_keep_order_level_fields() {
     assert!(stored["items"][0].get("rental").is_none());
     assert!(stored["items"][0].get("notes").is_none());
     assert_eq!(stored["amounts"]["rental_discount_satang"], 5000);
-    let mut invalid = fields.clone();
-    invalid.rental.return_shipping_deadline = Some("+1:20".into());
-    assert!(invalid.validate().is_err());
+    // A return-by time now belongs in the notes; older drafts with the field still load.
+    assert!(stored["rental"].get("return_shipping_deadline").is_none());
     let mut invalid = fields;
     invalid.amounts.deposit_discount_satang = Some(-1);
     assert!(invalid.validate().is_err());
@@ -111,8 +110,26 @@ fn image_only_requests_accept_five_and_keep_order_level_fields() {
     assert_eq!(defaults.rental.delivery_provider.as_deref(), Some("Flash"));
     let mut pickup = DraftFields::default();
     pickup.rental.fulfillment_method = Some("store_pickup".into());
+    pickup.rental.delivery_provider = Some("Flash".into());
     pickup.normalize();
     assert!(pickup.rental.delivery_provider.is_none());
+    // Carriers map to Alex's receiving methods; an unlisted one is kept in the notes.
+    for (written, method, note) in [
+        ("flash express", "Flash", None),
+        ("เคอรี่", "Kerry", None),
+        ("Line Man", "Line Man", None),
+        ("J&T", "ขนส่งอื่น", Some("เข็มกลัด\nขนส่ง: J&T")),
+    ] {
+        let mut fields = DraftFields {
+            notes: Some("เข็มกลัด".into()),
+            ..Default::default()
+        };
+        fields.rental.delivery_provider = Some(written.into());
+        fields.normalize();
+        fields.normalize();
+        assert_eq!(fields.rental.delivery_provider.as_deref(), Some(method));
+        assert_eq!(fields.notes.as_deref(), Some(note.unwrap_or("เข็มกลัด")));
+    }
     let sources = std::collections::BTreeMap::new();
     let images = std::collections::BTreeSet::new();
     result.evidence.clear();
@@ -648,7 +665,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     let data = checkout::list(&state, id).await.unwrap();
     assert_eq!(data["groups"].as_array().unwrap().len(), 1);
     let group = &data["groups"][0];
-    assert_eq!(group["notes"], "ส่งคืนก่อน 16:00");
+    assert_eq!(group["delivery_provider"], "Flash");
     assert_eq!(group["rental_discount_satang"], 150001);
     let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
         "shipping_fee_satang":4000,"shipping_note_only":true,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
@@ -788,7 +805,21 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     review["source_hash"] = data["source_hash"].clone();
     review["group_key"] = data["groups"][0]["key"].clone();
     review["shipping_fee_satang"] = json!(0);
+    // Bills accept only Alex's own receiving methods.
     review["receiving_method"] = json!("รับหน้าร้าน");
+    assert_eq!(
+        request(
+            &state,
+            &format!("{base}/review"),
+            "POST",
+            review.clone(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    review["receiving_method"] = json!("มารับเอง");
     let preview = request(&state, &format!("{base}/review"), "POST", review, true)
         .await
         .1;
