@@ -1,3 +1,5 @@
+pub mod attachments;
+pub mod checkout;
 pub mod customers;
 pub mod drafts;
 pub mod events;

@@ -40,6 +40,29 @@ pub async fn prepare(
     ))
 }
 
+pub async fn upload_image(
+    State(state): State<AppState>,
+    Path(inquiry): Path<String>,
+    input: Result<
+        Json<crate::db::attachments::UploadInput>,
+        axum::extract::rejection::JsonRejection,
+    >,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    Ok(Json(
+        crate::db::attachments::upload(&state, id(&inquiry)?, input).await?,
+    ))
+}
+
+pub async fn extract_customer(
+    State(state): State<AppState>,
+    Path(inquiry): Path<String>,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        crate::customer_extract::extract(&state, id(&inquiry)?).await?,
+    ))
+}
+
 pub async fn revise(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,
@@ -89,8 +112,13 @@ pub async fn list(
     let latest = latest.as_ref().map(job_view).transpose()?;
     let snapshot = drafts::snapshot(&state, &inquiry).await?;
     let summary = drafts::safe_summary(&inquiry, &snapshot)?;
+    let attachments = crate::db::attachments::list(
+        &state,
+        inquiry.get_object_id("_id").map_err(|_| AppError::Data)?,
+    )
+    .await?;
     Ok(Json(
-        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?,"latest_request":latest,"context_hash":snapshot.hash,"summary":summary}),
+        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?,"latest_request":latest,"context_hash":snapshot.hash,"summary":summary,"attachments":attachments}),
     ))
 }
 

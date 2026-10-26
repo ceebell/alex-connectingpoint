@@ -13,6 +13,114 @@ pub struct Session {
     pub branches: Vec<Branch>,
 }
 
+pub async fn check_queue(
+    state: &AppState,
+    session: &Session,
+    branch: &str,
+    product: &str,
+    pickup: &str,
+    returned: &str,
+    quantity: i64,
+) -> Result<String, AppError> {
+    check_branch(session, branch)?;
+    let response=state.http.post(format!("{}/api/orderdetail/checkq",config(state)?.api_url)).bearer_auth(&session.token)
+        .json(&json!([{"productItemId":product,"pickupDate":pickup,"returnDate":returned,"branchId":branch,"qty":quantity}]))
+        .send().await.map_err(|_|AppError::AlexFailed)?;
+    let result = response_json(response).await?;
+    let records = result
+        .as_array()
+        .filter(|items| items.len() == 1)
+        .ok_or(AppError::AlexFailed)?;
+    let item = &records[0];
+    for (key, expected) in [
+        ("productItemId", product),
+        ("branchId", branch),
+        ("pickupDate", pickup),
+        ("returnDate", returned),
+    ] {
+        let matches = |value: &Value| {
+            value.as_str().is_some_and(|actual| {
+                actual == expected
+                    || (["pickupDate", "returnDate"].contains(&key)
+                        && actual == format!("{expected}T00:00:00"))
+            })
+        };
+        if item.get(key).is_some_and(|value| !matches(value)) {
+            return Err(AppError::AlexFailed);
+        }
+    }
+    match item["result"].as_i64() {
+        Some(1) => Ok("AVAILABLE".into()),
+        Some(0) => Ok("UNAVAILABLE".into()),
+        _ => Err(AppError::AlexFailed),
+    }
+}
+
+pub async fn lookup(
+    state: &AppState,
+    session: &Session,
+    branch: &str,
+    code: &str,
+    product: &str,
+) -> Result<Candidate, AppError> {
+    let mut input = SearchInput {
+        draft_version: 1,
+        context_hash: String::new(),
+        item_index: 0,
+        branch_id: branch.into(),
+        mode: SearchMode::Code,
+        query: Some(code.into()),
+        color: None,
+        size: None,
+        image_event_id: None,
+        category: None,
+        texture: None,
+        page: 1,
+    };
+    loop {
+        let (items, more) = search_page(state, session, &input).await?;
+        if let Some(item) = items
+            .into_iter()
+            .find(|item| item.product_item_id == product)
+        {
+            return Ok(item);
+        }
+        if !more || input.page >= 100 {
+            return Err(AppError::ProductConflict);
+        }
+        input.page += 1;
+    }
+}
+
+pub async fn create_order(
+    state: &AppState,
+    session: &Session,
+    payload: &Value,
+) -> Result<(u16, Value), AppError> {
+    let branch = payload["orderDetail"]["branchId"]
+        .as_str()
+        .ok_or(AppError::BadRequest)?;
+    check_branch(session, branch)?;
+    let mut response = state
+        .http
+        .post(format!("{}/api/v2/AddRentalOrder", config(state)?.api_url))
+        .bearer_auth(&session.token)
+        .json(payload)
+        .send()
+        .await
+        .map_err(|_| AppError::AlexFailed)?;
+    let status = response.status().as_u16();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| AppError::AlexFailed)? {
+        if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+            return Err(AppError::AlexFailed);
+        }
+        bytes.extend(chunk);
+    }
+    let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, value))
+}
+
 pub fn config(state: &AppState) -> Result<&AlexConfig, AppError> {
     state.config.alex.as_ref().ok_or(AppError::AlexUnavailable)
 }

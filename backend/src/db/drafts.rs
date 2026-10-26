@@ -100,6 +100,17 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
             .try_collect::<Vec<_>>()
             .await?,
     );
+    let mut attachment_filter = state.scope();
+    attachment_filter.extend(doc! {"inquiry_id":id,"expires_at":{"$gt":DateTime::now()}});
+    records.extend(
+        state
+            .collection("inquiry_attachments")
+            .find(attachment_filter)
+            .limit(51)
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?,
+    );
     crate::db::oa_sync::sort_messages(&mut records);
     if records.len() > 500 {
         return Err(AppError::Validation(

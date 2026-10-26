@@ -1,0 +1,36 @@
+// [POST]
+// https://shop.alexrental.app/api/v2/AddRentalOrder
+
+{
+  "orderDetail": {
+    "branchId": "9592dbbe-bbb7-48d6-bc32-d2902a5b5a6a",
+    "customerId": "",
+    "customerName": "K.แพทตี้",
+    "customerAddress": "ชัยพฤกษ์ กทม.",
+    "customerPhone": "0855555555",
+    "lineId": "",
+    "birthDate": "1800-01-01T00:00:00.000Z",
+    "howToKnowShop": "",
+    "accountNumber": "",
+    "accountName": "",
+    "bankName": "",
+    "startDate": "2024-11-28",
+    "endDate": "2024-12-03",
+    "receivingMethod": "Line Man",
+    "remark1": "",
+    "rentalPaymentMethod": "โอนเงิน",
+    "bailPaymentMethod": "โอนเงิน",
+    "pointDiscount": 0,
+    "voucherDiscount": 0,
+    "bailDiscount": "100",
+    "rentalDiscount": "100",
+    "useFreeItemPromotion": true,
+    "useDiscountPromotion": true
+  },
+  "orderItems": [
+    {
+      "productItemId": "e7fe4dbc-4c7b-49e6-9af9-6e6566597819",
+      "reservedQuantity": 1
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+// [POST]
+// https://shop.alexrental.app/api/v2/GetProductItems
+
+{
+  "filter": true,
+  "showNotAvailable": false,
+  "branchId": "9592dbbe-bbb7-48d6-bc32-d2902a5b5a6a",
+  "keyword": "new collection",
+  "size": "S|",
+  "color": "",
+  "category": "TG",
+  "texture": "",
+  "simpleSearch": false,
+  "pageNumber": 1,
+  "pageSize": 15
+}

@@ -174,6 +174,7 @@ pub async fn confirm(
         ("product_code", &item.product_code, Some(&selected.code)),
         ("color", &item.color, selected.color.as_ref()),
         ("size", &item.size, selected.size.as_ref()),
+        ("product_name", &item.product_name, Some(&selected.name)),
     ]
     .into_iter()
     .filter(|(_, draft, catalog)| {

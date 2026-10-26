@@ -2,12 +2,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, ApiError, Customer, errorText, Profile } from "@/lib/api";
 import { CustomerAvatar } from "./chat-message";
+import CustomerExtractButton from "./customer-extract-button";
 
 type Form = { display_name: string; phone: string; address: string; notes: string };
 const toForm = (profile: Profile | null): Form => ({ display_name: profile?.display_name ?? "", phone: profile?.phone ?? "", address: profile?.address ?? "", notes: profile?.notes ?? "" });
 const time = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 
-export default function CustomerProfile({ userId, line, onUnauthorized }: { userId: string; line?: Customer; onUnauthorized: () => void }) {
+export default function CustomerProfile({ userId, inquiryId, line, onUnauthorized }: { userId: string; inquiryId: string; line?: Customer; onUnauthorized: () => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [form, setForm] = useState<Form>(toForm(null));
   const [loading, setLoading] = useState(true);
@@ -44,6 +45,7 @@ export default function CustomerProfile({ userId, line, onUnauthorized }: { user
   return <form className="draft-form" onSubmit={save}>
     <div className="step-caption"><span aria-hidden="true">👤</span><div><h3>ข้อมูลลูกค้า</h3><p className="muted small">ใช้ร่วมกันทุกเรื่องของลูกค้าคนนี้ · เก็บในฐานข้อมูลบน server ลูกค้าไม่เห็น</p></div></div>
     <div className="customer-row"><CustomerAvatar customer={line} /><div><strong>{line?.display_name || "ไม่ทราบชื่อใน LINE"}</strong><p className="user-ref small muted">LINE: {userId}</p></div></div>
+    <CustomerExtractButton inquiryId={inquiryId} disabled={busy} onUnauthorized={onUnauthorized} onFill={value => setForm(current => ({ ...current, display_name: value.display_name ?? current.display_name, phone: value.phone ?? current.phone, address: value.address ?? current.address }))} />
     <div className="field-grid">{field("display_name", "ชื่อลูกค้า")}{field("phone", "เบอร์โทร", false, 40)}{field("address", "ที่อยู่", true, 1000)}{field("notes", "โน้ตภายใน", true, 5000)}</div>
     {notice && <div className={`notice ${notice.kind}`} role={notice.kind === "warning" ? "alert" : "status"}>{notice.text}</div>}
     {profile && <p className="muted small">บันทึกล่าสุดโดย {profile.updated_by} · {time(profile.updated_at)} · ครั้งที่ {profile.version}</p>}

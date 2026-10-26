@@ -1,3 +1,4 @@
+pub mod checkout;
 pub mod customer;
 pub mod draft;
 pub mod line;

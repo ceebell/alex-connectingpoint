@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Catalog image proxy requires same-origin HttpOnly cookies. */
 import { useEffect, useState } from "react";
-import { api, ApiError, Draft, errorText, LineEvent } from "@/lib/api";
+import { api, ApiError, Attachment, Draft, errorText, LineEvent } from "@/lib/api";
 
 type Candidate = { product_item_id: string; code: string; name: string; color: string | null; size: string | null; rental_fee_satang: number | null; deposit_satang: number | null; image_url: string | null; score: number | null };
 type Search = { search_id: string; branch_id: string; page: number; has_more: boolean; method: string; candidates: Candidate[] };
@@ -13,13 +13,13 @@ type Mode = "code" | "text" | "product_url" | "image";
 const money = (value: number | null) => value === null ? "ไม่ระบุ" : `${(value / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
 const date = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 
-export default function ProductMatcher({ inquiryId, draft, contextHash, messages, disabled, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; contextHash: string; messages: LineEvent[]; disabled: boolean; onUnauthorized: () => void }) {
+export default function ProductMatcher({ inquiryId, draft, contextHash, messages, attachments = [], disabled, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; contextHash: string; messages: LineEvent[]; attachments?: Attachment[]; disabled: boolean; onUnauthorized: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [matches, setMatches] = useState<Matches>({ matches: [], product_verified: false });
   const [branch, setBranch] = useState("");
   const [index, setIndex] = useState(0);
-  const [mode, setMode] = useState<Mode>("code");
-  const [query, setQuery] = useState(draft?.result?.fields.items[0]?.product_code ?? "");
+  const [mode, setMode] = useState<Mode>(draft?.result?.fields.items[0]?.product_code ? "code" : "text");
+  const [query, setQuery] = useState(draft?.result?.fields.items[0]?.product_code ?? draft?.result?.fields.items[0]?.product_name ?? "");
   const [color, setColor] = useState("");
   const [size, setSize] = useState("");
   const [category, setCategory] = useState("");
@@ -37,10 +37,10 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
   const item = fields?.items[index];
   const choice = choices.find(value => `${value.search_id}:${value.product_item_id}` === selected);
   const differing = choice && item ? ([
-    ["รหัส", item.product_code, choice.code], ["สี", item.color, choice.color], ["ไซซ์", item.size, choice.size],
+    ["รหัส", item.product_code, choice.code], ["ชื่อชุด", item.product_name, choice.name], ["สี", item.color, choice.color], ["ไซซ์", item.size, choice.size],
   ] as const).filter(([, original, catalog]) => original && original.toLowerCase() !== catalog?.toLowerCase()) : [];
   const unavailable = disabled || busy || loading || !settings?.configured || !!draft?.stale || !!draft?.redacted;
-  const images = messages.filter(message => !message.withdrawn && message.payload?.message?.type === "image" && message.media_id);
+  const images = [...messages.filter(message => !message.withdrawn && message.payload?.message?.type === "image" && message.media_id), ...attachments.map(attachment => ({ _id: attachment.id, event_at: attachment.created_at }))];
 
   useEffect(() => {
     if (!draft?.result?.fields.items.length) return;
@@ -97,7 +97,7 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
     {matches.matches.map(match => <div className="product-match" key={match.item_index}><strong>รายการ {match.item_index + 1} · {match.candidate.code}</strong><p>{match.candidate.color || "ไม่ระบุสี"} · {match.candidate.size || "ไม่ระบุไซซ์"} · {settings?.branches.find(branch => branch.id === match.branch_id)?.name ?? match.branch_id}</p><code>{match.candidate.product_item_id}</code><p className="muted small">ยืนยันโดย {match.confirmed_by} · {date(match.confirmed_at)}</p>{match.differences.length > 0 && <p className="muted small">แอดมินยืนยันค่าจาก Alex ที่ต่างจากข้อความในร่างแล้ว</p>}</div>)}
     <form onSubmit={e => { e.preventDefault(); void search(); }}>
       <fieldset disabled={unavailable}>
-        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setQuery(fields.items[next].product_code ?? ""); clearSearch(); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || "ยังไม่มีรหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
+        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setMode(fields.items[next].product_code ? "code" : "text"); setQuery(fields.items[next].product_code ?? fields.items[next].product_name ?? ""); clearSearch(); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || item.product_name || "ยังไม่มีชื่อ/รหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
         <label>สาขาที่ได้รับสิทธิ์<select value={branch} onChange={e => { setBranch(e.target.value); clearSearch(); }} required><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
         <label>ค้นหาจาก<select value={mode} onChange={e => { setMode(e.target.value as Mode); setQuery(""); clearSearch(); }}><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="text">ชื่อหรือคำบรรยาย / ดูแค็ตตาล็อก</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้าที่อนุญาต</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากบทสนทนา</option></select></label>
         {mode === "image" && <label>รูปอ้างอิง<select value={image} onChange={e => { setImage(e.target.value); clearSearch(); }} required><option value="">เลือกรูปจากบทสนทนา</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>}

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../components/product-matcher.css";
+@import "../components/rental-summary.css";
 @theme {
   --font-sans: var(--font-mitr), sans-serif;
   --color-primary: #3b82f6;

@@ -112,3 +112,6 @@ sudo bash ./docker-deploy.sh --full-stack
 ```
 
 ใช้ Linux releases ใน `dist/line-linux` และ `dist/frontend-linux` ที่ build บน local เท่านั้น ไม่มีการ compile บน server
+
+
+ขั้นตอนต่อจากการยืนยัน Product ID ใช้งานได้ในแท็บ **คิว/บิล** ดู [คู่มือสรุปจากรูปและสร้างบิลใน Alex](image-rental-billing.md) รองรับรูปแนบภายในสูงสุด 5 รูปและวันที่แยกแต่ละรายการ

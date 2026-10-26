@@ -166,10 +166,11 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
                     "Select at most 8 MB of supported images",
                 ));
             }
-            let key = format!("line_event:{image_id}");
+            let source_type = crate::db::oa_sync::source_type(event);
+            let key = format!("{source_type}:{image_id}");
             images.insert(key.clone());
             sources.insert(key, "selected image".into());
-            parts.push(json!({"type":"text","text":format!("Image evidence source: line_event:{image_id}")}));
+            parts.push(json!({"type":"text","text":format!("Image evidence source: {source_type}:{image_id}")}));
             parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{}",STANDARD.encode(bytes))}}));
         }
         serde_json::from_value(ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?)

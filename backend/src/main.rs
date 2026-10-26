@@ -1,5 +1,6 @@
 mod alex;
 mod config;
+mod customer_extract;
 mod db;
 mod draft_worker;
 mod error;

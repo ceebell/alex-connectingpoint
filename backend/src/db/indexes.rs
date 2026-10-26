@@ -4,6 +4,26 @@ use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     for (collection, keys, unique) in [
         (
+            "bill_reviews",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
+            false,
+        ),
+        (
+            "alex_submissions",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
+            false,
+        ),
+        (
+            "availability_checks",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
+            false,
+        ),
+        (
+            "inquiry_attachments",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"content_hash":1},
+            true,
+        ),
+        (
             "product_searches",
             doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
             false,
@@ -144,5 +164,19 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             )
             .await?;
     }
+    state
+        .collection("alex_submissions")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"reservation_key":1})
+                .options(
+                    IndexOptions::builder()
+                        .unique(true)
+                        .partial_filter_expression(doc! {"active":true})
+                        .build(),
+                )
+                .build(),
+        )
+        .await?;
     Ok(())
 }

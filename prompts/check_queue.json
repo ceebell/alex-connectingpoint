@@ -1,0 +1,29 @@
+// [POST]
+// https://shop.alexrental.app/api/orderdetail/checkq
+// header 'Content-Type: application/json' 
+// header 'Authorization: ••••••' 
+[
+	{
+	  "productItemId": "db5630c1-0e57-42e9-a55f-76b75f381307",
+	  "pickupDate":  "2024-12-07T00:00:00",
+	  "returnDate": "2024-12-11T00:00:00",
+	  "branchId": "9592dbbe-bbb7-48d6-bc32-d2902a5b5a6a",
+	  "qty": 2
+	}
+    // ,
+	// {
+	//   "productItemId": "31fb8da4-c989-4c12-a2b0-654032184a3b",
+	//   "pickupDate":  "2021-11-01",
+	//   "returnDate": "2021-11-07",
+	//   "branchId": "452971b-0e27-4b1c-a9a1-5f46d7c3eaa7",
+	//   "qty": 1
+	// }
+    // ,
+	// 		{
+	//   "productItemId": "26da2806-d277-40a2-b88d-a3ea27a2a42e",
+	//   "pickupDate":  "2021-11-01",
+	//   "returnDate": "2021-11-07",
+	//   "branchId": "452971b-0e27-4b1c-a9a1-5f46d7c3eaa7",
+	//   "qty": 1
+	// }
+]

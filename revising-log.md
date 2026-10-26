@@ -4,6 +4,49 @@
 
 <!-- entries -->
 
+## 2026-10-26 12:44 — รีโหลด server และยืนยัน login Alex ผ่านตัวแอปสำเร็จ
+- **คำอธิบาย:** ผู้ใช้สั่งทำต่อให้เสร็จหลังตั้ง ALEX_* ใน .env บน server แล้ว บัญชี SSH ต้องใช้ sudo จึงเปิดหน้าต่าง SSH ให้ผู้ใช้กรอกรหัสผ่าน Ubuntu โดยตรง ผู้ใช้ยืนยันว่ากรอกแล้ว จากนั้นดำเนินการ deploy config และตรวจผลผ่านตัวแอปจริง
+- **Server `Hermes:~/alex-connectingpoint/`**
+  - Runtime — รัน `sudo bash ./docker-deploy.sh --full-stack` สำเร็จ เพื่อให้ backend โหลด .env ใหม่ ใช้ source/release ที่อยู่บน server เดิม ไม่ compile โปรแกรมบน Ubuntu ไม่เปลี่ยน Mongo volume/network ไม่ส่ง source รุ่นใหม่และไม่สร้างบิลจริง
+- **ผลตรวจสอบ:** GET /api/health -> status ok; GET /api/admin/alex ผ่าน internal auth -> HTTP 200, configured=true และคืนสาขาหลักที่บัญชีได้รับสิทธิ์หนึ่งสาขา ยืนยันว่า backend ที่รันอยู่ login Alex จริงได้แล้ว; frontend พอร์ต 18081 ตอบ HTTP 200; ปิดหน้าต่าง helper ที่สร้างเองหลังเสร็จ ไม่มีรหัสผ่าน sudo หรือ token ในไฟล์/log; source และ release local ไม่เปลี่ยนจึงไม่ build ซ้ำ ไม่ commit/push
+- **สถานะ:** งานเชื่อมบัญชี Alex บนแอป server เสร็จแล้ว ข้อความรอ reload ใน entry 12:39 ได้รับการดำเนินการใน entry นี้; server ใช้ backend rel-20261026035638-9868a8c39c0b และ frontend front-20261026035745-26c4e8e53c6d เดิม การนำ source/release ฟีเจอร์รูป 5 รูปและคิว/บิลรุ่นใหม่ขึ้น server ยังต้องส่งผ่าน Git ตามขั้นตอนของผู้ใช้ แยกจากการ reload บัญชีรอบนี้
+
+
+## 2026-10-26 12:39 — ตั้งบัญชี Alex บน server และตรวจ login จริง
+- **คำอธิบาย:** ผู้ใช้ชี้ให้ตรวจ `prompts/alex_login.md` พบว่าการทดสอบ login API ก่อนหน้ายังไม่ได้ตั้งบัญชีให้แอปที่ใช้งานบน server ตรวจ `.env` ทั้ง local/server แบบปิดบังค่า พบ ALEX_* ไม่ได้ตั้ง และ `/api/admin/alex` ของแอปยังไม่มีสาขา จึงตั้งค่าบัญชีที่ผู้ใช้ให้บน server จริง
+- **Server `Hermes:~/alex-connectingpoint/`**
+  - `.env` — แก้: เพิ่ม ALEX_API_URL, ALEX_USERNAME, ALEX_PASSWORD, ALEX_SHOP_INFO_ID, ALEX_BRANCH_IDS จากผล login ที่ตรวจร้านและสาขาที่ได้รับสิทธิ์จริง เก็บเฉพาะฝั่ง server สำรองไฟล์เดิมเป็น `.env.before-alex-20261026-123828` แบบ private permissions และเขียน `.env` แบบ atomic โดยไม่แก้ค่าอื่น ไม่มีรหัสผ่านหรือ token ใน Git/log
+- **โฟลเดอร์ `./`**
+  - `.gitignore` — แก้: ยกเว้น `prompts/alex_login.md` เพราะ reference ที่ผู้ใช้เพิ่มมี live authentication token ป้องกันนำเข้า commit โดยคงไฟล์ต้นฉบับไว้ในเครื่อง
+- **ผลตรวจสอบ:** POST login จาก Ubuntu สำเร็จ HTTP 200 บัญชี active อ่าน GetProductItems จริงได้ 15 รายการ ผูกสาขาหลักที่บัญชีได้รับสิทธิ์ แยกจาก branch ตัวอย่างที่อยู่นอกสิทธิ์; ตรวจ config ทั้ง 5 key มีเพียงหนึ่งค่าและไฟล์เป็น mode 600; login/catalog/checkq จาก local ผ่านเช่นกัน; git check-ignore และ git diff --check ผ่าน ไม่แก้ source/binary จึงไม่ build ซ้ำ
+- **ยังต้องดำเนินการ:** แอปที่รันอยู่ยังไม่ได้โหลด env ใหม่ บัญชี SSH ไม่มีสิทธิ์ Docker และ `sudo -n` ขอรหัสผ่าน จึงไม่ได้ restart/deploy ให้ ผู้ใช้ต้องรันบน Ubuntu: `cd ~/alex-connectingpoint && sudo bash ./docker-deploy.sh --full-stack` เพื่อโหลดบัญชี Alex เข้า backend; ยังไม่ถือว่าตัวแอปเชื่อมสำเร็จจนตรวจ `/api/admin/alex` หลัง reload ไม่สร้างบิลจริง ไม่ commit/push และไม่ deploy source รุ่นใหม่
+
+
+## 2026-10-26 12:32 — สรุปจากรูป 5 รูป เติมลูกค้าจากแชท และเช็คคิว/สร้างบิลใน Alex
+- **คำอธิบาย:** ผู้ใช้เปลี่ยนสรุปการเช่าชุดเป็นภาพที่มีชื่อชุด สี ไซซ์ และวันที่ ให้แนบได้ 5 รูป เติมชื่อ/ที่อยู่/โทรจากข้อความลูกค้า และยืนยันว่าต้องการบิล/ออเดอร์ใน Alex ใช้ request contract จาก `prompts/producitem_search.json` และ `prompts/orderheader_create.json` โดยไม่เพิ่ม dependency และไม่แก้ไฟล์ตัวอย่างที่ผู้ใช้ส่งมา
+- **โฟลเดอร์ `backend/src/`**
+  - `models/draft.rs`, `order_draft_prompt.txt` — แก้: รองรับ image-only สูงสุด 5 รูป ชื่อชุดแยกจากรหัส ที่อยู่ลูกค้า และวัน/ราคา/ค่าส่ง/ขนส่ง/อุปกรณ์แยกรายการ ไม่เดาปี วันรับที่กำกวม จำนวนจากวันเช่า หรือราคา tier ในโปสเตอร์ ตรวจวันที่และเวลา HH:MM
+  - `db/attachments.rs`, `db/drafts.rs`, `db/oa_sync.rs`, `draft_worker.rs`, `routes/drafts.rs` — เพิ่ม/แก้: อัปโหลดรูปภายในผ่าน GridFS แยกจากการส่ง LINE ตรวจ shop/channel/inquiry และ hash กันซ้ำ รวมรูปแนบใน context/evidence และคืนรูปในรายการร่าง จำกัดข้อมูลภาพรวม 8 MB ต่อ AI request
+  - `customer_extract.rs` — เพิ่ม: สกัดข้อมูลติดต่อเฉพาะข้อความลูกค้าใน inquiry พร้อม exact quote และ source ตรวจค่าที่คืนกับหลักฐานและตรวจบริบทใหม่หลัง AI ไม่ใช้ข้อความร้าน/รูปแนบ/โปรไฟล์เก่า ไม่บันทึกทับอัตโนมัติ ช่องที่ไม่พบหรือขัดกันคงค่าเดิมให้แอดมินตรวจ
+  - `models/checkout.rs`, `db/checkout.rs`, `routes/checkout.rs` — เพิ่ม: จัดกลุ่มตามสาขา/ช่วงเช่า/วิธีรับ/ขนส่ง เช็คคิว แยกว่าง/ไม่ว่าง/ยังตรวจไม่ได้ อ่านราคาและคิวซ้ำก่อนเตรียมและส่งบิล เก็บใบตรวจ 5 นาที คำนวณส่วนลดด้วย integer satang ตรวจข้อมูลลูกค้า และสร้าง AddRentalOrder หลังยืนยันเท่านั้น
+  - `db/checkout.rs` — เพิ่ม: บันทึกก่อน POST และส่งครั้งเดียวต่อ review ID ล็อก inquiry/กันรายการทับกับบิลก่อนหน้า กู้สถานะเมื่อรีสตาร์ต รักษาประวัติเมื่อร่างเก่า ผลไม่ชัดเจนเป็น SUBMIT_UNKNOWN ไม่ส่งซ้ำ ให้บันทึกผลตรวจจริงใน Alex และรออย่างน้อย 2 นาทีหลังส่งก่อนยืนยันว่าไม่ได้สร้าง ป้องกัน sender เก่าทำงานต่อหลัง manual resolution และกรอง token จาก response ที่เก็บ
+  - `alex.rs`, `config.rs`, `error.rs`, `main.rs`, `db/indexes.rs`, `db/mod.rs`, `models/mod.rs`, `routes/mod.rs` — เพิ่ม/แก้: checkq และ AddRentalOrder ฝั่ง server, รับวันที่ตอบกลับแบบ T00:00:00 ที่ตรวจจริง, ALEX_ORDER_ID_POINTER แบบ optional, routes/indexes/error และ modules ใหม่ MCP คงเฉพาะการค้นหาแบบอ่านข้อมูล
+  - `tests_rental.rs`, `tests.rs`, `tests_products.rs`, `tests_customers.rs` — เพิ่ม/แก้: image-only/ขีดจำกัด 5 รูป การแยกวัน/เงิน/ปีที่หายไป หลักฐานลูกค้าและ context race รูปไม่ถูกส่ง LINE ผลเช็คคิวหลายแบบ การเตรียมไม่สร้างบิล การส่งซ้ำ/ผลไม่ชัดเจน/manual resolution/กู้ orphan lock และประวัติเมื่อร่างเก่า ปรับ fixture สำหรับ field ใหม่
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/summary-images.tsx`, `customer-extract-button.tsx`, `draft-item-editor.tsx`, `rental-checkout.tsx`, `rental-summary.css` — เพิ่ม: แนบ/ย่อภาพโดยตรงสูงสุด 5 รูป เติมข้อมูลลูกค้าพร้อมหลักฐาน แก้วันและราคาเฉพาะชุด และแท็บคิว/บิลที่ตรวจรายการ/ลูกค้า/ยอดก่อนติ๊กสร้างออเดอร์จริง แสดงประวัติและผลที่ต้องตรวจจาก Alex
+  - `components/admin-workspace.tsx`, `customer-profile.tsx`, `draft-editor.tsx`, `product-matcher.tsx`, `chat-message.tsx`, `lib/api.ts`, `app/globals.css` — แก้: เชื่อมรูปแนบ/ข้อมูลใหม่/แท็บคิวบิล ค้นชื่อชุดเมื่อไม่มี SKU ใช้รูปสรุปเป็นภาพอ้างอิงได้ จำกัดรูปรวม 5 รูป ป้องกันบริบทเก่า แยกคำว่าอนุมัติร่างภายในจากการสร้างบิลจริง และคงรูปแบบหน้าเดิม
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `.env.example`, `docker-stack.line.yml` — แก้: เพิ่ม ALEX_ORDER_ID_POINTER โดยไม่ใส่บัญชี/token จริงใน source หรือ frontend
+  - `docs/image-rental-billing.md` — เพิ่ม: วิธีใช้ ข้อมูลที่ต้องถามเพิ่มจากภาพตัวอย่าง ข้อจำกัดค่าส่ง/ผลตอบกลับ การตรวจบิลค้าง API/config และขั้นตอน local build/full-stack deploy
+  - `docs/step-2-admin.md`, `docs/step-3-products.md`, `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: จำนวนภาพ 5 รูป ลิงก์คู่มือและสถานะการใช้งานล่าสุด
+- **โฟลเดอร์ `dist/` (build บน Docker Desktop local เท่านั้น)**
+  - `line-linux/` — แก้: Linux backend `rel-20261026052929-8225ec8d096a` พร้อม checksum/tag/metadata
+  - `frontend-linux/` — แก้: Linux standalone `front-20261026052930-c8f4ed0cc016` พร้อม public/static/runtime และ checksum 2,108 ไฟล์
+- **ผลตรวจสอบ:** cargo fmt --check, clippy --all-targets -D warnings, cargo test -- --include-ignored ผ่าน 35/35 บน MongoDB disposable พอร์ต 27018; npm lint/build ผ่านทั้ง Windows และ Linux release build; Docker runtime image backend/frontend build ผ่าน; docker stack config สำหรับ line+admin ผ่านพร้อม env ใหม่และ Mongo volume/network เดิม; ELF/backend checksum และ frontend checksum ทั้งหมดผ่าน ไม่มี .env หรือไฟล์ release ถูก ignore; git diff --check ผ่าน
+- **ตรวจหน้าเว็บ:** Chrome headless ใช้ backend จริงและ Mongo แยก พร้อม mock Hermes/Alex อัปโหลดภาพตัวอย่างผ่าน browser encoder รวม 5 รูปโดยไม่มีคำบรรยาย สกัดสองรายการ/วันที่ยังไม่ระบุปี เติมและบันทึกลูกค้า ค้นชื่อและยืนยัน Product ID สองชิ้น แยกสองช่วงวัน เช็คไม่ว่าง/ว่าง ตรวจบิลก่อน explicit submit จำลอง HTTP 500 หลังรับคำขอแล้วล็อกกันส่งซ้ำ ไม่ส่งรูปสรุปเข้า LINE ไม่ล้นที่ 390px ไม่มี page error; ภาพตรวจอยู่ใน ignored `data/rental-ui-141225d5c1/`
+- **ขอบเขตและข้อจำกัด:** ทดสอบ Alex จริงเฉพาะอ่าน login/catalog/checkq พบ result=1 และวันที่มี T00:00:00; ไม่สร้างบิลจริง ไม่ทดสอบสกัดกับ Hermes profile จริง ไฟล์ผู้ใช้เป็น request ยังไม่มี successful response contract จึงไม่ถือ HTTP 2xx ว่าสำเร็จหากอ่านเลขบิลไม่ได้ ค่า ALEX_ORDER_ID_POINTER เริ่มต้นว่างและให้ตรวจใน Alex ก่อนบันทึกเลขออเดอร์; template ไม่มีช่องค่าส่งแยก จึงต้องรับทราบว่าเก็บค่าส่งในหมายเหตุโดยไม่รวมในค่าเช่า; ยังไม่ commit/push/deploy และไม่แก้ server หยุด backend/frontend/Chrome/Mongo ทดสอบที่สร้างเองแล้ว คง Docker Desktop ไว้
+
+
 ## 2026-10-26 11:10 — ตรวจรวมงานสติกเกอร์/รูป + Step 3 ก่อน deploy
 - **คำอธิบาย:** หลังงาน Step 3 (entry 11:00) เสร็จ ตรวจซ้ำว่า release ล่าสุดรวมงานทั้งสองฝั่งและพร้อม deploy — คำเตือน "ห้าม deploy" ใน entry 10:35 ใช้กับ release 10:33 (rel-20261026033312, front-20261026033426) เท่านั้น ซึ่งถูกแทนที่แล้ว
 - **ไฟล์:** ไม่ได้แก้ source/config ในรอบนี้ (บันทึกผลตรวจเท่านั้น)

@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+# Local API login reference contains live authentication tokens.
+/prompts/alex_login.md
 
 # Rust
 backend/target/

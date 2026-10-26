@@ -7,7 +7,7 @@ use crate::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn catalog_config(base: &str) -> AlexConfig {
+pub(super) fn catalog_config(base: &str) -> AlexConfig {
     AlexConfig {
         api_url: base.into(),
         username: "fixture-user".into(),
@@ -16,6 +16,7 @@ fn catalog_config(base: &str) -> AlexConfig {
         branch_ids: vec!["branch-a".into()],
         product_url_prefix: Some("https://catalog.test/products/".into()),
         image_origins: vec![],
+        order_id_pointer: Some("/orderId".into()),
     }
 }
 
@@ -140,12 +141,12 @@ async fn mcp_is_authenticated_read_only_and_supports_json_rpc_lifecycle() {
 }
 
 #[derive(Clone, Default)]
-struct CatalogMock {
-    mode: Arc<AtomicUsize>,
-    calls: Arc<tokio::sync::Mutex<Vec<Value>>>,
+pub(super) struct CatalogMock {
+    pub(super) mode: Arc<AtomicUsize>,
+    pub(super) calls: Arc<tokio::sync::Mutex<Vec<Value>>>,
 }
 
-async fn login_mock(
+pub(super) async fn login_mock(
     axum::extract::State(mock): axum::extract::State<CatalogMock>,
     Json(body): Json<Value>,
 ) -> Json<Value> {
@@ -159,7 +160,7 @@ async fn login_mock(
     )
 }
 
-async fn catalog_mock(
+pub(super) async fn catalog_mock(
     axum::extract::State(mock): axum::extract::State<CatalogMock>,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
@@ -220,7 +221,7 @@ async fn vision_mock(
 
 use axum::{Json, response::IntoResponse};
 
-async fn manual(state: &AppState, id: ObjectId, version: i64, fields: DraftFields) {
+pub(super) async fn manual(state: &AppState, id: ObjectId, version: i64, fields: DraftFields) {
     drafts::enqueue(
         state,
         id,

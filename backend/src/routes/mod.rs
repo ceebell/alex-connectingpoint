@@ -1,4 +1,5 @@
 mod admin;
+mod checkout;
 mod customers;
 mod drafts;
 mod mcp;
@@ -24,6 +25,31 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             get(session::info).delete(session::logout),
         )
         .route("/api/inquiries/{id}/drafts", get(drafts::list))
+        .route("/api/inquiries/{id}/checkout", get(checkout::list))
+        .route(
+            "/api/inquiries/{id}/checkout/availability",
+            post(checkout::availability),
+        )
+        .route(
+            "/api/inquiries/{id}/checkout/review",
+            post(checkout::review),
+        )
+        .route(
+            "/api/inquiries/{id}/checkout/submit",
+            post(checkout::submit),
+        )
+        .route(
+            "/api/inquiries/{id}/checkout/resolve",
+            post(checkout::resolve),
+        )
+        .route(
+            "/api/inquiries/{id}/draft-images",
+            post(drafts::upload_image).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
+        .route(
+            "/api/inquiries/{id}/customer-extract",
+            post(drafts::extract_customer),
+        )
         .route("/api/admin/alex", get(products::settings))
         .route("/api/inquiries/{id}/products", get(products::list))
         .route(

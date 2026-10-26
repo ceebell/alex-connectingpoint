@@ -26,6 +26,8 @@ mod line_tests;
 mod oa_sync_tests;
 #[path = "tests_products.rs"]
 mod product_tests;
+#[path = "tests_rental.rs"]
+mod rental_tests;
 #[path = "tests_step2.rs"]
 mod step2;
 

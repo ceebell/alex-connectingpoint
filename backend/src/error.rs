@@ -79,6 +79,10 @@ pub enum AppError {
     CatalogImagesUnavailable,
     #[error("Catalog options differ from the draft; explicit acknowledgement is required")]
     ProductOptionsMismatch,
+    #[error("The bill needs current products, complete dates and an available queue")]
+    BillNotReady,
+    #[error("An Alex order exists or a submission requires manual verification")]
+    BillPending,
 }
 
 impl AppError {
@@ -113,6 +117,8 @@ impl AppError {
             Self::ProductConflict => "PRODUCT_CONFLICT",
             Self::CatalogImagesUnavailable => "CATALOG_IMAGES_UNAVAILABLE",
             Self::ProductOptionsMismatch => "PRODUCT_OPTIONS_DIFFER",
+            Self::BillNotReady => "BILL_NOT_READY",
+            Self::BillPending => "BILL_PENDING",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -144,6 +150,7 @@ impl IntoResponse for AppError {
             Self::ProductConflict => StatusCode::CONFLICT,
             Self::CatalogImagesUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
             Self::ProductOptionsMismatch => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::BillNotReady | Self::BillPending => StatusCode::CONFLICT,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,

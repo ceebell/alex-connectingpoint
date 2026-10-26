@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+pub const MAX_DRAFT_IMAGES: usize = 5;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -8,6 +9,7 @@ pub struct DraftFields {
     pub intent: Option<String>,
     pub customer_name: Option<String>,
     pub customer_phone: Option<String>,
+    pub customer_address: Option<String>,
     pub branch: Option<String>,
     #[serde(default)]
     pub items: Vec<DraftItem>,
@@ -22,9 +24,13 @@ pub struct DraftFields {
 #[serde(deny_unknown_fields)]
 pub struct DraftItem {
     pub product_code: Option<String>,
+    pub product_name: Option<String>,
     pub color: Option<String>,
     pub size: Option<String>,
     pub quantity: Option<i64>,
+    pub rental: Option<Rental>,
+    pub amounts: Option<Amounts>,
+    pub notes: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -34,6 +40,9 @@ pub struct Rental {
     pub pickup_date: Option<String>,
     pub return_date: Option<String>,
     pub fulfillment_method: Option<String>,
+    pub dispatch_date: Option<String>,
+    pub delivery_provider: Option<String>,
+    pub return_shipping_deadline: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -42,6 +51,7 @@ pub struct Amounts {
     // Integer satang, never floating point. These are unverified quoted amounts.
     pub rental_fee_satang: Option<i64>,
     pub deposit_satang: Option<i64>,
+    pub shipping_fee_satang: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,7 +107,7 @@ impl SummaryInput {
             || self.text.chars().count() > 20_000
             || self.context_hash.len() != 64
             || !self.context_hash.bytes().all(|c| c.is_ascii_hexdigit())
-            || self.image_event_ids.len() > 4
+            || self.image_event_ids.len() > MAX_DRAFT_IMAGES
             || self.image_event_ids.iter().collect::<BTreeSet<_>>().len()
                 != self.image_event_ids.len()
         {
@@ -118,13 +128,20 @@ impl PrepareInput {
             || self.expected_version < 0
             || self.expected_version == i64::MAX
             || self.summary.chars().count() > 20_000
-            || self.image_event_ids.len() > 4
-            || self.confirmed_fields.len() > 200
+            || self.image_event_ids.len() > MAX_DRAFT_IMAGES
+            || self.image_event_ids.iter().collect::<BTreeSet<_>>().len()
+                != self.image_event_ids.len()
+            || self.confirmed_fields.len() > 500
         {
             return Err(AppError::Validation("Invalid preparation request"));
         }
-        if self.fields.is_none() && self.summary.trim().is_empty() {
-            return Err(AppError::Validation("An admin summary is required"));
+        if self.fields.is_none()
+            && self.summary.trim().is_empty()
+            && self.image_event_ids.is_empty()
+        {
+            return Err(AppError::Validation(
+                "An admin summary or image is required",
+            ));
         }
         if let Some(fields) = &self.fields {
             fields.validate()?;
@@ -190,10 +207,106 @@ impl DraftFields {
         {
             return Err(AppError::Validation("Quantity must be between 1 and 999"));
         }
+        self.rental.validate()?;
+        self.amounts.validate()?;
+        for item in &self.items {
+            item.effective_rental(&self.rental).validate()?;
+            if let Some(amounts) = &item.amounts {
+                amounts.validate()?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn missing_fields(&self) -> Vec<String> {
+        let values = self.values();
+        let mut missing = Vec::new();
+        for key in ["customer_name", "branch"] {
+            if !values.contains_key(key) {
+                missing.push(key.into());
+            }
+        }
+        if self.items.is_empty() {
+            missing.push("items".into());
+            for key in [
+                "rental.pickup_date",
+                "rental.return_date",
+                "rental.fulfillment_method",
+            ] {
+                if !values.contains_key(key) {
+                    missing.push(key.into());
+                }
+            }
+        }
+        for (i, item) in self.items.iter().enumerate() {
+            for (name, present) in [
+                (
+                    "product_name",
+                    item.product_code.is_some() || item.product_name.is_some(),
+                ),
+                ("color", item.color.is_some()),
+                ("size", item.size.is_some()),
+                ("quantity", item.quantity.is_some()),
+            ] {
+                if !present {
+                    missing.push(format!("items.{i}.{name}"));
+                }
+            }
+            let rental = item.effective_rental(&self.rental);
+            for (name, present) in [
+                ("pickup_date", rental.pickup_date.is_some()),
+                ("return_date", rental.return_date.is_some()),
+                ("fulfillment_method", rental.fulfillment_method.is_some()),
+            ] {
+                if !present {
+                    missing.push(format!("items.{i}.rental.{name}"));
+                }
+            }
+        }
+        missing
+    }
+}
+
+impl DraftItem {
+    pub fn effective_rental(&self, common: &Rental) -> Rental {
+        let own = self.rental.as_ref().unwrap_or(common);
+        Rental {
+            usage_date: own.usage_date.clone().or_else(|| common.usage_date.clone()),
+            pickup_date: own
+                .pickup_date
+                .clone()
+                .or_else(|| common.pickup_date.clone()),
+            return_date: own
+                .return_date
+                .clone()
+                .or_else(|| common.return_date.clone()),
+            fulfillment_method: own
+                .fulfillment_method
+                .clone()
+                .or_else(|| common.fulfillment_method.clone()),
+            dispatch_date: own
+                .dispatch_date
+                .clone()
+                .or_else(|| common.dispatch_date.clone()),
+            delivery_provider: own
+                .delivery_provider
+                .clone()
+                .or_else(|| common.delivery_provider.clone()),
+            return_shipping_deadline: own
+                .return_shipping_deadline
+                .clone()
+                .or_else(|| common.return_shipping_deadline.clone()),
+        }
+    }
+}
+
+impl Rental {
+    pub fn validate(&self) -> Result<(), AppError> {
         for date in [
-            &self.rental.usage_date,
-            &self.rental.pickup_date,
-            &self.rental.return_date,
+            &self.usage_date,
+            &self.pickup_date,
+            &self.return_date,
+            &self.dispatch_date,
         ]
         .into_iter()
         .flatten()
@@ -204,59 +317,53 @@ impl DraftFields {
                 ));
             }
         }
-        if let (Some(pickup), Some(returned)) = (&self.rental.pickup_date, &self.rental.return_date)
+        if let (Some(pickup), Some(returned)) = (&self.pickup_date, &self.return_date)
             && returned < pickup
         {
             return Err(AppError::Validation(
                 "Return date cannot precede pickup date",
             ));
         }
-        if let Some(method) = &self.rental.fulfillment_method
+        if let Some(method) = &self.fulfillment_method
             && !["store_pickup", "delivery"].contains(&method.as_str())
         {
             return Err(AppError::Validation("Unknown fulfillment method"));
         }
-        for amount in [self.amounts.rental_fee_satang, self.amounts.deposit_satang]
-            .into_iter()
-            .flatten()
-        {
-            if !(0..=10_000_000_000).contains(&amount) {
-                return Err(AppError::Validation("Invalid amount in satang"));
+        if let Some(time) = &self.return_shipping_deadline {
+            let parts: Vec<_> = time.split(':').collect();
+            if time.len() != 5
+                || parts.len() != 2
+                || time.bytes().enumerate().any(|(index, byte)| {
+                    if index == 2 {
+                        byte != b':'
+                    } else {
+                        !byte.is_ascii_digit()
+                    }
+                })
+                || parts[0].parse::<u8>().ok().is_none_or(|h| h > 23)
+                || parts[1].parse::<u8>().ok().is_none_or(|m| m > 59)
+            {
+                return Err(AppError::Validation("Shipping deadline must be HH:MM"));
             }
         }
         Ok(())
     }
+}
 
-    pub fn missing_fields(&self) -> Vec<String> {
-        let values = self.values();
-        let mut missing = Vec::new();
-        for key in [
-            "customer_name",
-            "branch",
-            "rental.pickup_date",
-            "rental.return_date",
-            "rental.fulfillment_method",
-        ] {
-            if !values.contains_key(key) {
-                missing.push(key.into());
-            }
+impl Amounts {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if [
+            self.rental_fee_satang,
+            self.deposit_satang,
+            self.shipping_fee_satang,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|amount| !(0..=10_000_000_000).contains(&amount))
+        {
+            return Err(AppError::Validation("Invalid amount in satang"));
         }
-        if self.items.is_empty() {
-            missing.push("items".into());
-        }
-        for (i, item) in self.items.iter().enumerate() {
-            for (name, present) in [
-                ("product_code", item.product_code.is_some()),
-                ("color", item.color.is_some()),
-                ("size", item.size.is_some()),
-                ("quantity", item.quantity.is_some()),
-            ] {
-                if !present {
-                    missing.push(format!("items.{i}.{name}"));
-                }
-            }
-        }
-        missing
+        Ok(())
     }
 }
 

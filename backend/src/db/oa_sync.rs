@@ -15,6 +15,7 @@ pub fn source_type(record: &Document) -> &'static str {
     match record.get_str("source").ok() {
         Some("oa_manager_browser") => "oa_message",
         Some("alex_push") => "admin_message",
+        Some("admin_attachment") => "admin_attachment",
         _ => "line_event",
     }
 }
