@@ -3,12 +3,10 @@ import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useEffect, useRe
 import Link from "next/link";
 import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order } from "@/lib/api";
 import DraftEditor from "./draft-editor";
-import ProductMatcher from "./product-matcher";
 import SummaryImages from "./summary-images";
 import RentalCheckout from "./rental-checkout";
 import type { Attachment } from "@/lib/api";
 import ChatMessage, { CustomerAvatar } from "./chat-message";
-import CustomerProfile from "./customer-profile";
 import ReplyComposer from "./reply-composer";
 
 type Session = { username: string; login: "line" | "password" | "token"; hermes_configured: boolean };
@@ -57,7 +55,6 @@ export default function AdminWorkspace() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [messages, setMessages] = useState<LineEvent[]>([]);
@@ -74,7 +71,7 @@ export default function AdminWorkspace() {
   const summaryDirty = useRef(false);
   const [images, setImages] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [tab, setTab] = useState<"summary" | "draft" | "products" | "checkout" | "history" | "customer">("summary");
+  const [tab, setTab] = useState<"summary" | "draft" | "checkout" | "history">("summary");
   const [order, setOrder] = useState<Order | null>(null);
   const [approveChecked, setApproveChecked] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
@@ -126,9 +123,8 @@ export default function AdminWorkspace() {
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
-    Promise.all([api<Inquiry[]>("/api/inquiries"), api<{ events: Record<string, number> }>("/api/line/status")]).then(([items, status]) => {
-      if (cancelled) return;
-      setInquiries(items); setCounts(status.events);
+    api<Inquiry[]>("/api/inquiries").then(items => {
+      if (!cancelled) setInquiries(items);
     }).catch(cause => { if (!cancelled) { if (cause instanceof ApiError && cause.status === 401) setSession(null); else setError(errorText(cause)); } });
     return () => { cancelled = true; };
   }, [session, refresh]);
@@ -313,7 +309,6 @@ export default function AdminWorkspace() {
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><div className="brand-mark">a<span>•</span></div><div><strong>alex</strong><small>connecting point</small></div></div><span className="nav-heading">พื้นที่ทำงาน</span><Link className="nav-item active" href="/" aria-current="page"><span aria-hidden="true">▤</span> แชทและ inquiry <span className="nav-count">{inquiries.length}</span></Link><div className="sidebar-note"><span className="online-dot" /> รับเรื่องจาก LINE OA<p>อ่านแชท เตรียมร่าง<br />แล้วตรวจสอบก่อนส่งต่อ</p></div><div className="sidebar-account"><div className="avatar">{session.username.charAt(0).toUpperCase()}</div><div><strong>{session.username}</strong><small>{session.login === "line" ? "เข้าด้วย LINE" : "ผู้ดูแลหลังบ้าน"}</small></div><button title="ออกจากระบบ" aria-label="ออกจากระบบ" className="icon-button" onClick={logout}>↪</button></div></aside>
     <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span> โหลดข้อมูลล่าสุด</button></div></header>
-      <div className="stats"><div><span className="stat-icon blue" aria-hidden="true">▤</span><div><span>inquiry ที่โหลดมา</span><strong>{inquiries.length}</strong></div></div><div><span className="stat-icon sky" aria-hidden="true">✓</span><div><span>ข้อความประมวลผลแล้ว</span><strong>{counts.DONE ?? 0}</strong></div></div><div><span className="stat-icon orange" aria-hidden="true">!</span><div><span>เหตุการณ์รอแอดมินตรวจ</span><strong>{(counts.NEEDS_ADMIN ?? 0) + (counts.FAILED ?? 0)}</strong></div></div></div>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
       <div className="workspace" ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
         {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
@@ -327,7 +322,7 @@ export default function AdminWorkspace() {
         {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
         <div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
-      <section className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["products", "เลือกชุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"], ["customer", "ลูกค้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+      <section className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>
           {job && ["PENDING", "PROCESSING"].includes(job.status) && <div className="notice info" role="status">{job.status === "PROCESSING" ? "กำลังอ่านรูปหรือสรุปและค้นหาสินค้าใน Alex…" : "รับงานแล้ว กำลังรอประมวลผล…"} คุณกลับมาเปิดเรื่องนี้ใหม่เพื่อตรวจผลได้</div>}
           {tab === "summary" && <>
@@ -345,16 +340,14 @@ export default function AdminWorkspace() {
             {!session.hermes_configured && <div className="notice warning">เซิร์ฟเวอร์ยังไม่ได้ตั้งค่าการเชื่อมต่อ Hermes จึงยังอ่านรูปด้วย AI ไม่ได้ คุณบันทึกสรุปและรูปไว้ก่อนได้</div>}
             <button className="button primary full" disabled={working || summaryConflict || (!summary.trim() && !images.length) || !session.hermes_configured} onClick={() => submit()}><span aria-hidden="true">✦</span> เตรียมออเดอร์ด้วย AI</button><button className="text-button full" onClick={() => setTab("draft")}>หรือกรอกร่างด้วยมือ →</button>
           </>}
-          {tab === "draft" && !!latest?.catalog_lookup?.length && <div className="notice info"><p>ค้นสินค้าจากรูปหรือสรุปใน Alex แล้ว ตรงกัน {latest.catalog_lookup.filter(item => item.status === "MATCHED").length}/{latest.catalog_lookup.length} รายการ</p><button type="button" className="text-button" onClick={() => setTab("products")}>ตรวจผลค้นหาและยืนยันชุด →</button></div>}
+          {tab === "draft" && !!latest?.catalog_lookup?.length && <div className="notice info"><p>ค้นสินค้าจากรูปหรือสรุปใน Alex แล้ว ตรงกัน {latest.catalog_lookup.filter(item => item.status === "MATCHED").length}/{latest.catalog_lookup.length} รายการ เลือกจากผลค้นหาแล้วกดเพิ่มลงตะกร้าด้านล่าง</p></div>}
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">แชทหรือสรุปแอดมินมีการเปลี่ยนแปลง ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}
           {order ? <div className="notice success" role="status"><strong><span aria-hidden="true">✅</span> อนุมัติร่างภายในแล้ว</strong><p>จากร่าง v{order.draft_version} · โดย {order.approved_by} · {time(order.approved_at)}<br />บันทึกร่างที่อนุมัติภายในแล้ว สร้างบิลจริงใน Alex ที่แท็บคิว/บิล</p></div>
             : latest?.result && <div className="approve-card">{canApprove ? <><label className="checkbox-row"><input type="checkbox" checked={approveChecked} disabled={working} onChange={e => setApproveChecked(e.target.checked)} />ตรวจร่าง v{latest.draft_version} กับลูกค้าแล้ว ข้อมูลถูกต้อง</label><button type="button" className="button primary full" disabled={working || !approveChecked} onClick={approveOrder}>อนุมัติร่างภายใน</button><p className="muted small">เก็บร่างที่ตรวจแล้วในระบบ หากต้องการสร้างบิลใน Alex ให้ไปที่แท็บคิว/บิล</p></> : <p className="muted small">อนุมัติร่างภายในได้เมื่อร่างล่าสุดข้อมูลครบ ไม่มีข้อขัดแย้ง และแชทไม่มีข้อความใหม่หลังทำร่าง</p>}</div>}
-          <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} onSave={(fields, confirm) => submit(fields, confirm)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
-          {tab === "products" && <ProductMatcher key={`${selected}-${version}-${contextHash}-${latest?.stale}`} inquiryId={selected} draft={latest} contextHash={contextHash} messages={messages} attachments={attachments} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
+          <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
           {tab === "checkout" && <RentalCheckout key={`${selected}-${version}-${contextHash}`} inquiryId={selected} userId={current?.line_user_id} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
-          {tab === "customer" && (current?.line_user_id ? <CustomerProfile key={`${selected}-${current.line_user_id}`} inquiryId={selected} userId={current.line_user_id} line={current.customer} onUnauthorized={() => setSession(null)} /> : <div className="notice warning">เรื่องนี้ไม่มี LINE user ID จึงยังบันทึกข้อมูลลูกค้าไม่ได้</div>)}
           {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => <details className="history-card" key={draft._id}><summary><span>ร่างเวอร์ชัน {draft.draft_version}</span><span className="small muted">{time(draft.created_at)}</span></summary><DraftReadOnly draft={draft} /></details>)}</>}
-        </>}</div><div className="draft-footer">แนบรูป → ตรวจร่าง → เลือกชุด → เช็คคิวและส่งบิลเข้า Alex</div>
+        </>}</div><div className="draft-footer">แนบรูป → ร่างออเดอร์ (ลูกค้า · ตะกร้า · วันที่ · เช็คคิว) → ส่งบิลเข้า Alex</div>
       </section></div>
     </main>
   </div>;

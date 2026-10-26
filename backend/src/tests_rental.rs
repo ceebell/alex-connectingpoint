@@ -3,7 +3,7 @@ use crate::{
     customer_extract,
     db::{checkout, drafts},
     draft_worker,
-    models::draft::{DraftFields, PrepareInput, SummaryInput},
+    models::draft::{DraftFields, DraftResult, PrepareInput, SummaryInput},
 };
 use axum::{Json, response::IntoResponse};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,7 +44,7 @@ fn hermes_toolset_formats_allow_disabled_tools_and_reject_unsafe_or_unknown_resu
 }
 
 #[test]
-fn image_only_requests_accept_five_and_keep_per_item_dates() {
+fn image_only_requests_accept_five_and_keep_order_level_fields() {
     let mut input = PrepareInput {
         request_id: "photos-only".into(),
         expected_version: 0,
@@ -59,31 +59,47 @@ fn image_only_requests_accept_five_and_keep_per_item_dates() {
     assert!(input.validate().is_err());
     input.image_event_ids.clear();
     assert!(input.validate().is_err());
-    let fields:DraftFields=serde_json::from_value(json!({"customer_name":"คุณเอ","branch":"A","items":[
-        {"product_name":"nina","color":"dark brown","size":"M","quantity":1,"rental":{"pickup_date":"2026-11-04","usage_date":"2026-11-07","return_date":"2026-11-08","fulfillment_method":"delivery","return_shipping_deadline":"16:00"}},
-        {"product_name":"Haatiya","color":"Blush Pink","size":"M","quantity":1,"rental":{"pickup_date":"2026-11-12","usage_date":"2026-11-14","return_date":"2026-11-15","fulfillment_method":"store_pickup"}}]})).unwrap();
+    // Older drafts with per-item dates, prices and notes still load; only order-level values remain.
+    let fields:DraftFields=serde_json::from_value(json!({"customer_name":"คุณเอ","items":[
+        {"product_name":"nina","color":"dark brown","size":"M","quantity":1,"rental":{"pickup_date":"2026-11-04","usage_date":"2026-11-07"},"amounts":{"rental_fee_satang":55000},"notes":"เข็มกลัด"},
+        {"product_name":"Haatiya","color":"Blush Pink","size":"M"}],
+        "rental":{"pickup_date":"2026-11-04","return_date":"2026-11-08","fulfillment_method":"delivery","return_shipping_deadline":"16:00"},
+        "amounts":{"rental_discount_satang":5000,"deposit_discount_satang":0}})).unwrap();
     assert!(fields.validate().is_ok());
     assert!(fields.missing_fields().is_empty());
-    // Retired usage dates in older drafts are accepted but never stored again.
-    assert!(
-        !serde_json::to_string(&fields)
-            .unwrap()
-            .contains("usage_date")
-    );
-    assert_eq!(
-        fields.items[1]
-            .effective_rental(&fields.rental)
-            .pickup_date
-            .as_deref(),
-        Some("2026-11-12")
-    );
-    let mut invalid = fields;
-    invalid.items[0]
-        .rental
-        .as_mut()
-        .unwrap()
-        .return_shipping_deadline = Some("+1:20".into());
+    let stored = serde_json::to_value(&fields).unwrap();
+    assert!(!stored.to_string().contains("usage_date"));
+    assert!(stored["items"][0].get("rental").is_none());
+    assert!(stored["items"][0].get("notes").is_none());
+    assert_eq!(stored["amounts"]["rental_discount_satang"], 5000);
+    let mut invalid = fields.clone();
+    invalid.rental.return_shipping_deadline = Some("+1:20".into());
     assert!(invalid.validate().is_err());
+    let mut invalid = fields;
+    invalid.amounts.deposit_discount_satang = Some(-1);
+    assert!(invalid.validate().is_err());
+    let mut result = DraftResult {
+        fields: DraftFields::default(),
+        evidence: [
+            "items.0.rental.pickup_date",
+            "items.0.notes",
+            "rental.dispatch_date",
+            "rental.pickup_date",
+        ]
+        .into_iter()
+        .map(|field| crate::models::draft::Evidence {
+            field: field.into(),
+            source_type: "admin_summary".into(),
+            source_ref: "s".into(),
+            quote: "q".into(),
+        })
+        .collect(),
+        conflicts: vec![],
+        questions: vec![],
+    };
+    result.drop_retired_evidence();
+    assert_eq!(result.evidence.len(), 1);
+    assert_eq!(result.evidence[0].field, "rental.pickup_date");
 }
 
 #[test]
@@ -225,16 +241,20 @@ async fn ai_mock(
         assert!(!data.to_string().contains("0812345678"));
         let refs = data["selected_image_event_refs"].as_array().unwrap();
         let year = data["current_year"].as_u64().unwrap();
-        let raw = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")},"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"},
-            {"product_name":"Haatiya","color":"Blush Pink","size":"M","rental":{"pickup_date":format!("{year}-11-12"),"usage_date":format!("{year}-11-14"),"return_date":format!("{year}-11-15")},"notes":"ต้องยืนยันราคาที่ตกลง"}]});
+        // Items still carry an older prompt's per-item extras; only order-level values are kept.
+        let raw = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")}},
+            {"product_name":"Haatiya","color":"Blush Pink","size":"M","notes":"ต้องยืนยันราคาที่ตกลง"}],
+            "rental":{"return_date":format!("{year}-11-15"),"fulfillment_method":"delivery","delivery_provider":"Flash"},
+            "amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"});
         let fields: DraftFields = serde_json::from_value(raw.clone()).unwrap();
         let mut evidence = Vec::new();
         for key in fields.values().keys() {
             let index = if key.starts_with("items.1.") { 1 } else { 0 };
             evidence.push(json!({"field":key,"source_type":"admin_attachment","source_ref":refs[index],"quote":"ข้อความบนรูปสรุป"}));
         }
-        // An older prompt shape still cites retired dates; the worker drops them instead of failing.
+        // An older prompt shape still cites retired fields; the worker drops them instead of failing.
         evidence.push(json!({"field":"items.0.rental.dispatch_date","source_type":"admin_attachment","source_ref":refs[0],"quote":"ส่ง 4/11"}));
+        evidence.push(json!({"field":"items.1.notes","source_type":"admin_attachment","source_ref":refs[1],"quote":"ต้องยืนยันราคาที่ตกลง"}));
         json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
     };
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
@@ -403,27 +423,15 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     )
     .unwrap();
     let year = request["current_year"].as_u64().unwrap();
-    assert!(
-        saved[0]["result"]["fields"]["items"][0]["rental"]
-            .get("dispatch_date")
-            .is_none()
-    );
-    assert!(
-        saved[0]["result"]["fields"]["items"][1]["rental"]
-            .get("usage_date")
-            .is_none()
-    );
+    let fields = &saved[0]["result"]["fields"];
+    assert!(fields["items"][0].get("rental").is_none());
+    assert!(fields["items"][1].get("notes").is_none());
     // Unstated quantities default to one instead of becoming a question.
-    assert_eq!(saved[0]["result"]["fields"]["items"][0]["quantity"], 1);
-    assert_eq!(
-        saved[0]["result"]["fields"]["items"][1]["rental"]["return_date"],
-        format!("{year}-11-15")
-    );
+    assert_eq!(fields["items"][0]["quantity"], 1);
+    assert_eq!(fields["rental"]["return_date"], format!("{year}-11-15"));
     drop(calls);
-    assert_eq!(
-        saved[0]["result"]["fields"]["items"][0]["amounts"]["shipping_fee_satang"],
-        4000
-    );
+    assert_eq!(fields["amounts"]["shipping_fee_satang"], 4000);
+    assert!(fields["notes"].as_str().unwrap().contains("รับชุด 5,6"));
     let calls = mock.calls.lock().await;
     let call = calls.last().unwrap();
     assert_eq!(
@@ -491,7 +499,7 @@ async fn order_mock(
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
-async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
+async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unknown_orders() {
     use super::product_tests::{CatalogMock, catalog_config, catalog_mock, login_mock, manual};
     let catalog = CatalogMock::default();
     let mock = OrderMock {
@@ -527,96 +535,119 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
     let id = all(&state, "inquiries").await[0]
         .get_object_id("_id")
         .unwrap();
-    let fields:DraftFields=serde_json::from_value(json!({"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110","branch":"A","items":[
-        {"product_name":"nina","product_code":"DR-012","color":"R","size":"M","quantity":1,"rental":{"pickup_date":"2026-11-04","return_date":"2026-11-08","fulfillment_method":"delivery","delivery_provider":"Flash"},"amounts":{"rental_fee_satang":55000,"deposit_satang":0,"shipping_fee_satang":4000}},
-        {"product_name":"Haatiya","product_code":"DR-012","color":"B","size":"L","quantity":1,"rental":{"pickup_date":"2026-11-12","return_date":"2026-11-15","fulfillment_method":"store_pickup"},"amounts":{"rental_fee_satang":100000,"deposit_satang":200001,"shipping_fee_satang":0}}]})).unwrap();
-    manual(&state, id, 0, fields).await;
-    let hash = drafts::snapshot(&state, &drafts::inquiry(&state, id).await.unwrap())
-        .await
-        .unwrap()
-        .hash;
-    for (index, product) in [(0, "item-1"), (1, "item-2")] {
-        let result=request(&state,&format!("/api/inquiries/{id}/products/search"),"POST",json!({"draft_version":1,"context_hash":hash,"item_index":index,"branch_id":"branch-a","mode":"code","query":"DR-012"}),true).await.1;
-        assert_eq!(request(&state,&format!("/api/inquiries/{id}/products/confirm"),"POST",json!({"search_id":result["search_id"],"product_item_id":product,"expected_revision":0,"acknowledge_difference":true}),true).await.0,StatusCode::OK);
-    }
+    // One inquiry is one order: dates, notes and discounts are order-level; products come from the cart.
+    let order = |pickup: &str, returned: &str, method: &str, discount: i64| -> DraftFields {
+        serde_json::from_value(json!({"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
+            "items":[{"product_name":"nina","quantity":1}],
+            "rental":{"pickup_date":pickup,"return_date":returned,"fulfillment_method":method,"delivery_provider":if method=="delivery"{json!("Flash")}else{Value::Null},"return_shipping_deadline":"16:00"},
+            "amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":0},"notes":"เข็มกลัดดอกไม้"})).unwrap()
+    };
+    manual(
+        &state,
+        id,
+        0,
+        order("2026-11-04", "2026-11-08", "delivery", 150001),
+    )
+    .await;
     let base = format!("/api/inquiries/{id}/checkout");
-    // The quantity chosen with the outfit drives the bill line; stale revisions are rejected.
-    let match_path = format!("/api/inquiries/{id}/products/match");
-    let quantity = |revision: i64, quantity: Value| json!({"item_index":0,"expected_revision":revision,"quantity":quantity});
+    let cart_path = format!("/api/inquiries/{id}/cart");
+    let empty = checkout::list(&state, id).await.unwrap();
+    assert!(empty["groups"].as_array().unwrap().is_empty());
+    assert_eq!(empty["missing"][0]["field"], "cart");
+    let result = request(
+        &state,
+        &format!("/api/inquiries/{id}/products/search"),
+        "POST",
+        json!({"branch_id":"branch-a","mode":"code","query":"DR-012"}),
+        true,
+    )
+    .await
+    .1;
     assert_eq!(
-        request(&state, &match_path, "POST", quantity(5, json!(2)), true)
-            .await
-            .0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        request(&state, &match_path, "POST", quantity(1, json!(1000)), true)
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    let (status, updated) = request(&state, &match_path, "POST", quantity(1, json!(2)), true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(updated["matches"][0]["quantity"], 2);
-    let doubled = checkout::list(&state, id).await.unwrap();
-    let line = doubled["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|group| group["pickup_date"] == "2026-11-04")
-        .unwrap()["lines"][0]
-        .clone();
-    assert_eq!(line["quantity"], 2);
-    assert_eq!(
-        request(&state, &match_path, "POST", quantity(2, json!(1)), true)
-            .await
-            .0,
+        request(
+            &state,
+            &cart_path,
+            "POST",
+            json!({"search_id":result["search_id"],"product_item_id":"item-1"}),
+            true
+        )
+        .await
+        .0,
         StatusCode::OK
     );
+    // The cart is checked with the dates on screen, before the draft is saved.
+    let check = format!("{cart_path}/availability");
+    let dates = |pickup: &str, returned: &str| json!({"pickup_date":pickup,"return_date":returned});
+    assert_eq!(
+        request(
+            &state,
+            &check,
+            "POST",
+            dates("2026-11-08", "2026-11-04"),
+            true
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    for (mode, expected) in [(20, "UNAVAILABLE"), (21, "UNKNOWN"), (0, "AVAILABLE")] {
+        catalog.mode.store(mode, Ordering::SeqCst);
+        let (status, checked) = request(
+            &state,
+            &check,
+            "POST",
+            dates("2026-11-04", "2026-11-08"),
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(checked["state"], expected);
+        assert_eq!(checked["items"][0]["code"], "DR-012");
+    }
     let data = checkout::list(&state, id).await.unwrap();
-    assert_eq!(data["groups"].as_array().unwrap().len(), 2);
-    let group = data["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|group| group["pickup_date"] == "2026-11-04")
-        .unwrap();
-    let input = json!({"source_hash":data["source_hash"],"group_key":group["key"]});
-    catalog.mode.store(20, Ordering::SeqCst);
+    assert_eq!(data["groups"].as_array().unwrap().len(), 1);
+    let group = &data["groups"][0];
+    assert_eq!(group["notes"], "ส่งคืนก่อน 16:00");
+    assert_eq!(group["rental_discount_satang"], 150001);
+    let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
+        "shipping_fee_satang":4000,"shipping_note_only":true,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
+    // An order discount above the catalog rent is rejected before anything is sent.
+    assert_eq!(
+        request(
+            &state,
+            &format!("{base}/review"),
+            "POST",
+            review.clone(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    manual(
+        &state,
+        id,
+        1,
+        order("2026-11-04", "2026-11-08", "delivery", 95000),
+    )
+    .await;
+    let data = checkout::list(&state, id).await.unwrap();
+    let group = data["groups"][0].clone();
     assert_eq!(
         request(
             &state,
             &format!("{base}/availability"),
             "POST",
-            input.clone(),
+            json!({"source_hash":data["source_hash"],"group_key":group["key"]}),
             true
         )
         .await
         .1["state"],
-        "UNAVAILABLE"
-    );
-    catalog.mode.store(21, Ordering::SeqCst);
-    assert_eq!(
-        request(
-            &state,
-            &format!("{base}/availability"),
-            "POST",
-            input.clone(),
-            true
-        )
-        .await
-        .1["state"],
-        "UNKNOWN"
-    );
-    catalog.mode.store(0, Ordering::SeqCst);
-    assert_eq!(
-        request(&state, &format!("{base}/availability"), "POST", input, true)
-            .await
-            .1["state"],
         "AVAILABLE"
     );
-    let mut review = json!({"source_hash":data["source_hash"],"group_key":group["key"],"customer_name":"คุณเอ","customer_phone":" 081-234 5678 ","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
-        "rental_discount_satang":95000,"deposit_discount_satang":0,"shipping_fee_satang":4000,"receiving_method":"Flash","rental_payment_method":"โอนเงิน","bail_payment_method":"โอนเงิน","notes":"เข็มกลัดดอกไม้"});
+    review["source_hash"] = data["source_hash"].clone();
+    review["group_key"] = group["key"].clone();
+    review["shipping_note_only"] = json!(false);
     assert_eq!(
         request(
             &state,
@@ -630,20 +661,6 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
         StatusCode::UNPROCESSABLE_ENTITY
     );
     review["shipping_note_only"] = json!(true);
-    review["rental_discount_satang"] = json!(150001);
-    assert_eq!(
-        request(
-            &state,
-            &format!("{base}/review"),
-            "POST",
-            review.clone(),
-            true
-        )
-        .await
-        .0,
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
-    review["rental_discount_satang"] = json!(95000);
     let (status, preview) = request(
         &state,
         &format!("{base}/review"),
@@ -679,6 +696,7 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
     assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.00");
     assert_eq!(payload["orderDetail"]["bailDiscount"], "0.00");
     assert_eq!(payload["orderDetail"]["customerPhone"], "0812345678");
+    assert_eq!(payload["orderDetail"]["startDate"], "2026-11-04");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
     assert!(payload["orderDetail"].get("birthDate").is_none());
     assert!(
@@ -717,13 +735,17 @@ async fn checkout_splits_dates_checks_stock_and_never_retries_unknown_orders() {
         "BILL_PENDING"
     );
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
-    let second = data["groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|group| group["pickup_date"] == "2026-11-12")
-        .unwrap();
-    review["group_key"] = second["key"].clone();
+    // New dates make a new order for the same cart; an unclear Alex reply is never retried.
+    manual(
+        &state,
+        id,
+        2,
+        order("2026-11-12", "2026-11-15", "store_pickup", 0),
+    )
+    .await;
+    let data = checkout::list(&state, id).await.unwrap();
+    review["source_hash"] = data["source_hash"].clone();
+    review["group_key"] = data["groups"][0]["key"].clone();
     review["shipping_fee_satang"] = json!(0);
     review["receiving_method"] = json!("รับหน้าร้าน");
     let preview = request(&state, &format!("{base}/review"), "POST", review, true)

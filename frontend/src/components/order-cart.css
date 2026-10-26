@@ -1,0 +1,30 @@
+.tabs{overflow-x:auto}.tabs>button{white-space:nowrap;flex-shrink:0}
+.order-cart{display:flex;flex-direction:column;min-width:0}.order-cart .notice,.queue-check .notice{margin:0}
+.order-section{display:flex;flex-direction:column;gap:12px;min-width:0;border-top:1px solid #e2e8f0;margin-top:20px;padding-top:4px}.draft-form>.order-section:first-child{border-top:0;margin-top:0;padding-top:0}
+.order-section .form-heading{margin:14px 0 0}.order-section .form-heading>span[aria-hidden]{display:inline;font-size:inherit;margin:0 4px 0 0}
+.product-filters{border:1px solid #e2e8f0;border-radius:8px;padding:10px}
+.product-filters summary{cursor:pointer;color:#0369a1;font-size:14px}.product-filters .field-grid{margin-top:12px}
+.match-card{position:relative;display:grid;grid-template-columns:minmax(118px,40%) minmax(0,1fr);gap:14px 18px;align-items:stretch;border:1px solid #e2e8f0;border-radius:8px;background:white;padding:18px 16px 16px;box-shadow:0 1px 4px #0f172a0d}
+.match-number{position:absolute;top:-9px;left:-7px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:#be185d;color:white;font-size:12px;font-weight:500;display:grid;place-items:center}
+.match-side{min-width:0}.match-side p{font-size:15px;line-height:1.6;color:#1e293b}
+.match-image{width:100px;height:125px;margin-bottom:6px;border-radius:4px;background:#f8fafc;display:grid;place-items:center;overflow:hidden;font-size:30px}
+.match-image img{width:100%;height:100%;object-fit:cover}
+.match-main{min-width:0;display:flex;flex-direction:column;justify-content:space-between;gap:12px}
+.match-title{text-align:center;padding-top:2px}.match-title strong{display:block;font-size:17px;font-weight:600;color:#1d4ed8;line-height:1.4;overflow-wrap:anywhere}
+.match-title span{display:block;font-size:12px;font-weight:600;color:#475569;overflow-wrap:anywhere}
+.match-price{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:0;font-size:15px;font-weight:600;color:#15803d}.match-price dd{margin:0}
+.quantity-stepper{display:flex;align-items:stretch;align-self:center;width:140px;max-width:100%;height:34px;border:1px solid #cbd5e1;border-radius:4px;overflow:hidden}
+.quantity-stepper button{width:30px;flex-shrink:0;border:0;background:white;color:#334155;font-size:20px;line-height:1;padding:0}.quantity-stepper button:hover:enabled{background:#eff6ff}
+.quantity-stepper input::-webkit-inner-spin-button,.quantity-stepper input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.match-remove{min-height:42px;border:0;border-radius:6px;background:#f1f5f9;color:#64748b;font-weight:600;font-size:14px}.match-remove:hover:enabled{background:#e2e8f0;color:#b91c1c}
+.request-list{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.request-chip{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:5px 12px;font-size:13px;text-align:left}.request-chip span{color:#475569}.request-chip:hover:enabled{border-color:#3b82f6}
+.candidate-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.candidate-tile{display:flex;flex-direction:column;gap:3px;border:1px solid #e2e8f0;border-radius:8px;background:white;padding:10px;min-width:0}
+.candidate-image{width:100%;aspect-ratio:4/5;border-radius:4px;background:#f8fafc;display:grid;place-items:center;overflow:hidden;font-size:30px;margin-bottom:6px}.candidate-image img{width:100%;height:100%;object-fit:cover}
+.candidate-tile strong{font-size:15px;font-weight:600;color:#1d4ed8;line-height:1.4;overflow-wrap:anywhere}.candidate-code{font-size:12px;font-weight:600;color:#475569;overflow-wrap:anywhere}
+.candidate-tile p{font-size:13px;line-height:1.6;color:#334155}.candidate-tile .candidate-price{color:#15803d;font-weight:600}.candidate-tile .button{margin-top:auto;font-size:14px;min-height:38px}
+.cart-list{display:flex;flex-direction:column;gap:14px;padding-top:6px}
+.cart-total{font-size:14px;font-weight:500;color:#15803d;text-align:right}
+.queue-check{display:flex;flex-direction:column;gap:8px}
+@media(max-width:600px){.candidate-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}.order-cart input,.order-cart select{font-size:16px}}

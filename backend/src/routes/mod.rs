@@ -1,4 +1,5 @@
 mod admin;
+mod cart;
 mod checkout;
 mod customers;
 mod drafts;
@@ -56,17 +57,11 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             "/api/inquiries/{id}/products/search",
             post(products::search),
         )
+        .route("/api/inquiries/{id}/cart", get(cart::list).post(cart::add))
+        .route("/api/inquiries/{id}/cart/item", post(cart::update))
         .route(
-            "/api/inquiries/{id}/products/confirm",
-            post(products::confirm),
-        )
-        .route(
-            "/api/inquiries/{id}/products/match",
-            post(products::update_match),
-        )
-        .route(
-            "/api/inquiries/{id}/product-searches/{search}/images/{product}",
-            get(products::image),
+            "/api/inquiries/{id}/cart/availability",
+            post(cart::availability),
         )
         .route("/api/inquiries/{id}/summary", post(drafts::save_summary))
         .route("/api/inquiries/{id}/prepare", post(drafts::prepare))

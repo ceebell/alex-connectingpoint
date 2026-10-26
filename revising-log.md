@@ -4,6 +4,41 @@
 
 <!-- entries -->
 
+## 2026-10-26 16:01 — หน้าออเดอร์เดียวในร่างล่าสุด: ค้นชุด + ตะกร้า + เช็คคิว, ข้อมูลระดับออเดอร์
+- **คำอธิบาย:** ผู้ใช้ขอ (1) ค้นและเลือกสินค้า Alex พร้อมรูปในแท็บร่างล่าสุดแล้วตัดแท็บเลือกชุด (2) วันรับ/คืน หมายเหตุ ส่วนลดค่าเช่า/ค่าประกันเป็นต่อออเดอร์ไม่ใช่ต่อสินค้า (3) เช็คคิวในหน้าเดียวกัน (4) ตัดแท็บลูกค้า (5) แสดงสินค้าที่ได้แบบตะกร้า (6) ตัดการ์ดสถิติ และยืนยันรูปแบบลิงก์รูป Alex `/images/{shopInfoId}/item/{file}` ซึ่งตรงกับที่ทำไว้ เดิมผลเลือกชุดผูกกับเวอร์ชันร่างและรายการ จึงหายทุกครั้งที่บันทึกร่าง ตอนนี้ย้ายเป็นตะกร้าต่อ inquiry
+- **โฟลเดอร์ `backend/src/`**
+  - `models/cart.rs`, `db/cart.rs`, `routes/cart.rs` — เพิ่ม: collection `cart_items` (unique shop/channel/inquiry/product_item_id) และ `GET/POST /api/inquiries/{id}/cart` (เพิ่มจาก search โดยค้น code ใน Alex ซ้ำและตรวจชื่อ/สี/ไซซ์/ราคา, เพิ่มซ้ำบวกจำนวน, ไม่เกิน 20 รายการ, สาขาเดียว), `POST .../cart/item` (ตั้งจำนวน 1–999 หรือเอาออก กัน revision), `POST .../cart/availability` (เช็คคิวตะกร้าด้วยวันที่บนหน้าจอ อ่านอย่างเดียว)
+  - `db/checkout.rs`, `models/checkout.rs` — แก้: บิลสร้างจากตะกร้า + วันที่/วิธีรับ/หมายเหตุ/ส่วนลดระดับออเดอร์ของร่างล่าสุดเป็นกลุ่มเดียว ส่วนลดอ่านจากร่าง (ลบออกจาก review input) และห้ามเกินยอดแค็ตตาล็อก รายการขาดเป็น `{field, code?}` (`cart`, วันที่, วิธีรับ, `catalog_price`, `mixed_branches`) ลบการตรวจ Product ID ซ้ำข้ามกลุ่ม; Line มี `image_url`
+  - `models/draft.rs` — แก้: `rental`/`amounts`/`notes` ต่อรายการเลิกใช้ (รับจากร่างเก่าแต่ไม่เก็บ) และทิ้ง evidence ของช่องเหล่านี้; `amounts` เพิ่ม `rental_discount_satang`/`deposit_discount_satang`; ข้อมูลขาดเหลือชื่อลูกค้า วันรับ วันคืน วิธีรับ
+  - `models/product.rs`, `db/products.rs`, `routes/products.rs`, `routes/mod.rs`, `error.rs`, `db/indexes.rs` — แก้/ลบ: search ไม่ต้องผูกร่าง (draft_version/context_hash/item_index เป็น optional) ลบ confirm, `products/match`, `product_matches` และ `PRODUCT_OPTIONS_DIFFER`; `GET /products` คืนเฉพาะผลค้นอัตโนมัติของร่างล่าสุด
+  - `draft_catalog.rs`, `order_draft_prompt.txt` — แก้: ไม่คัดลอกราคาแค็ตตาล็อกลงร่าง ข้อความถามชี้ไปส่วนค้นหาชุด/ตะกร้า; prompt ให้สินค้ามีแค่ code/name/color/size/quantity วันที่ ค่าเงิน ส่วนลด และหมายเหตุอยู่ระดับออเดอร์ วันต่างกันให้ถามว่าจะแยกออเดอร์ ส่วนลดเฉพาะที่ระบุชัด
+  - `tests_products.rs`, `tests_rental.rs`, `tests_draft_catalog.rs`, `tests_step2.rs` — แก้: ทดสอบ search+ตะกร้า (Product ID ปลอม, ราคาเปลี่ยน, จำนวนเกิน, revision เก่า, เอาออก, ตะกร้าคงอยู่หลังบันทึกร่าง), บิลตะกร้าเป็นออเดอร์เดียวพร้อมเช็คคิวด้วยวันบนจอ ส่วนลดจากร่างเกินยอด 422 ออเดอร์ที่สองด้วยวันใหม่และผลไม่ชัดเจน, ร่างเก่าที่มีข้อมูลต่อรายการ
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/order-cart.tsx`, `components/order-cart.css` — เพิ่ม: ค้นหาชุด (สาขา วิธีค้น ชื่อ/รหัส สี ไซซ์ ตัวกรองเพิ่มเติม) ผลค้นหาเป็นการ์ดรูป Alex พร้อมปุ่มเพิ่มลงตะกร้า ชิปสิ่งที่ลูกค้าขอจากรูป/สรุปเพื่อเปิดผลค้นอัตโนมัติ ตะกร้าแบบการ์ด Alex พร้อม −/+ และเอาออก ยอดรวม และ `QueueCheck` เช็คคิว (แทน `product-matcher.css`)
+  - `components/draft-editor.tsx` — แก้: หน้าออเดอร์เดียว ลูกค้า → ค้นหา/ตะกร้า → วันรับ–คืน/วิธีรับ/ขนส่ง + เช็คคิว → ส่วนลดค่าเช่า/ค่าประกัน/ค่าส่ง (เทียบยอดตะกร้า) + หมายเหตุ → บันทึก; ยกค่าต่อรายการของร่างเก่าขึ้นระดับออเดอร์อัตโนมัติ
+  - `components/admin-workspace.tsx`, `app/globals.css` — แก้: ลบการ์ดสถิติ (และ CSS) แท็บเลือกชุด แท็บลูกค้า ขยายความสูงพื้นที่ทำงาน
+  - `components/rental-checkout.tsx`, `lib/api.ts` — แก้: ส่วนลดแสดงจากร่างแบบอ่านอย่างเดียว รายการขาดแบบใหม่ ชนิดข้อมูลตะกร้า/ส่วนลด `filledKeys` ข้ามช่องต่อรายการที่เลิกใช้
+  - `components/product-matcher.tsx`, `components/product-matcher.css`, `components/draft-item-editor.tsx`, `components/customer-profile.tsx` — ลบ: ไม่มีที่ใช้แล้ว
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md`, `step-3-products.md` — แก้: ขั้นตอนหน้าออเดอร์เดียว ตะกร้า เช็คคิว ส่วนลดระดับออเดอร์ และ API ตะกร้าแทน confirm/match
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 41/41 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint (max-warnings 0) และ npm run build ผ่าน; render หน้าออเดอร์ด้วย CSS ที่ build จริงใน headless Edge ที่ความกว้างแผงร่าง ยังไม่ได้ทดสอบกับ Alex จริงหรือเปิดแอปเต็มในเบราว์เซอร์; ตะกร้าเก่าไม่มีให้ย้าย ชุดที่เคยยืนยันใน `product_matches` ต้องค้นและเพิ่มลงตะกร้าใหม่
+- **ยังไม่ได้ build release:** `build-backend.bat`/`build-frontend.bat` ล้มเพราะ Docker Desktop Linux engine ตอบ 500 (ไม่ได้ restart Docker ให้) `dist/` ยังเป็นรุ่นก่อนหน้า `rel-20261026082840-fb326df853bd` / `front-20261026082941-04f04346e469` ซึ่งไม่มีงานนี้ ต้อง build ใหม่ก่อน `rungit.bat`
+
+## 2026-10-26 15:29 — การ์ดชุดแบบหน้าตะกร้า Alex และรูปจากลิงก์ Alex
+- **คำอธิบาย:** ผู้ใช้ส่งภาพการ์ดตะกร้าของ Alex ให้แสดงแบบเดียวกันและใช้รูปจากลิงก์ Alex ตรวจ JS bundle สาธารณะของ shop.alexrental.app พบว่าเว็บ Alex ประกอบรูปเป็น `{origin}/images/{shopInfoId}/item/{mainImage}` (shopInfoId มาจาก login) แต่ backend เดิม join `mainImage` เข้ากับ root ของ API จึงได้ URL ผิดเมื่อเป็นชื่อไฟล์ และรูปของชุดที่ยืนยันแล้วผ่าน proxy ที่ผูกกับ search ซึ่งหมดอายุใน 30 นาที ตรวจแล้วว่า `/images/...` ของ Alex เปิดได้โดยไม่ต้อง login
+- **โฟลเดอร์ `backend/src/`**
+  - `alex.rs` — แก้: `allowed_image` แปลงชื่อไฟล์เป็น `/images/{ALEX_SHOP_INFO_ID}/item/{file}` (encode ชื่อไฟล์, กัน `..` ออกนอกโฟลเดอร์ร้าน) ค่าที่เป็น path/URL เต็มยังตรวจ origin เดิม; เพิ่ม unit test
+  - `db/products.rs`, `routes/products.rs`, `routes/mod.rs`, `models/product.rs` — แก้/ลบ: candidate และชุดที่ยืนยันส่งลิงก์รูป Alex ให้ browser ตรง ลบ `GET /api/inquiries/{id}/product-searches/{search}/images/{product}` ที่ไม่มีผู้ใช้แล้ว (การเทียบรูปฝั่ง server ยังดาวน์โหลดผ่าน `alex::image` ตามเดิม)
+  - `tests_products.rs`, `tests_draft_catalog.rs` — แก้: ตรวจว่า `image_url` เป็นลิงก์รูปจาก Alex
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `product-matcher.tsx`, `product-matcher.css` — แก้: การ์ดชุดตามภาพตัวอย่าง (รูป 100×125 และสี/ไซซ์ด้านซ้าย, ชื่อสีน้ำเงินและรหัสในวงเล็บด้านขวา, ราคา/ค่าประกันสีเขียวแบบตัวเลขบาท, ปุ่ม −/จำนวน/+ และปุ่มเอาออกสีเทากว้าง, ป้ายเลขรายการมุมซ้ายบน) แสดงสาขาเฉพาะเมื่อมีหลายสาขา ปุ่มใช้ข้อความไทย "เอาออก" ตาม AGENTS.md
+- **โฟลเดอร์ `docs/`**
+  - `step-3-products.md` — แก้: วิธีประกอบลิงก์รูป Alex, endpoint `products/match` และ `quantity` ใน confirm
+- **โฟลเดอร์ `dist/` (build บน Docker Desktop local)**
+  - `line-linux/` — แก้: backend release `rel-20261026082840-fb326df853bd`
+  - `frontend-linux/` — แก้: frontend release `front-20261026082941-04f04346e469`
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 41/41 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint และ npm run build ผ่าน; render การ์ดด้วย CSS จริงใน headless Edge แล้วเทียบกับภาพตัวอย่าง ยังไม่ได้ยืนยันค่า `mainImage` จริงจาก API ของร้าน และชุดที่ยืนยันก่อนรุ่นนี้ยังเก็บลิงก์รูปแบบเดิม ต้องค้นและยืนยันใหม่หากรูปไม่ขึ้น
+
 ## 2026-10-26 15:04 — ปรับความกว้างแชท/ร่าง, การ์ดชุดพร้อมจำนวน, ส่วนลด และกติกาเบอร์/จำนวน/วันที่
 - **คำอธิบาย:** ผู้ใช้ขอให้ UI ปรับความกว้างซ้าย-ขวาได้ บันทึกเบอร์โดยไม่มีช่องว่าง/ขีดกลาง ใช้จำนวน 1 เมื่อไม่ระบุ มีช่องจำนวนในแท็บเลือกชุดและแสดงชุดเป็นการ์ดแบบหน้าร้าน Alex (รูป ชื่อ รหัส สี ไซซ์ ราคา ค่าประกัน −/+ เอาออก) ใช้แค่วันรับชุด/วันคืนชุดตามที่ Alex ใช้ และกรอกส่วนลดค่าเช่า/ส่วนลดค่าประกันเอง (ผู้ใช้เลือก: เพิ่มช่องส่วนลด, จำนวนอยู่แท็บเลือกชุด, ตัดวันใช้งาน/วันส่งชุดออกทั้งหมด)
 - **โฟลเดอร์ `backend/src/`**

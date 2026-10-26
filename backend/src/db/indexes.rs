@@ -29,8 +29,8 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             false,
         ),
         (
-            "product_matches",
-            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"draft_id":1,"item_index":1},
+            "cart_items",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"product_item_id":1},
             true,
         ),
         (

@@ -1,19 +1,19 @@
 use crate::{
     alex,
-    db::{drafts, products},
+    db::{cart, drafts, products},
     error::AppError,
     models::{
+        cart::CheckInput as CartCheckInput,
         checkout::{CheckInput, Group, Line, ResolveInput, ReviewInput, SubmitInput},
         customer::{Actor, ProfileInput, normalize_phone},
         draft::{DraftFields, valid_date},
-        product::Candidate,
     },
     state::AppState,
 };
 use futures_util::TryStreamExt;
 use mongodb::bson::{self, DateTime, Document, doc, oid::ObjectId};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 struct Source {
     inquiry: Document,
@@ -25,76 +25,51 @@ struct Source {
     has_conflicts: bool,
 }
 
+// One inquiry is one Alex order: cart lines plus the order-level dates, notes and discounts.
 async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     let (inquiry, draft, fields, snapshot) = products::current(state, id).await?;
     let draft_id = draft.get_object_id("_id").map_err(|_| AppError::Data)?;
-    let mut filter = state.scope();
-    filter.extend(doc! {"inquiry_id":id,"draft_id":draft_id});
-    let records: Vec<Document> = state
-        .collection("product_matches")
-        .find(filter)
-        .sort(doc! {"item_index":1})
-        .limit(20)
-        .await?
-        .try_collect()
-        .await?;
-    let source_hash = drafts::hash(
-        &json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"matches":records}),
-    )?;
-    let matches: BTreeMap<_, _> = records
-        .into_iter()
-        .filter_map(|record| {
-            record
-                .get_i64("item_index")
-                .ok()
-                .map(|index| (index as usize, record))
-        })
-        .collect();
-    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    let records = cart::items(state, id).await?;
+    let source_hash =
+        drafts::hash(&json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"cart":records}))?;
     let mut missing = Vec::new();
-    for (index, item) in fields.items.iter().enumerate() {
-        let rental = item.effective_rental(&fields.rental);
-        let mut absent = Vec::new();
-        if !matches.contains_key(&index) {
-            absent.push("product_match");
+    if records.is_empty() {
+        missing.push(json!({"field":"cart"}));
+    }
+    let rental = &fields.rental;
+    for (field, present) in [
+        ("pickup_date", rental.pickup_date.is_some()),
+        ("return_date", rental.return_date.is_some()),
+        ("fulfillment_method", rental.fulfillment_method.is_some()),
+    ] {
+        if !present {
+            missing.push(json!({"field":field}));
         }
-        if rental.pickup_date.is_none() {
-            absent.push("pickup_date");
-        }
-        if rental.return_date.is_none() {
-            absent.push("return_date");
-        }
-        if rental.fulfillment_method.is_none() {
-            absent.push("fulfillment_method");
-        }
-        if !absent.is_empty() {
-            missing.push(json!({"item_index":index,"fields":absent}));
-            continue;
-        }
-        let record = matches.get(&index).ok_or(AppError::Data)?;
-        let candidate: Candidate = bson::from_document(
-            record
-                .get_document("candidate")
-                .map_err(|_| AppError::Data)?
-                .clone(),
-        )
-        .map_err(|_| AppError::Data)?;
-        let (Some(rental_fee), Some(deposit)) =
-            (candidate.rental_fee_satang, candidate.deposit_satang)
-        else {
-            missing.push(json!({"item_index":index,"fields":["catalog_price"]}));
-            continue;
-        };
-        let branch = record
-            .get_str("branch_id")
-            .map_err(|_| AppError::Data)?
-            .to_string();
-        let pickup = rental.pickup_date.ok_or(AppError::Data)?;
-        let returned = rental.return_date.ok_or(AppError::Data)?;
+    }
+    let CartLines {
+        lines,
+        unpriced,
+        branches,
+    } = cart_lines(&records)?;
+    missing.extend(
+        unpriced
+            .into_iter()
+            .map(|code| json!({"field":"catalog_price","code":code})),
+    );
+    if branches.len() > 1 {
+        missing.push(json!({"field":"mixed_branches"}));
+    }
+    let mut groups = Vec::new();
+    if let (true, Some(branch), Some(pickup), Some(returned), Some(method)) = (
+        missing.is_empty(),
+        branches.into_iter().next(),
+        rental.pickup_date.clone(),
+        rental.return_date.clone(),
+        rental.fulfillment_method.clone(),
+    ) {
         if !valid_date(&pickup) || !valid_date(&returned) || returned < pickup {
             return Err(AppError::Validation("Invalid rental dates"));
         }
-        let method = rental.fulfillment_method.ok_or(AppError::Data)?;
         let key = drafts::hash(&json!([
             branch,
             pickup,
@@ -102,103 +77,25 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             method,
             rental.delivery_provider
         ]))?;
-        let group = groups.entry(key.clone()).or_insert_with(|| Group {
+        groups.push(Group {
             key,
             branch_id: branch,
             pickup_date: pickup,
             return_date: returned,
             fulfillment_method: method,
-            delivery_provider: rental.delivery_provider,
-            lines: vec![],
-            notes: String::new(),
-            quoted_rental_fee_satang: None,
-            quoted_deposit_satang: None,
-            quoted_shipping_fee_satang: None,
+            delivery_provider: rental.delivery_provider.clone(),
+            lines,
+            notes: rental
+                .return_shipping_deadline
+                .as_ref()
+                .map(|time| format!("ส่งคืนก่อน {time}"))
+                .unwrap_or_default(),
+            quoted_rental_fee_satang: fields.amounts.rental_fee_satang,
+            quoted_deposit_satang: fields.amounts.deposit_satang,
+            quoted_shipping_fee_satang: fields.amounts.shipping_fee_satang,
+            rental_discount_satang: fields.amounts.rental_discount_satang.unwrap_or(0),
+            deposit_discount_satang: fields.amounts.deposit_discount_satang.unwrap_or(0),
         });
-        let mut notes = Vec::new();
-        if let Some(note) = &item.notes {
-            notes.push(note.clone());
-        }
-        if let Some(time) = &rental.return_shipping_deadline {
-            notes.push(format!("ส่งคืนก่อน {time}"));
-        }
-        if !notes.is_empty() {
-            group
-                .notes
-                .push_str(&format!("รายการ {}: {}\n", index + 1, notes.join(" · ")));
-        }
-        group.lines.push(Line {
-            item_index: index,
-            product_item_id: candidate.product_item_id,
-            code: candidate.code,
-            name: candidate.name,
-            color: candidate.color,
-            size: candidate.size,
-            // The quantity set while choosing the outfit wins; unspecified quantities mean one.
-            quantity: record
-                .get_i64("quantity")
-                .ok()
-                .or(item.quantity)
-                .unwrap_or(1),
-            rental_fee_satang: rental_fee,
-            deposit_satang: deposit,
-        });
-    }
-    let mut groups: Vec<_> = groups.into_values().collect();
-    let count = groups.len();
-    for group in &mut groups {
-        let quoted = |key: &str| -> Option<i64> {
-            let values: Option<Vec<i64>> = group
-                .lines
-                .iter()
-                .map(|line| {
-                    fields.items[line.item_index]
-                        .amounts
-                        .as_ref()
-                        .and_then(|amounts| match key {
-                            "rental" => amounts.rental_fee_satang,
-                            "deposit" => amounts.deposit_satang,
-                            _ => amounts.shipping_fee_satang,
-                        })
-                })
-                .collect();
-            values.map(|values| values.iter().sum()).or({
-                if count == 1 && group.lines.len() == fields.items.len() {
-                    match key {
-                        "rental" => fields.amounts.rental_fee_satang,
-                        "deposit" => fields.amounts.deposit_satang,
-                        _ => fields.amounts.shipping_fee_satang,
-                    }
-                } else {
-                    None
-                }
-            })
-        };
-        group.quoted_rental_fee_satang = quoted("rental");
-        group.quoted_deposit_satang = quoted("deposit");
-        group.quoted_shipping_fee_satang = quoted("shipping");
-    }
-    // Repeated IDs over overlapping dates need an explicit quantity merge; their ID level is not guessed.
-    for (a, group) in groups.iter().enumerate() {
-        for other in groups.iter().skip(a) {
-            for line in &group.lines {
-                for item in &other.lines {
-                    if line.item_index != item.item_index
-                        && group.branch_id == other.branch_id
-                        && line.product_item_id == item.product_item_id
-                        && group.pickup_date <= other.return_date
-                        && other.pickup_date <= group.return_date
-                    {
-                        missing.push(
-                            json!({"item_index":line.item_index,"fields":["overlapping_product"]}),
-                        );
-                        missing.push(
-                            json!({"item_index":item.item_index,"fields":["overlapping_product"]}),
-                        );
-                    }
-                }
-            }
-        }
     }
     let has_conflicts = draft
         .get_document("result")
@@ -216,6 +113,51 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     })
 }
 
+// Bill lines from cart records, the codes that lack a catalog price, and the branches in use.
+struct CartLines {
+    lines: Vec<Line>,
+    unpriced: Vec<String>,
+    branches: BTreeSet<String>,
+}
+
+fn cart_lines(records: &[Document]) -> Result<CartLines, AppError> {
+    let mut lines = Vec::new();
+    let mut unpriced = Vec::new();
+    let mut branches = BTreeSet::new();
+    for (index, record) in records.iter().enumerate() {
+        let candidate = cart::candidate(record)?;
+        branches.insert(
+            record
+                .get_str("branch_id")
+                .map_err(|_| AppError::Data)?
+                .to_string(),
+        );
+        let (Some(rental_fee), Some(deposit)) =
+            (candidate.rental_fee_satang, candidate.deposit_satang)
+        else {
+            unpriced.push(candidate.code);
+            continue;
+        };
+        lines.push(Line {
+            item_index: index,
+            product_item_id: candidate.product_item_id,
+            code: candidate.code,
+            name: candidate.name,
+            color: candidate.color,
+            size: candidate.size,
+            quantity: record.get_i64("quantity").unwrap_or(1),
+            rental_fee_satang: rental_fee,
+            deposit_satang: deposit,
+            image_url: candidate.image_url,
+        });
+    }
+    Ok(CartLines {
+        lines,
+        unpriced,
+        branches,
+    })
+}
+
 fn choose(source: &Source, key: &str) -> Result<Group, AppError> {
     let group = source
         .groups
@@ -223,17 +165,7 @@ fn choose(source: &Source, key: &str) -> Result<Group, AppError> {
         .find(|group| group.key == key)
         .cloned()
         .ok_or(AppError::BillNotReady)?;
-    if source.has_conflicts
-        || source.missing.iter().any(|value| {
-            value["fields"]
-                .as_array()
-                .is_some_and(|fields| fields.contains(&json!("overlapping_product")))
-                && group
-                    .lines
-                    .iter()
-                    .any(|line| value["item_index"].as_u64() == Some(line.item_index as u64))
-        })
-    {
+    if source.has_conflicts || !source.missing.is_empty() {
         return Err(AppError::BillNotReady);
     }
     Ok(group)
@@ -368,6 +300,61 @@ pub async fn availability(
     Ok(json!({"state":status,"items":results,"checked_at":now,"reserves_stock":false}))
 }
 
+// Queue check for the cart with the dates on screen; it reads Alex only and reserves nothing.
+pub async fn cart_availability(
+    state: &AppState,
+    id: ObjectId,
+    input: CartCheckInput,
+) -> Result<Value, AppError> {
+    if !valid_date(&input.pickup_date)
+        || !valid_date(&input.return_date)
+        || input.return_date < input.pickup_date
+    {
+        return Err(AppError::Validation("Invalid rental dates"));
+    }
+    drafts::inquiry(state, id).await?;
+    let records = cart::items(state, id).await?;
+    let CartLines {
+        lines,
+        unpriced,
+        branches,
+    } = cart_lines(&records)?;
+    let branch = match (branches.len(), unpriced.is_empty()) {
+        (1, true) => branches.into_iter().next().ok_or(AppError::Data)?,
+        (0, _) => return Err(AppError::Validation("The cart is empty")),
+        _ => {
+            return Err(AppError::Validation(
+                "Cart items need a catalog price and one branch",
+            ));
+        }
+    };
+    let group = Group {
+        key: String::new(),
+        branch_id: branch,
+        pickup_date: input.pickup_date,
+        return_date: input.return_date,
+        fulfillment_method: String::new(),
+        delivery_provider: None,
+        lines,
+        notes: String::new(),
+        quoted_rental_fee_satang: None,
+        quoted_deposit_satang: None,
+        quoted_shipping_fee_satang: None,
+        rental_discount_satang: 0,
+        deposit_discount_satang: 0,
+    };
+    let session = alex::login(state).await?;
+    let results = check(state, &session, &group).await?;
+    let status = if results.iter().all(|value| value["state"] == "AVAILABLE") {
+        "AVAILABLE"
+    } else if results.iter().any(|value| value["state"] == "UNAVAILABLE") {
+        "UNAVAILABLE"
+    } else {
+        "UNKNOWN"
+    };
+    Ok(json!({"state":status,"items":results,"checked_at":DateTime::now(),"reserves_stock":false}))
+}
+
 fn baht(value: i64) -> String {
     format!("{}.{:02}", value / 100, value % 100)
 }
@@ -383,13 +370,7 @@ fn validate_input(input: &ReviewInput, group: &Group) -> Result<(), AppError> {
     if input.customer_name.trim().is_empty()
         || input.customer_phone.trim().is_empty()
         || (group.fulfillment_method == "delivery" && input.customer_address.trim().is_empty())
-        || [
-            input.rental_discount_satang,
-            input.deposit_discount_satang,
-            input.shipping_fee_satang,
-        ]
-        .into_iter()
-        .any(|value| !(0..=10_000_000_000).contains(&value))
+        || !(0..=10_000_000_000).contains(&input.shipping_fee_satang)
         || [
             &input.receiving_method,
             &input.rental_payment_method,
@@ -438,13 +419,13 @@ pub async fn review(
         .iter()
         .map(|line| line.deposit_satang * line.quantity)
         .sum();
-    if input.rental_discount_satang > rental || input.deposit_discount_satang > deposit {
+    if group.rental_discount_satang > rental || group.deposit_discount_satang > deposit {
         return Err(AppError::Validation(
             "Discounts cannot exceed the catalog rental or deposit totals",
         ));
     }
-    let rental_fee = rental - input.rental_discount_satang;
-    let deposit_fee = deposit - input.deposit_discount_satang;
+    let rental_fee = rental - group.rental_discount_satang;
+    let deposit_fee = deposit - group.deposit_discount_satang;
     let mut notes = input.notes.clone();
     if input.shipping_fee_satang > 0 {
         notes.push_str(&format!(
@@ -455,7 +436,7 @@ pub async fn review(
     let mut detail = json!({"branchId":group.branch_id,"customerId":"","customerName":input.customer_name,"customerAddress":input.customer_address,"customerPhone":input.customer_phone,
         "lineId":"","howToKnowShop":"","accountNumber":"","accountName":"","bankName":"","startDate":group.pickup_date,"endDate":group.return_date,
         "receivingMethod":input.receiving_method,"remark1":notes,"rentalPaymentMethod":input.rental_payment_method,"bailPaymentMethod":input.bail_payment_method,
-        "pointDiscount":0,"voucherDiscount":0,"rentalDiscount":baht(input.rental_discount_satang),"bailDiscount":baht(input.deposit_discount_satang),
+        "pointDiscount":0,"voucherDiscount":0,"rentalDiscount":baht(group.rental_discount_satang),"bailDiscount":baht(group.deposit_discount_satang),
         "useFreeItemPromotion":input.use_free_item_promotion,"useDiscountPromotion":input.use_discount_promotion});
     if let Some(birth) = &input.birth_date {
         detail["birthDate"] = json!(birth);
@@ -486,7 +467,7 @@ pub async fn review(
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
         "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
-        "shipping_note_only":input.shipping_note_only,"rental_discount_satang":input.rental_discount_satang,"deposit_discount_satang":input.deposit_discount_satang,
+        "shipping_note_only":input.shipping_note_only,"rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
     )
 }

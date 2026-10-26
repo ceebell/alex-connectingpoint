@@ -11,6 +11,8 @@ pub struct Line {
     pub quantity: i64,
     pub rental_fee_satang: i64,
     pub deposit_satang: i64,
+    #[serde(default)]
+    pub image_url: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Group {
@@ -25,6 +27,11 @@ pub struct Group {
     pub quoted_rental_fee_satang: Option<i64>,
     pub quoted_deposit_satang: Option<i64>,
     pub quoted_shipping_fee_satang: Option<i64>,
+    // Order discounts from the draft; validated against catalog totals at review time.
+    #[serde(default)]
+    pub rental_discount_satang: i64,
+    #[serde(default)]
+    pub deposit_discount_satang: i64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,11 +50,6 @@ pub struct ReviewInput {
     pub receiving_method: String,
     pub rental_payment_method: String,
     pub bail_payment_method: String,
-    // Discounts off the catalog totals, sent to Alex as rentalDiscount/bailDiscount.
-    #[serde(default)]
-    pub rental_discount_satang: i64,
-    #[serde(default)]
-    pub deposit_discount_satang: i64,
     pub shipping_fee_satang: i64,
     #[serde(default)]
     pub shipping_note_only: bool,

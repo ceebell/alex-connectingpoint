@@ -3,7 +3,7 @@ use crate::{
     db::drafts,
     error::AppError,
     models::{
-        draft::{Amounts, DraftItem, DraftResult, Evidence},
+        draft::{DraftItem, DraftResult, Evidence},
         product::{Candidate, SearchInput, SearchMode},
     },
     state::AppState,
@@ -110,8 +110,8 @@ async fn candidates(
     Ok((found.into_values().collect(), more))
 }
 
+// Catalog prices are not copied: the cart holds the chosen item and its Alex prices.
 fn fill(result: &mut DraftResult, index: usize, candidate: &Candidate) -> Vec<(String, Value)> {
-    let common = result.fields.amounts.clone();
     let item = &mut result.fields.items[index];
     let mut filled = vec![];
     for (key, target, value) in [
@@ -131,29 +131,6 @@ fn fill(result: &mut DraftResult, index: usize, candidate: &Candidate) -> Vec<(S
         if let Some(value) = value {
             *target = Some(value.clone());
             filled.push((format!("items.{index}.{key}"), json!(value)));
-        }
-    }
-    let amounts = item.amounts.get_or_insert_with(Amounts::default);
-    for (key, target, common, catalog) in [
-        (
-            "rental_fee_satang",
-            &mut amounts.rental_fee_satang,
-            common.rental_fee_satang,
-            candidate.rental_fee_satang,
-        ),
-        (
-            "deposit_satang",
-            &mut amounts.deposit_satang,
-            common.deposit_satang,
-            candidate.deposit_satang,
-        ),
-    ] {
-        if target.is_none()
-            && common.is_none()
-            && let Some(value) = catalog
-        {
-            *target = Some(value);
-            filled.push((format!("items.{index}.amounts.{key}"), json!(value)));
         }
     }
     filled
@@ -181,7 +158,8 @@ pub async fn enrich(
             };
             question(
                 result,
-                "ยังค้นสินค้าใน Alex ไม่สำเร็จ กรุณาตรวจการเชื่อมต่อแล้วค้นอีกครั้งในแท็บเลือกชุด".into(),
+                "ยังค้นสินค้าใน Alex ไม่สำเร็จ กรุณาตรวจการเชื่อมต่อแล้วค้นอีกครั้งในส่วนค้นหาชุดของแท็บร่างล่าสุด"
+                    .into(),
             );
             return Ok((0..result.fields.items.len())
                 .map(|index| doc! {"item_index":index as i64,"status":status})
@@ -199,7 +177,10 @@ pub async fn enrich(
         None
     };
     let Some(branch) = branch else {
-        question(result, "กรุณาเลือกสาขา Alex ที่ต้องการค้นสินค้าในแท็บเลือกชุด".into());
+        question(
+            result,
+            "กรุณาเลือกสาขา Alex ที่ต้องการค้นสินค้าในส่วนค้นหาชุดของแท็บร่างล่าสุด".into(),
+        );
         return Ok((0..result.fields.items.len())
             .map(|index| doc! {"item_index":index as i64,"status":"BRANCH_REQUIRED"})
             .collect());
@@ -255,7 +236,7 @@ pub async fn enrich(
                     question(
                         result,
                         format!(
-                            "ค้นสินค้ารายการ {} ใน Alex ไม่สำเร็จ กรุณาค้นอีกครั้งในแท็บเลือกชุด",
+                            "ค้นสินค้ารายการ {} ใน Alex ไม่สำเร็จ กรุณาค้นอีกครั้งในส่วนค้นหาชุด",
                             index + 1
                         ),
                     );
@@ -302,7 +283,7 @@ pub async fn enrich(
             question(
                 result,
                 format!(
-                    "ไม่พบสินค้ารายการ {} ใน Alex กรุณาตรวจชื่อ สี และไซซ์ในแท็บเลือกชุด",
+                    "ไม่พบสินค้ารายการ {} ใน Alex กรุณาตรวจชื่อ สี และไซซ์ในส่วนค้นหาชุด",
                     index + 1
                 ),
             );
@@ -310,7 +291,7 @@ pub async fn enrich(
             question(
                 result,
                 format!(
-                    "กรุณาเลือกสินค้ารายการ {} จากผลค้นหา Alex ในแท็บเลือกชุด",
+                    "กรุณาเลือกสินค้ารายการ {} จากผลค้นหา Alex แล้วเพิ่มลงตะกร้า",
                     index + 1
                 ),
             );

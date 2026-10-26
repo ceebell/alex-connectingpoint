@@ -77,8 +77,6 @@ pub enum AppError {
         "No readable code or usable catalog images; search by text or add catalog images in Alex"
     )]
     CatalogImagesUnavailable,
-    #[error("Catalog options differ from the draft; explicit acknowledgement is required")]
-    ProductOptionsMismatch,
     #[error("The bill needs current products, complete dates and an available queue")]
     BillNotReady,
     #[error("An Alex order exists or a submission requires manual verification")]
@@ -116,7 +114,6 @@ impl AppError {
             Self::AlexScope => "ALEX_SCOPE_DENIED",
             Self::ProductConflict => "PRODUCT_CONFLICT",
             Self::CatalogImagesUnavailable => "CATALOG_IMAGES_UNAVAILABLE",
-            Self::ProductOptionsMismatch => "PRODUCT_OPTIONS_DIFFER",
             Self::BillNotReady => "BILL_NOT_READY",
             Self::BillPending => "BILL_PENDING",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
@@ -149,7 +146,6 @@ impl IntoResponse for AppError {
             Self::AlexScope => StatusCode::FORBIDDEN,
             Self::ProductConflict => StatusCode::CONFLICT,
             Self::CatalogImagesUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::ProductOptionsMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::BillNotReady | Self::BillPending => StatusCode::CONFLICT,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,

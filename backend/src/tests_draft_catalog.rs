@@ -64,9 +64,9 @@ async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Valu
     assert!(data.get("previous_draft").is_none());
     assert!(!data.to_string().contains("CHAT-ONLY"));
     assert!(!data.to_string().contains("OLD-DRAFT"));
-    let mut fields: DraftFields = serde_json::from_value(json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","quantity":1,"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000}}]})).unwrap();
+    let mut fields: DraftFields = serde_json::from_value(json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","quantity":1}],"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000}})).unwrap();
     if flow.mode.load(Ordering::SeqCst) == 4 {
-        fields.items[0].amounts.as_mut().unwrap().rental_fee_satang = None;
+        fields.amounts.rental_fee_satang = None;
     }
     let image = data["selected_image_event_refs"]
         .as_array()
@@ -188,18 +188,21 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
         let latest = &saved[0];
         let item = &latest["result"]["fields"]["items"][0];
         assert!(latest["result"]["fields"]["customer_name"].is_null());
-        assert_eq!(
-            item["amounts"]["rental_fee_satang"],
-            if mode == 4 { 100000 } else { 55000 }
-        );
-        assert_eq!(item["amounts"]["shipping_fee_satang"], 4000);
+        // Quoted fees stay order-level; catalog prices live in the cart, not the draft.
+        let amounts = &latest["result"]["fields"]["amounts"];
+        if mode == 4 {
+            assert!(amounts["rental_fee_satang"].is_null());
+        } else {
+            assert_eq!(amounts["rental_fee_satang"], 55000);
+        }
+        assert_eq!(amounts["shipping_fee_satang"], 4000);
+        assert!(item.get("amounts").is_none());
         let lookup = &latest["catalog_lookup"][0];
         let matched = mode == 0 || mode == 4 || mode == 6;
         if matched {
             assert_eq!(lookup["status"], "MATCHED");
             assert_eq!(item["product_code"], "DR-NINA");
             assert_eq!(item["product_name"], "Nina dress");
-            assert_eq!(item["amounts"]["deposit_satang"], 200000);
             assert_eq!(lookup["selected_product_item_id"], "nina-1");
             assert!(
                 latest["result"]["evidence"]
@@ -211,7 +214,6 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
             );
         } else {
             assert!(item["product_code"].is_null());
-            assert!(item["amounts"]["deposit_satang"].is_null());
             assert_eq!(
                 lookup["status"],
                 match mode {
@@ -224,8 +226,6 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
             assert!(!latest["result"]["questions"].as_array().unwrap().is_empty());
         }
         let result = products::list(&state, id).await.unwrap();
-        assert_eq!(result["product_verified"], false);
-        assert!(result["matches"].as_array().unwrap().is_empty());
         assert!(all(&state, "orders").await.is_empty());
         let calls = flow.calls.lock().await;
         assert_eq!(calls[0]["operation"], "login");
@@ -241,14 +241,24 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
                     suggestions["candidates"][0]["image_url"]
                         .as_str()
                         .unwrap()
-                        .starts_with("/api/inquiries/")
+                        .ends_with("/photo.png")
                 );
             }
         }
         drop(calls);
         if matched {
-            let (_, confirmed) = request(&state,&format!("/api/inquiries/{id}/products/confirm"),"POST",json!({"search_id":lookup["search_id"],"product_item_id":"nina-1","expected_revision":0}),true).await;
-            assert_eq!(confirmed["candidate"]["product_item_id"], "nina-1");
+            // The AI suggestion goes into the cart only when the admin adds it.
+            let (status, cart) = request(
+                &state,
+                &format!("/api/inquiries/{id}/cart"),
+                "POST",
+                json!({"search_id":lookup["search_id"],"product_item_id":"nina-1"}),
+                true,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(cart["items"][0]["candidate"]["product_item_id"], "nina-1");
+            assert_eq!(cart["items"][0]["quantity"], 1);
         }
         state.db.drop().await.unwrap();
         server.abort();

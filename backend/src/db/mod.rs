@@ -1,4 +1,5 @@
 pub mod attachments;
+pub mod cart;
 pub mod checkout;
 pub mod customers;
 pub mod drafts;

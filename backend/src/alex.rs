@@ -340,9 +340,23 @@ fn matches_filter(filter: &Option<String>, value: &Option<String>) -> bool {
             .is_some_and(|v| choices.iter().any(|choice| v.eq_ignore_ascii_case(choice)))
 }
 
+// Alex stores a bare file name in mainImage; its web app serves it from
+// images/{shopInfoId}/item/ on the shop origin. Absolute or rooted values are used as given.
 fn allowed_image(cfg: &AlexConfig, value: &str) -> Result<Url, AppError> {
     let api = Url::parse(&cfg.api_url).map_err(|_| AppError::AlexUnavailable)?;
-    let url = api.join(value).map_err(|_| AppError::AlexFailed)?;
+    let value = value.trim();
+    let url = if value.starts_with('/') || Url::parse(value).is_ok() {
+        api.join(value).map_err(|_| AppError::AlexFailed)?
+    } else {
+        let store = api
+            .join(&format!("/images/{}/item/", cfg.shop_info_id))
+            .map_err(|_| AppError::AlexFailed)?;
+        let url = store.join(value).map_err(|_| AppError::AlexFailed)?;
+        if !url.path().starts_with(store.path()) || url.path() == store.path() {
+            return Err(AppError::AlexScope);
+        }
+        url
+    };
     if !url.username().is_empty()
         || url.password().is_some()
         || url.fragment().is_some()
@@ -392,4 +406,43 @@ pub async fn image(
         bytes.extend(chunk);
     }
     Ok((mime, bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_images_use_the_shop_item_store() {
+        let cfg = AlexConfig {
+            api_url: "https://shop.alexrental.app".into(),
+            username: String::new(),
+            password: String::new(),
+            shop_info_id: "shop-1".into(),
+            branch_ids: vec![],
+            product_url_prefix: None,
+            image_origins: vec!["https://cdn.example.com".into()],
+            order_id_pointer: None,
+        };
+        let url = |value: &str| allowed_image(&cfg, value).map(|url| url.to_string());
+        assert_eq!(
+            url(" amy dark.jpg ").unwrap(),
+            "https://shop.alexrental.app/images/shop-1/item/amy%20dark.jpg"
+        );
+        assert_eq!(
+            url("/photo.png").unwrap(),
+            "https://shop.alexrental.app/photo.png"
+        );
+        assert_eq!(
+            url("https://cdn.example.com/a.png").unwrap(),
+            "https://cdn.example.com/a.png"
+        );
+        for bad in [
+            "../other-shop/x.jpg",
+            "https://evil.example/a.png",
+            "http://shop.alexrental.app.evil/a.png",
+        ] {
+            assert!(url(bad).is_err(), "{bad}");
+        }
+    }
 }

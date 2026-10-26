@@ -28,9 +28,14 @@ pub struct DraftItem {
     pub color: Option<String>,
     pub size: Option<String>,
     pub quantity: Option<i64>,
-    pub rental: Option<Rental>,
-    pub amounts: Option<Amounts>,
-    pub notes: Option<String>,
+    // Retired: dates, amounts and notes belong to the whole order. Older drafts may still carry
+    // per-item values, so they are accepted on input but never stored again.
+    #[serde(default, skip_serializing)]
+    pub rental: IgnoredAny,
+    #[serde(default, skip_serializing)]
+    pub amounts: IgnoredAny,
+    #[serde(default, skip_serializing)]
+    pub notes: IgnoredAny,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -52,10 +57,15 @@ pub struct Rental {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Amounts {
-    // Integer satang, never floating point. These are unverified quoted amounts.
+    // Integer satang, never floating point. Fees are unverified quoted amounts.
     pub rental_fee_satang: Option<i64>,
     pub deposit_satang: Option<i64>,
     pub shipping_fee_satang: Option<i64>,
+    // Order discounts off the Alex catalog totals, sent as rentalDiscount/bailDiscount.
+    #[serde(default)]
+    pub rental_discount_satang: Option<i64>,
+    #[serde(default)]
+    pub deposit_discount_satang: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,13 +90,14 @@ pub struct DraftResult {
 }
 
 impl DraftResult {
-    // Evidence for retired rental dates has no stored value to support, so it is dropped with them.
+    // Evidence for retired fields has no stored value to support, so it is dropped with them.
     pub fn drop_retired_evidence(&mut self) {
         self.evidence.retain(|item| {
-            !matches!(
-                item.field.rsplit('.').next(),
-                Some("usage_date" | "dispatch_date")
-            )
+            let parts: Vec<_> = item.field.split('.').collect();
+            let per_item = parts.len() >= 3
+                && parts[0] == "items"
+                && matches!(parts[2], "rental" | "amounts" | "notes");
+            !per_item && !matches!(parts.last(), Some(&("usage_date" | "dispatch_date")))
         });
     }
 }
@@ -225,12 +236,6 @@ impl DraftFields {
         }
         self.rental.validate()?;
         self.amounts.validate()?;
-        for item in &self.items {
-            item.effective_rental(&self.rental).validate()?;
-            if let Some(amounts) = &item.amounts {
-                amounts.validate()?;
-            }
-        }
         Ok(())
     }
 
@@ -246,81 +251,19 @@ impl DraftFields {
         }
     }
 
+    // Products are chosen into the inquiry cart, so a draft only needs the order-level facts.
     pub fn missing_fields(&self) -> Vec<String> {
         let values = self.values();
-        let mut missing = Vec::new();
-        for key in ["customer_name", "branch"] {
-            if !values.contains_key(key) {
-                missing.push(key.into());
-            }
-        }
-        if self.items.is_empty() {
-            missing.push("items".into());
-            for key in [
-                "rental.pickup_date",
-                "rental.return_date",
-                "rental.fulfillment_method",
-            ] {
-                if !values.contains_key(key) {
-                    missing.push(key.into());
-                }
-            }
-        }
-        for (i, item) in self.items.iter().enumerate() {
-            for (name, present) in [
-                (
-                    "product_name",
-                    item.product_code.is_some() || item.product_name.is_some(),
-                ),
-                ("color", item.color.is_some()),
-                ("size", item.size.is_some()),
-                ("quantity", item.quantity.is_some()),
-            ] {
-                if !present {
-                    missing.push(format!("items.{i}.{name}"));
-                }
-            }
-            let rental = item.effective_rental(&self.rental);
-            for (name, present) in [
-                ("pickup_date", rental.pickup_date.is_some()),
-                ("return_date", rental.return_date.is_some()),
-                ("fulfillment_method", rental.fulfillment_method.is_some()),
-            ] {
-                if !present {
-                    missing.push(format!("items.{i}.rental.{name}"));
-                }
-            }
-        }
-        missing
-    }
-}
-
-impl DraftItem {
-    pub fn effective_rental(&self, common: &Rental) -> Rental {
-        let own = self.rental.as_ref().unwrap_or(common);
-        Rental {
-            pickup_date: own
-                .pickup_date
-                .clone()
-                .or_else(|| common.pickup_date.clone()),
-            return_date: own
-                .return_date
-                .clone()
-                .or_else(|| common.return_date.clone()),
-            fulfillment_method: own
-                .fulfillment_method
-                .clone()
-                .or_else(|| common.fulfillment_method.clone()),
-            delivery_provider: own
-                .delivery_provider
-                .clone()
-                .or_else(|| common.delivery_provider.clone()),
-            return_shipping_deadline: own
-                .return_shipping_deadline
-                .clone()
-                .or_else(|| common.return_shipping_deadline.clone()),
-            ..Default::default()
-        }
+        [
+            "customer_name",
+            "rental.pickup_date",
+            "rental.return_date",
+            "rental.fulfillment_method",
+        ]
+        .into_iter()
+        .filter(|key| !values.contains_key(*key))
+        .map(String::from)
+        .collect()
     }
 }
 
@@ -372,6 +315,8 @@ impl Amounts {
             self.rental_fee_satang,
             self.deposit_satang,
             self.shipping_fee_satang,
+            self.rental_discount_satang,
+            self.deposit_discount_satang,
         ]
         .into_iter()
         .flatten()

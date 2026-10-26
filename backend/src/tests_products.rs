@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     config::AlexConfig,
-    db::{drafts, products},
+    db::drafts,
     draft_worker,
     models::draft::{DraftFields, PrepareInput},
 };
@@ -244,7 +244,7 @@ pub(super) async fn manual(state: &AppState, id: ObjectId, version: i64, fields:
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
-async fn product_matching_uses_real_ids_scopes_candidates_and_fences_old_drafts() {
+async fn product_search_and_cart_use_real_ids_scope_branches_and_guard_revisions() {
     use futures_util::io::AsyncWriteExt;
     let mock = CatalogMock::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -278,74 +278,109 @@ async fn product_matching_uses_real_ids_scopes_candidates_and_fences_old_drafts(
     let fields:DraftFields=serde_json::from_value(json!({"customer_name":"คุณเอ","branch":"A","items":[
         {"product_code":"DR-012","color":"R","size":"M","quantity":1},{"product_code":"DR-012","color":"B","size":"L","quantity":1}]})).unwrap();
     manual(&state, id, 0, fields.clone()).await;
-    let snapshot = drafts::snapshot(&state, &drafts::inquiry(&state, id).await.unwrap())
-        .await
-        .unwrap();
     let search_path = format!("/api/inquiries/{id}/products/search");
-    let confirm_path = format!("/api/inquiries/{id}/products/confirm");
-    let input = json!({"draft_version":1,"context_hash":snapshot.hash,"item_index":0,"branch_id":"branch-a","mode":"code","query":"DR-012"});
+    let cart_path = format!("/api/inquiries/{id}/cart");
+    let item_path = format!("{cart_path}/item");
+    // Cart searches are scoped to the inquiry and need no draft version.
+    let input = json!({"branch_id":"branch-a","mode":"code","query":"DR-012"});
     let (status, result) = request(&state, &search_path, "POST", input.clone(), true).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(result["candidates"].as_array().unwrap().len(), 2);
     assert_eq!(result["candidates"][0]["rental_fee_satang"], 150000);
     assert_eq!(result["candidates"][0]["deposit_satang"], 200001);
+    // The browser gets the public Alex catalog link, not an expiring proxy.
     assert!(
         result["candidates"][0]["image_url"]
             .as_str()
             .unwrap()
-            .starts_with("/api/inquiries/")
+            .ends_with("/photo.png")
     );
     let body = mock.calls.lock().await[0].clone();
     assert_eq!(body["pageSize"], 15);
     assert_eq!(body["showNotAvailable"], false);
-    let invalid = json!({"search_id":result["search_id"],"product_item_id":"fabricated-id","expected_revision":0});
+    let add = |product: &str, quantity: Value| json!({"search_id":result["search_id"],"product_item_id":product,"quantity":quantity});
     assert_eq!(
-        request(&state, &confirm_path, "POST", invalid, true)
-            .await
-            .0,
+        request(
+            &state,
+            &cart_path,
+            "POST",
+            add("fabricated-id", Value::Null),
+            true
+        )
+        .await
+        .0,
         StatusCode::CONFLICT
     );
-    let mut confirmation =
-        json!({"search_id":result["search_id"],"product_item_id":"item-2","expected_revision":0});
     assert_eq!(
-        request(&state, &confirm_path, "POST", confirmation.clone(), true)
+        request(&state, &cart_path, "POST", add("item-1", json!(1000)), true)
             .await
-            .1["error"]["code"],
-        "PRODUCT_OPTIONS_DIFFER"
+            .0,
+        StatusCode::BAD_REQUEST
     );
-    confirmation["product_item_id"] = json!("item-1");
+    // A price change in Alex since the search requires a fresh search.
     mock.mode.store(4, Ordering::SeqCst);
     assert_eq!(
-        request(&state, &confirm_path, "POST", confirmation.clone(), true)
+        request(&state, &cart_path, "POST", add("item-1", Value::Null), true)
             .await
             .0,
         StatusCode::CONFLICT
     );
     mock.mode.store(0, Ordering::SeqCst);
+    let (status, cart) =
+        request(&state, &cart_path, "POST", add("item-1", Value::Null), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cart["items"][0]["quantity"], 1);
+    assert_eq!(cart["items"][0]["branch_id"], "branch-a");
+    assert!(cart["items"][0].get("added_by_id").is_none());
+    let cart = request(&state, &cart_path, "POST", add("item-1", json!(2)), true)
+        .await
+        .1;
+    assert_eq!(cart["items"].as_array().unwrap().len(), 1);
+    assert_eq!(cart["items"][0]["quantity"], 3);
+    let cart = request(&state, &cart_path, "POST", add("item-2", Value::Null), true)
+        .await
+        .1;
+    assert_eq!(cart["items"].as_array().unwrap().len(), 2);
+    let line = |index: usize, revision: Value, quantity: Value| json!({"item_id":cart["items"][index]["_id"]["$oid"],"expected_revision":revision,"quantity":quantity});
     assert_eq!(
-        request(&state, &confirm_path, "POST", confirmation.clone(), true)
-            .await
-            .0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        products::list(&state, id).await.unwrap()["product_verified"],
-        false
-    );
-    assert_eq!(
-        request(&state, &confirm_path, "POST", confirmation, true)
-            .await
-            .0,
+        request(
+            &state,
+            &item_path,
+            "POST",
+            line(0, json!(99), json!(1)),
+            true
+        )
+        .await
+        .0,
         StatusCode::CONFLICT
     );
-    let mut second = input.clone();
-    second["item_index"] = json!(1);
-    let result2 = request(&state, &search_path, "POST", second, true).await.1;
-    assert_eq!(request(&state,&confirm_path,"POST",json!({"search_id":result2["search_id"],"product_item_id":"item-2","expected_revision":0}),true).await.0,StatusCode::OK);
-    let verified = products::list(&state, id).await.unwrap();
-    assert_eq!(verified["product_verified"], true);
-    assert_eq!(verified["availability_verified"], false);
+    let updated = request(
+        &state,
+        &item_path,
+        "POST",
+        line(0, cart["items"][0]["revision"].clone(), json!(5)),
+        true,
+    )
+    .await
+    .1;
+    assert_eq!(updated["items"][0]["quantity"], 5);
+    let removed = request(
+        &state,
+        &item_path,
+        "POST",
+        line(1, cart["items"][1]["revision"].clone(), Value::Null),
+        true,
+    )
+    .await
+    .1;
+    assert_eq!(removed["items"].as_array().unwrap().len(), 1);
     assert!(all(&state, "orders").await.is_empty());
+    // Saving a new draft version keeps the cart: product choices are per inquiry.
+    manual(&state, id, 1, fields.clone()).await;
+    let kept = request(&state, &cart_path, "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(kept["items"][0]["candidate"]["product_item_id"], "item-1");
     let mut other = state.clone();
     let mut other_cfg = (*state.config).clone();
     other_cfg.shop_id = "another-shop".into();
@@ -391,12 +426,6 @@ async fn product_matching_uses_real_ids_scopes_candidates_and_fences_old_drafts(
         request(&state, &search_path, "POST", page, true).await.1["has_more"],
         false
     );
-    // A new draft invalidates old selections even if the free-text fields are unchanged.
-    manual(&state, id, 1, fields.clone()).await;
-    assert_eq!(
-        products::list(&state, id).await.unwrap()["matches"],
-        json!([])
-    );
     let image_event = ObjectId::new();
     let now = DateTime::now();
     let bucket = state.db.gridfs_bucket(None);
@@ -417,11 +446,8 @@ async fn product_matching_uses_real_ids_scopes_candidates_and_fences_old_drafts(
         .await
         .unwrap();
     manual(&state, id, 2, fields).await;
-    let hash = drafts::snapshot(&state, &drafts::inquiry(&state, id).await.unwrap())
-        .await
-        .unwrap()
-        .hash;
-    let image = json!({"draft_version":3,"context_hash":hash,"item_index":0,"branch_id":"branch-a","mode":"image","image_event_id":image_event.to_hex()});
+    let image =
+        json!({"branch_id":"branch-a","mode":"image","image_event_id":image_event.to_hex()});
     let result = request(&state, &search_path, "POST", image.clone(), true).await;
     assert_eq!(result.0, StatusCode::OK);
     assert_eq!(result.1["method"], "image_similarity");
@@ -450,7 +476,7 @@ async fn product_matching_uses_real_ids_scopes_candidates_and_fences_old_drafts(
     media::tombstone(&state, "catalog-photo").await.unwrap();
     assert_eq!(
         request(&state, &search_path, "POST", image, true).await.1["error"]["code"],
-        "CONTEXT_CHANGED"
+        "VALIDATION_ERROR"
     );
     state.db.drop().await.unwrap();
     server.abort();

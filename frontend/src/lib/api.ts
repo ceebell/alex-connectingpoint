@@ -9,7 +9,6 @@ const errors: Record<string, string> = {
   ALEX_FAILED: "อ่านแค็ตตาล็อก Alex ไม่สำเร็จ กรุณาลองใหม่หรือตรวจบัญชีกับผู้ดูแลระบบ",
   ALEX_SCOPE_DENIED: "บัญชี Alex ไม่มีสิทธิ์ในร้านหรือสาขาที่เลือก",
   PRODUCT_CONFLICT: "รายการสินค้าหรือร่างเปลี่ยนไป หรือผลค้นหาหมดอายุ กรุณาโหลดผลล่าสุดแล้วค้นหาใหม่",
-  PRODUCT_OPTIONS_DIFFER: "รหัส สี หรือไซซ์จาก Alex ต่างจากร่าง กรุณาตรวจและยืนยันส่วนที่ต่างก่อนเลือก",
   CATALOG_IMAGES_UNAVAILABLE: "อ่านรหัสจากรูปไม่ได้ และยังไม่มีรูปแค็ตตาล็อกที่ใช้เปรียบเทียบ กรุณาค้นด้วยข้อความ หรือเพิ่มรูปสินค้าใน Alex",
   UNAUTHORIZED: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง หรือหมดเวลาเข้าสู่ระบบ",
   ADMIN_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าบัญชีแอดมิน กรุณาติดต่อผู้ดูแลระบบ",
@@ -65,8 +64,12 @@ export type Inquiry = { _id: string; line_user_id?: string; status: string; crea
 export type Customer = { display_name?: string | null; picture_url?: string | null };
 export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string }; postback?: { data: string } } };
 export type Rental = { pickup_date: string | null; return_date: string | null; fulfillment_method: string | null; return_shipping_deadline?: string | null; delivery_provider?: string | null };
-export type Amounts = { rental_fee_satang: number | null; deposit_satang: number | null; shipping_fee_satang?: number | null };
-export type DraftItem = { product_code: string | null; product_name?: string | null; color: string | null; size: string | null; quantity: number | null; rental?: Rental | null; amounts?: Amounts | null; notes?: string | null };
+export type Amounts = { rental_fee_satang: number | null; deposit_satang: number | null; shipping_fee_satang?: number | null; rental_discount_satang?: number | null; deposit_discount_satang?: number | null };
+// rental/amounts/notes per item are retired; older drafts may still return them and the editor lifts them to the order.
+export type DraftItem = { product_code: string | null; product_name?: string | null; color: string | null; size: string | null; quantity: number | null; rental?: Partial<Rental> | null; amounts?: Partial<Amounts> | null; notes?: string | null };
+export type Candidate = { product_item_id: string; code: string; name: string; color: string | null; size: string | null; rental_fee_satang: number | null; deposit_satang: number | null; image_url: string | null; score: number | null };
+export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string };
+export type Availability = { state: string; checked_at: string; items: { item_index: number; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
 export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[] } };
@@ -77,18 +80,20 @@ export type AdminSummary = { revision: number; text?: string; image_event_ids?: 
 export type Attachment = { id: string; name: string; media_id: string; url: string; created_at: string };
 export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null; context_hash:string; summary: AdminSummary | null; attachments: Attachment[] };
 export const emptyRental = (): Rental => ({ pickup_date: null, return_date: null, fulfillment_method: null, delivery_provider: null, return_shipping_deadline: null });
-export const emptyAmounts = (): Amounts => ({ rental_fee_satang: null, deposit_satang: null, shipping_fee_satang: null });
+export const emptyAmounts = (): Amounts => ({ rental_fee_satang: null, deposit_satang: null, shipping_fee_satang: null, rental_discount_satang: null, deposit_discount_satang: null });
 export const emptyFields = (): Fields => ({ intent: null, customer_name: null, customer_phone: null, customer_address: null, branch: null, items: [], rental: emptyRental(), amounts: emptyAmounts(), notes: null });
-export const labels: Record<string, string> = { intent: "ความต้องการ", customer_name: "ชื่อลูกค้า", customer_phone: "เบอร์โทร", customer_address: "ที่อยู่ลูกค้า", branch: "สาขา", items: "รายการสินค้า", product_code: "รหัสสินค้า", product_name: "ชื่อชุด", color: "สี", size: "ไซซ์", quantity: "จำนวน", "rental.pickup_date": "วันรับชุด", "rental.return_date": "วันคืนชุด", "rental.return_shipping_deadline": "ส่งคืนก่อนเวลา", "rental.delivery_provider": "ขนส่ง", "rental.fulfillment_method": "วิธีรับสินค้า", "amounts.rental_fee_satang": "ค่าเช่า", "amounts.deposit_satang": "มัดจำ", "amounts.shipping_fee_satang": "ค่าจัดส่ง", notes: "หมายเหตุ" };
+export const labels: Record<string, string> = { intent: "ความต้องการ", customer_name: "ชื่อลูกค้า", customer_phone: "เบอร์โทร", customer_address: "ที่อยู่ลูกค้า", branch: "สาขา", items: "รายการสินค้า", product_code: "รหัสสินค้า", product_name: "ชื่อชุด", color: "สี", size: "ไซซ์", quantity: "จำนวน", "rental.pickup_date": "วันรับชุด", "rental.return_date": "วันคืนชุด", "rental.return_shipping_deadline": "ส่งคืนก่อนเวลา", "rental.delivery_provider": "ขนส่ง", "rental.fulfillment_method": "วิธีรับสินค้า", "amounts.rental_fee_satang": "ค่าเช่าที่แจ้ง", "amounts.deposit_satang": "ค่าประกันที่แจ้ง", "amounts.shipping_fee_satang": "ค่าจัดส่ง", "amounts.rental_discount_satang": "ส่วนลดค่าเช่า", "amounts.deposit_discount_satang": "ส่วนลดค่าประกัน", notes: "หมายเหตุ" };
 export function fieldLabel(key: string) { const match = key.match(/^items\.(\d+)\.(.+)$/); return match ? `สินค้ารายการ ${Number(match[1]) + 1} · ${labels[match[2]] ?? match[2]}` : labels[key] ?? key; }
 // Alex books only pickup and return dates; older drafts may still carry these retired keys.
 const retiredKeys = ["usage_date", "dispatch_date"];
+const retiredItemKeys = ["rental", "amounts", "notes"];
 // Phone numbers are stored without spaces or dashes, matching the backend rule.
 export const cleanPhone = (value: string) => value.replace(/[\s-]/g, "");
 export function filledKeys(fields: Fields) {
   const keys: string[] = [];
   const walk = (value: unknown, prefix: string) => {
-    if (value === null || value === undefined || value === "" || retiredKeys.includes(prefix.split(".").pop() ?? "")) return;
+    const parts = prefix.split(".");
+    if (value === null || value === undefined || value === "" || retiredKeys.includes(parts[parts.length - 1]) || (parts[0] === "items" && retiredItemKeys.includes(parts[2]))) return;
     if (typeof value === "object") Object.entries(value).forEach(([key, child]) => walk(child, prefix ? `${prefix}.${key}` : key));
     else keys.push(prefix);
   };

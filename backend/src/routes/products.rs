@@ -1,15 +1,7 @@
-use crate::{
-    alex,
-    db::products,
-    error::AppError,
-    models::product::{ConfirmInput, MatchUpdateInput, SearchInput},
-    state::AppState,
-};
+use crate::{alex, db::products, error::AppError, models::product::SearchInput, state::AppState};
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
-    http::{HeaderMap, HeaderValue, header},
-    response::{IntoResponse, Response},
 };
 use mongodb::bson::oid::ObjectId;
 use serde_json::{Value, json};
@@ -44,45 +36,4 @@ pub async fn search(
 ) -> Result<Json<Value>, AppError> {
     let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     Ok(Json(products::search(&state, id(&inquiry)?, input).await?))
-}
-
-pub async fn confirm(
-    State(state): State<AppState>,
-    Path(inquiry): Path<String>,
-    headers: HeaderMap,
-    input: Result<Json<ConfirmInput>, JsonRejection>,
-) -> Result<Json<Value>, AppError> {
-    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
-    let actor = super::session::actor(&state, &headers);
-    Ok(Json(
-        products::confirm(&state, id(&inquiry)?, input, &actor).await?,
-    ))
-}
-
-pub async fn update_match(
-    State(state): State<AppState>,
-    Path(inquiry): Path<String>,
-    input: Result<Json<MatchUpdateInput>, JsonRejection>,
-) -> Result<Json<Value>, AppError> {
-    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
-    Ok(Json(
-        products::update_match(&state, id(&inquiry)?, input).await?,
-    ))
-}
-
-pub async fn image(
-    State(state): State<AppState>,
-    Path((inquiry, search, product)): Path<(String, String, String)>,
-) -> Result<Response, AppError> {
-    let (mime, bytes) = products::image(&state, id(&inquiry)?, id(&search)?, &product).await?;
-    let mut response = bytes.into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&mime).map_err(|_| AppError::Data)?,
-    );
-    response.headers_mut().insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    Ok(response)
 }

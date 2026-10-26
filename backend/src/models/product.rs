@@ -16,7 +16,7 @@ pub struct Candidate {
     pub size: Option<String>,
     pub rental_fee_satang: Option<i64>,
     pub deposit_satang: Option<i64>,
-    // Kept server-side; the browser receives an authenticated image endpoint.
+    // Public Alex catalog link (images/{shopInfoId}/item/{mainImage}), checked against allowed origins.
     pub image_url: Option<String>,
     pub score: Option<f64>,
 }
@@ -33,8 +33,12 @@ pub enum SearchMode {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchInput {
+    // Draft binding is optional: cart searches are scoped to the inquiry only.
+    #[serde(default)]
     pub draft_version: i64,
+    #[serde(default)]
     pub context_hash: String,
+    #[serde(default)]
     pub item_index: usize,
     pub branch_id: String,
     pub mode: SearchMode,
@@ -53,11 +57,12 @@ fn first_page() -> u32 {
 
 impl SearchInput {
     pub fn validate(&self) -> Result<(), AppError> {
-        if self.draft_version < 1
+        if self.draft_version < 0
             || self.item_index >= 20
             || !valid_id(&self.branch_id)
-            || self.context_hash.len() != 64
-            || !self.context_hash.bytes().all(|b| b.is_ascii_hexdigit())
+            || !(self.context_hash.is_empty()
+                || (self.context_hash.len() == 64
+                    && self.context_hash.bytes().all(|b| b.is_ascii_hexdigit())))
             || !(1..=100).contains(&self.page)
             || [
                 &self.query,
@@ -77,27 +82,6 @@ impl SearchInput {
         }
         Ok(())
     }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfirmInput {
-    pub search_id: String,
-    pub product_item_id: String,
-    pub expected_revision: i64,
-    #[serde(default)]
-    pub acknowledge_difference: bool,
-    // Defaults to the draft quantity, then 1.
-    pub quantity: Option<i64>,
-}
-
-// Changes or removes the confirmed outfit of one draft item; the revision guards concurrent edits.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MatchUpdateInput {
-    pub item_index: usize,
-    pub expected_revision: i64,
-    pub quantity: Option<i64>,
 }
 
 pub fn valid_quantity(value: i64) -> bool {
