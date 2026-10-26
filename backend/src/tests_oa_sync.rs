@@ -118,8 +118,11 @@ async fn oa_sync_uses_webhook_anchors_deduplicates_and_preserves_context_paginat
     );
     let current = drafts::snapshot(&state, &inquiry).await.unwrap();
     assert_ne!(old.hash, current.hash);
-    assert_eq!(current.content[1]["sender_role"], "admin");
-    assert_eq!(current.content[1]["source_type"], "oa_message");
+    assert_eq!(current.events[1].get_str("sender_role").unwrap(), "admin");
+    assert_eq!(
+        crate::db::oa_sync::source_type(&current.events[1]),
+        "oa_message"
+    );
     let route = format!("/api/inquiries/{id}/context");
     let (_, context) = request(&state, &route, "GET", Value::Null, true).await;
     let messages: Vec<&Value> = context["batches"]

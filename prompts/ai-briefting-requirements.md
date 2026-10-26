@@ -15,6 +15,10 @@ prompts\img-ex2.jpg
 
 - ลูกค้า จะเขียนชื่อที่อยู่เบอร์โทร ใน chat ให้ กดค้นหาข้อมูลลูกค้าจาก chat แล้ว fill อัตโนมัติ
 
+- ข้อมูลสินค้า ถ้าแอดมินใส่รูปเองหรือใส่สรุป order เอง AI ไม่ต้องกวาดข้อมูล order หรือ ข้อมูลสินค้าใน chat
+
+- ข้อมูลสินค้าให้เอาข้อมูลที่ extract จาก ภาพ หรือสรุปไปหาใน api https://shop.alexrental.app/api/v2/GetProductItems
+
 
 
 ## UX/UI Requirements

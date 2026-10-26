@@ -52,6 +52,7 @@
 | Pull โค้ดลง server | `./loadgit.sh [branch]` | Ubuntu |
 | Build Docker image (backend + frontend) | `sudo bash ./docker-build.sh --full-stack` | Ubuntu |
 | Deploy Swarm stack (backend + frontend) | `sudo bash ./docker-deploy.sh --full-stack` | Ubuntu |
+| Pull + build image + deploy ในคำสั่งเดียว | `bash ./deploy-all.sh [branch]` | Ubuntu |
 
 พอร์ต dev: frontend `3000` · backend `8080` · MongoDB `27017`
 
@@ -130,7 +131,7 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
      sudo bash ./docker-build.sh --full-stack
      sudo bash ./docker-deploy.sh --full-stack
      ```
-     ใช้ `--full-stack` เสมอเพราะหน้า admin รันบน server แล้ว (ไม่ใส่ frontend จะค้างรุ่นเก่า เพราะ stack ไม่ prune) · แก้แค่ `.env` บน server ให้รันเฉพาะ `sudo bash ./docker-deploy.sh --full-stack` · ห้ามรันไฟล์ `.sh` บน Windows
+     หรือรวมเป็นคำสั่งเดียว: `cd ~/alex-connectingpoint && bash ./deploy-all.sh main` (ถาม sudo password ครั้งเดียว, หยุดทันทีเมื่อขั้นไหนล้ม) · ใช้ `--full-stack` เสมอเพราะหน้า admin รันบน server แล้ว (ไม่ใส่ frontend จะค้างรุ่นเก่า เพราะ stack ไม่ prune) · แก้แค่ `.env` บน server ให้รันเฉพาะ `sudo bash ./docker-deploy.sh --full-stack` · ห้ามรันไฟล์ `.sh` บน Windows
 - Git เก็บ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` และ Linux frontend standalone ใน `dist/frontend-linux/` เมื่อมี frontend เพื่อให้ pull แล้วนำไปใส่ Docker ได้ทันที; `.env`, Windows output และ archives ยังถูก ignore
 - `build-frontend.bat` สร้าง frontend บน local และเก็บ runtime dependencies/public/static พร้อม checksum และ tag แยก; Ubuntu ใช้ `docker-build.sh --full-stack` / `docker-deploy.sh --full-stack` เมื่อมีทั้งสอง release
 - Full-stack ของหน้าหลังบ้านใช้ `docker-stack.line.yml` + `docker-stack.admin.yml` เพื่อคง Mongo volume/LINE network เดิม; ไม่ใช้ docker-stack.yml ชุด legacy สำหรับอัปเกรด LINE ที่มีข้อมูลอยู่แล้ว ดู docs/step-2-admin.md

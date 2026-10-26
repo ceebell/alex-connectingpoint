@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "tests_customers.rs"]
 mod customer_tests;
+#[path = "tests_draft_catalog.rs"]
+mod draft_catalog_tests;
 #[path = "tests_line.rs"]
 mod line_tests;
 #[path = "tests_oa_sync.rs"]

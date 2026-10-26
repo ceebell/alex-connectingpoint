@@ -2,6 +2,7 @@ mod alex;
 mod config;
 mod customer_extract;
 mod db;
+mod draft_catalog;
 mod draft_worker;
 mod error;
 mod models;

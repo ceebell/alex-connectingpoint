@@ -288,8 +288,43 @@ pub async fn list(state: &AppState, inquiry_id: ObjectId) -> Result<Value, AppEr
         .into_iter()
         .map(|record| match_view(record, inquiry_id))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut suggestions = Vec::new();
+    if let Ok(lookups) = draft.get_array("catalog_lookup") {
+        for lookup in lookups.iter().filter_map(|value| value.as_document()) {
+            let mut value = serde_json::to_value(lookup).map_err(|_| AppError::Data)?;
+            if let Ok(id) = lookup.get_str("search_id") {
+                let id = ObjectId::parse_str(id).map_err(|_| AppError::Data)?;
+                match search_record(state, inquiry_id, id).await {
+                    Ok(record)
+                        if record.get_object_id("draft_id").ok()
+                            == draft.get_object_id("_id").ok() =>
+                    {
+                        let input: SearchInput = bson::from_document(
+                            record
+                                .get_document("input")
+                                .map_err(|_| AppError::Data)?
+                                .clone(),
+                        )
+                        .map_err(|_| AppError::Data)?;
+                        let candidates = search_candidates(&record)?
+                            .iter()
+                            .map(|candidate| candidate_view(candidate, inquiry_id, id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        value["search"] = json!({"search_id":id.to_hex(),"item_index":input.item_index,"branch_id":input.branch_id,
+                            "mode":input.mode,"query":input.query,"color":input.color,"size":input.size,
+                            "method":"admin_input","page":input.page,"has_more":record.get_bool("has_more").unwrap_or(false),"candidates":candidates});
+                    }
+                    Ok(_) | Err(AppError::ProductConflict) => {
+                        value["status"] = json!("EXPIRED");
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            suggestions.push(value);
+        }
+    }
     Ok(
-        json!({"draft_version":drafts::version(&inquiry),"matches":matches,
+        json!({"draft_version":drafts::version(&inquiry),"matches":matches,"suggestions":suggestions,
         "product_verified":!fields.items.is_empty() && matches.len()==fields.items.len(),
         "availability_verified":false,"pricing_verified":false}),
     )

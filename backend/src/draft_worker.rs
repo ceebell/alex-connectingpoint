@@ -83,44 +83,6 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     let mut sources = BTreeMap::new();
     let mut images = BTreeSet::new();
     sources.insert(format!("admin_summary:{job_id}"), input.summary.clone());
-    for event in &snapshot.events {
-        let id = event
-            .get_object_id("_id")
-            .map_err(|_| AppError::Data)?
-            .to_hex();
-        if event.get_bool("withdrawn").unwrap_or(false) {
-            continue;
-        }
-        if let Ok(payload) = event.get_document("payload") {
-            let text = payload
-                .get_document("message")
-                .ok()
-                .and_then(|m| m.get_str("text").ok())
-                .or_else(|| {
-                    payload
-                        .get_document("postback")
-                        .ok()
-                        .and_then(|p| p.get_str("data").ok())
-                })
-                .unwrap_or("");
-            sources.insert(
-                format!("{}:{id}", crate::db::oa_sync::source_type(event)),
-                text.into(),
-            );
-        }
-    }
-    if let Some(previous) = &previous {
-        let result = previous
-            .get_document("result")
-            .map_err(|_| AppError::Data)?;
-        sources.insert(
-            format!(
-                "previous_draft:{}",
-                previous.get_object_id("_id").map_err(|_| AppError::Data)?
-            ),
-            serde_json::to_string(result).map_err(|_| AppError::Data)?,
-        );
-    }
     let now = DateTime::now();
     let mut summary = state.scope();
     summary.extend(doc! {"_id":job_id,"inquiry_id":inquiry_id,"text":&input.summary,"created_at":now,"updated_at":now});
@@ -153,8 +115,8 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         let mut parts = vec![json!({"type":"text","text":serde_json::to_string(&json!({
             "inquiry_ref":inquiry_id.to_hex(), "summary_ref":job_id.to_hex(), "admin_summary":input.summary,
             "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
-            "business_timezone":"Asia/Bangkok", "events":snapshot.content,
-            "previous_draft":previous, "selected_image_event_refs":input.image_event_ids,
+            "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_only",
+            "selected_image_event_refs":input.image_event_ids,
             "source_texts":sources,
             "fields_schema_example":crate::models::draft::DraftFields::default()
         })).map_err(|_|AppError::Data)?})];
@@ -191,6 +153,20 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         }
         serde_json::from_value(ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?)
             .map_err(|_| AppError::HermesFailed)?
+    };
+    validate_evidence(&result, &sources, &images)?;
+    let catalog_lookup = if input.fields.is_none() {
+        crate::draft_catalog::enrich(
+            state,
+            job,
+            &inquiry,
+            &snapshot.hash,
+            &mut result,
+            &mut sources,
+        )
+        .await?
+    } else {
+        vec![]
     };
     validate_evidence(&result, &sources, &images)?;
     let values = result.fields.values();
@@ -259,6 +235,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         "workflow_status":workflow,"context_hash":snapshot.hash,"admin_summary":&input.summary,
         "result":bson::to_document(&result).map_err(|_|AppError::Data)?,"missing_fields":missing,
         "confirmed_fields":confirmed.into_iter().collect::<Vec<_>>(),"source":"admin_assisted",
+        "input_scope":"admin_inputs_only","catalog_lookup":catalog_lookup,
         "summary_revision":drafts::summary_revision(&inquiry),
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
         "created_at":now,"updated_at":now},

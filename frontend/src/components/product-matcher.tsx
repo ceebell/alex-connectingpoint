@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { api, ApiError, Attachment, Draft, errorText, LineEvent } from "@/lib/api";
 
 type Candidate = { product_item_id: string; code: string; name: string; color: string | null; size: string | null; rental_fee_satang: number | null; deposit_satang: number | null; image_url: string | null; score: number | null };
-type Search = { search_id: string; branch_id: string; page: number; has_more: boolean; method: string; candidates: Candidate[] };
+type Search = { search_id: string; branch_id: string; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null };
 type Choice = Candidate & { search_id: string };
 type Match = { item_index: number; branch_id: string; revision: number; candidate: Candidate; confirmed_by: string; confirmed_at: string; method: string; differences: string[] };
-type Matches = { matches: Match[]; product_verified: boolean };
+type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
+type Matches = { matches: Match[]; product_verified: boolean; suggestions?: Suggestion[] };
 type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean };
 type Mode = "code" | "text" | "product_url" | "image";
 const money = (value: number | null) => value === null ? "ไม่ระบุ" : `${(value / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
@@ -20,8 +21,8 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
   const [index, setIndex] = useState(0);
   const [mode, setMode] = useState<Mode>(draft?.result?.fields.items[0]?.product_code ? "code" : "text");
   const [query, setQuery] = useState(draft?.result?.fields.items[0]?.product_code ?? draft?.result?.fields.items[0]?.product_name ?? "");
-  const [color, setColor] = useState("");
-  const [size, setSize] = useState("");
+  const [color, setColor] = useState(draft?.result?.fields.items[0]?.color ?? "");
+  const [size, setSize] = useState(draft?.result?.fields.items[0]?.size ?? "");
   const [category, setCategory] = useState("");
   const [texture, setTexture] = useState("");
   const [image, setImage] = useState("");
@@ -35,6 +36,7 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
   const [error, setError] = useState("");
   const fields = draft?.result?.fields;
   const item = fields?.items[index];
+  const suggestion = matches.suggestions?.find(value => value.item_index === index);
   const choice = choices.find(value => `${value.search_id}:${value.product_item_id}` === selected);
   const differing = choice && item ? ([
     ["รหัส", item.product_code, choice.code], ["ชื่อชุด", item.product_name, choice.name], ["สี", item.color, choice.color], ["ไซซ์", item.size, choice.size],
@@ -49,11 +51,23 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
       if (cancelled) return;
       setSettings(settings); setMatches(matches);
       if (settings.branches.length === 1) setBranch(settings.branches[0].id);
+      applySuggestion(index, matches);
     }).catch(cause => { if (!cancelled) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); } }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [inquiryId, draft?.draft_version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function clearSearch() { setChoices([]); setResult(null); setSelected(""); setAcknowledged(false); setDifferenceAcknowledged(false); setError(""); }
+  function applySuggestion(next: number, value: Matches) {
+    clearSearch();
+    const suggested = value.suggestions?.find(suggestion => suggestion.item_index === next);
+    if (!suggested?.search) return;
+    const search = suggested.search;
+    setResult(search); setBranch(search.branch_id);
+    setMode(search.mode ?? "text"); setQuery(search.query ?? "");
+    setColor(search.color ?? ""); setSize(search.size ?? "");
+    setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id })));
+    if (suggested.selected_product_item_id) setSelected(`${search.search_id}:${suggested.selected_product_item_id}`);
+  }
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
 
   async function search(next = false) {
@@ -94,10 +108,11 @@ export default function ProductMatcher({ inquiryId, draft, contextHash, messages
     {settings && !settings.configured && <div className="notice warning">ยังไม่เชื่อมบัญชี Alex กรุณาให้ผู้ดูแลระบบตั้งค่าการเชื่อมต่อก่อนค้นและยืนยันชุด</div>}
     {(draft?.stale || draft?.redacted) && <div className="notice warning">ร่างหรือบริบทเปลี่ยน กรุณาตรวจและบันทึกร่างใหม่ก่อนเลือกสินค้า</div>}
     {matches.product_verified && <div className="notice success" role="status">ยืนยัน Product ID ครบ {fields.items.length} รายการแล้ว พร้อมนำไปตรวจคิวในขั้นถัดไป</div>}
+    {suggestion && <div className={`notice ${suggestion.status === "MATCHED" ? "info" : "warning"}`} role="status">{({ MATCHED: "ค้นจากรูปหรือสรุปใน Alex แล้ว และเติมข้อมูลสินค้าลงร่างให้แล้ว กรุณาตรวจและยืนยันชุดด้านล่าง", NEEDS_SELECTION: "พบตัวเลือกจาก Alex กรุณาเลือกสินค้า สี และไซซ์ที่ต้องการ", NOT_FOUND: "ยังไม่พบสินค้าใน Alex กรุณาตรวจชื่อ สี และไซซ์แล้วค้นอีกครั้ง", BRANCH_REQUIRED: "กรุณาเลือกสาขาที่ต้องการค้นสินค้า", MISSING_QUERY: "ต้องระบุชื่อหรือรหัสสินค้าจากรูปหรือสรุปก่อนค้น", NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าการเชื่อมต่อ Alex", FAILED: "ค้นสินค้าอัตโนมัติไม่สำเร็จ กรุณากดค้นอีกครั้ง", EXPIRED: "ผลค้นหาเดิมหมดอายุ กรุณาค้นใหม่" } as Record<string, string>)[suggestion.status] ?? "กรุณาตรวจผลค้นหาสินค้าจาก Alex"}</div>}
     {matches.matches.map(match => <div className="product-match" key={match.item_index}><strong>รายการ {match.item_index + 1} · {match.candidate.code}</strong><p>{match.candidate.color || "ไม่ระบุสี"} · {match.candidate.size || "ไม่ระบุไซซ์"} · {settings?.branches.find(branch => branch.id === match.branch_id)?.name ?? match.branch_id}</p><code>{match.candidate.product_item_id}</code><p className="muted small">ยืนยันโดย {match.confirmed_by} · {date(match.confirmed_at)}</p>{match.differences.length > 0 && <p className="muted small">แอดมินยืนยันค่าจาก Alex ที่ต่างจากข้อความในร่างแล้ว</p>}</div>)}
     <form onSubmit={e => { e.preventDefault(); void search(); }}>
       <fieldset disabled={unavailable}>
-        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setMode(fields.items[next].product_code ? "code" : "text"); setQuery(fields.items[next].product_code ?? fields.items[next].product_name ?? ""); clearSearch(); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || item.product_name || "ยังไม่มีชื่อ/รหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
+        <label>สินค้ารายการที่จะจับคู่<select value={index} onChange={e => { const next = Number(e.target.value); setIndex(next); setMode(fields.items[next].product_code ? "code" : "text"); setQuery(fields.items[next].product_code ?? fields.items[next].product_name ?? ""); setColor(fields.items[next].color ?? ""); setSize(fields.items[next].size ?? ""); applySuggestion(next, matches); }}>{fields.items.map((item, i) => <option key={i} value={i}>รายการ {i + 1} · {item.product_code || item.product_name || "ยังไม่มีชื่อ/รหัส"} · {item.color || "ไม่ระบุสี"} · {item.size || "ไม่ระบุไซซ์"}</option>)}</select></label>
         <label>สาขาที่ได้รับสิทธิ์<select value={branch} onChange={e => { setBranch(e.target.value); clearSearch(); }} required><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
         <label>ค้นหาจาก<select value={mode} onChange={e => { setMode(e.target.value as Mode); setQuery(""); clearSearch(); }}><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="text">ชื่อหรือคำบรรยาย / ดูแค็ตตาล็อก</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้าที่อนุญาต</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากบทสนทนา</option></select></label>
         {mode === "image" && <label>รูปอ้างอิง<select value={image} onChange={e => { setImage(e.target.value); clearSearch(); }} required><option value="">เลือกรูปจากบทสนทนา</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>}

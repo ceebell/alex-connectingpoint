@@ -212,6 +212,11 @@ async fn ai_mock(
         }
         result
     } else {
+        assert_eq!(data["input_scope"], "admin_inputs_only");
+        assert!(data.get("events").is_none());
+        assert!(data.get("previous_draft").is_none());
+        assert!(!data.to_string().contains("SHOPONLY"));
+        assert!(!data.to_string().contains("0812345678"));
         let refs = data["selected_image_event_refs"].as_array().unwrap();
         let year = data["current_year"].as_u64().unwrap();
         let fields = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")},"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"},

@@ -17,7 +17,6 @@ use sha2::{Digest, Sha256};
 
 pub struct Snapshot {
     pub events: Vec<Document>,
-    pub content: Value,
     pub hash: String,
     pub pending: bool,
 }
@@ -141,7 +140,6 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
     let content = Value::Array(content);
     Ok(Snapshot {
         hash: hash(&content)?,
-        content,
         events: records,
         pending,
     })
@@ -502,7 +500,12 @@ pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Val
         // Withdrawn evidence must not leak via an old AI or manual revision.
         let redacted = references_withdrawn(&record, &snapshot);
         if redacted {
-            for field in ["result", "admin_summary", "confirmed_fields"] {
+            for field in [
+                "result",
+                "admin_summary",
+                "confirmed_fields",
+                "catalog_lookup",
+            ] {
                 record.remove(field);
             }
         }
