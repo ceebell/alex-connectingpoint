@@ -12,6 +12,21 @@ use tokio::sync::watch;
 
 const PROMPT: &str = include_str!("order_draft_prompt.txt");
 
+pub(crate) fn bangkok_year(reference: DateTime) -> Result<u16, AppError> {
+    let millis = reference
+        .timestamp_millis()
+        .checked_add(7 * 60 * 60 * 1000)
+        .ok_or(AppError::Data)?;
+    let local = DateTime::from_millis(millis)
+        .try_to_rfc3339_string()
+        .map_err(|_| AppError::Data)?;
+    local
+        .get(..4)
+        .ok_or(AppError::Data)?
+        .parse()
+        .map_err(|_| AppError::Data)
+}
+
 pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     let job_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let inquiry_id = job
@@ -134,9 +149,10 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             questions: vec![],
         }
     } else {
+        let reference = *job.get_datetime("created_at").map_err(|_| AppError::Data)?;
         let mut parts = vec![json!({"type":"text","text":serde_json::to_string(&json!({
             "inquiry_ref":inquiry_id.to_hex(), "summary_ref":job_id.to_hex(), "admin_summary":input.summary,
-            "reference_time_ms":job.get_datetime("created_at").map_err(|_|AppError::Data)?.timestamp_millis(),
+            "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
             "business_timezone":"Asia/Bangkok", "events":snapshot.content,
             "previous_draft":previous, "selected_image_event_refs":input.image_event_ids,
             "source_texts":sources,
@@ -318,16 +334,7 @@ pub(crate) async fn ask_hermes_json(
         .json()
         .await
         .map_err(|_| AppError::HermesToolsEnabled)?;
-    let toolsets = tools.as_array().ok_or(AppError::HermesToolsEnabled)?;
-    if toolsets.iter().any(|toolset| {
-        toolset["enabled"] != false
-            && toolset["configured"] != false
-            && toolset["tools"]
-                .as_array()
-                .is_none_or(|tools| !tools.is_empty())
-    }) {
-        return Err(AppError::HermesToolsEnabled);
-    }
+    validate_toolsets(&tools)?;
     let mut response=state.http.post(url).bearer_auth(key)
         .header("Idempotency-Key",format!("draft-{job}"))
         .header("X-Hermes-Session-Key",format!("alex-draft:{namespace}"))
@@ -361,6 +368,28 @@ pub(crate) async fn ask_hermes_json(
         .unwrap_or(content)
         .trim();
     serde_json::from_str(content).map_err(|_| AppError::HermesFailed)
+}
+
+pub(crate) fn validate_toolsets(tools: &Value) -> Result<(), AppError> {
+    // Hermes returns a list envelope; retain support for older array responses.
+    let toolsets = tools
+        .as_array()
+        .or_else(|| {
+            (tools["object"] == "list" && tools["platform"] == "api_server")
+                .then(|| tools["data"].as_array())
+                .flatten()
+        })
+        .ok_or(AppError::HermesToolsEnabled)?;
+    if toolsets.iter().any(|toolset| {
+        toolset["enabled"] != false
+            && toolset["configured"] != false
+            && toolset["tools"]
+                .as_array()
+                .is_none_or(|tools| !tools.is_empty())
+    }) {
+        return Err(AppError::HermesToolsEnabled);
+    }
+    Ok(())
 }
 
 pub async fn run(state: AppState, mut stop: watch::Receiver<bool>) {

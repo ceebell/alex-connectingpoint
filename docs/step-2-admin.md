@@ -78,6 +78,10 @@ API_SERVER_HOST=172.18.0.1
 
 ตรวจ IP จริงก่อนด้วย `ip -4 addr show docker_gwbridge` ค่า 172.18.0.1 เป็นค่าที่พบใน server นี้ หากเครื่องอื่นใช้ subnet ต่างกันต้องเปลี่ยนให้ตรงกัน แล้ว restart gateway ของ profile ตาม service ที่ติดตั้งอยู่ `hermes -p <profile-name> gateway` เป็นคำสั่งเปิดแบบ interactive สำหรับทดสอบ ไม่ใช่การ compile
 
+บน server นี้ติดตั้ง profile `alex-extraction` ไว้ที่ `~/.hermes/profiles/alex-extraction/` และเปิดผ่าน user service `hermes-alex-extraction.service` แล้ว ตรวจด้วย `systemctl --user status hermes-alex-extraction.service` ใช้ provider/model ที่ตั้งไว้ใน Hermes พร้อมบัญชี provider เดิมผ่าน global auth fallback โดยไม่คัดลอก token ปิด tools ของ `api_server` และ memory ทั้งสองแบบ ไม่ผูก LINE/Telegram เข้ากับ profile นี้ API bind เฉพาะ `172.18.0.1:8642` และใช้ key แยกที่เก็บใน `.env` ฝั่ง server เท่านั้น หลังเปลี่ยน profile ให้รัน `systemctl --user restart hermes-alex-extraction.service`
+
+`GET /v1/toolsets` ของ Hermes รุ่นที่ติดตั้งคืน `{ "object": "list", "platform": "api_server", "data": [...] }` Backend รองรับรูปแบบนี้และ array ของรุ่นเก่า โดยยังปฏิเสธผลที่ไม่รู้จักหรือมี tools เปิดอยู่ ปุ่ม **บันทึกสรุป** เก็บข้อมูลอย่างเดียว ต้องกด **เตรียมออเดอร์ด้วย AI** เพื่อเรียก Hermes
+
 ตั้งใน `/home/ubuntu/alex-connectingpoint/.env`:
 
 ```dotenv

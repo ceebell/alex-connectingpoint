@@ -4,6 +4,27 @@
 
 <!-- entries -->
 
+## 2026-10-26 13:10 — เชื่อม Hermes สำหรับสรุปรูปและใช้ปีปัจจุบันเมื่อไม่ได้ระบุปี
+- **คำอธิบาย:** ตรวจ server จริงพบว่า .env ของแอปยังไม่มี HERMES_API_URL/HERMES_API_KEY และไม่มี API listener พอร์ต 8642 แม้ dashboard 8646 ทำงานอยู่ ข้อความ AI ยังไม่พร้อมจึงมาจาก config ที่ว่าง อีกปัญหาคือ backend เดิมรับ /v1/toolsets เป็น array เท่านั้น แต่ Hermes ที่ติดตั้งคืน list envelope จึงตั้ง extraction profile จริงและแก้ parser พร้อมเปลี่ยนกติกาวันที่ตามที่ผู้ใช้สั่ง
+- **โฟลเดอร์ `backend/src/`**
+  - `draft_worker.rs` — แก้: ส่ง current_year จากเวลาสร้างคำขอตาม Asia/Bangkok ให้ AI รักษาปีเดิมเมื่อ retry ข้ามปี และรองรับ toolsets ทั้ง envelope ของรุ่นปัจจุบันและ array ของรุ่นเก่าโดยยังปฏิเสธ tools ที่เปิดอยู่หรือ schema ที่ไม่รู้จัก
+  - `order_draft_prompt.txt` — แก้: วันส่ง/รับ/ใช้/คืนที่มีวันเดือนชัดเจนแต่ไม่มีปีใช้ปีปัจจุบันของคำขอ รวมวันที่แยกต่อรูป/ต่อชุด ใช้ปีที่ระบุไว้ก่อนและแปลง พ.ศ. เป็น ค.ศ. ไม่เลื่อนวันในอดีตไปปีหน้าเอง คงคำถามสำหรับวันที่กำกวมหรือไม่ถูกต้องและอ้างหลักฐานต้นฉบับ
+  - `tests_rental.rs` — เพิ่ม/แก้: ตรวจปีตรงรอยต่อปีใหม่เวลาไทย parser ของ toolsets ทั้งสองรูปแบบ ผลที่ไม่ปลอดภัย และเส้นทาง image-only ผ่าน list envelope พร้อมวันส่ง/คืนแยกรายการ
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx`, `lib/api.ts` — แก้: อธิบายว่าบันทึกสรุปเก็บข้อมูลและต้องกดเตรียมออเดอร์ด้วย AI เพื่ออ่านภาพ แจ้งสาเหตุเมื่อ server ไม่ได้ตั้ง Hermes และแสดงกติกาปีปัจจุบันโดยไม่บังคับกรอกปีในคำบรรยาย
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md`, `step-2-admin.md` — แก้: กติกาปีปัจจุบัน ตัวอย่างวันส่ง/รับ/ใช้/คืน และวิธีตรวจ/restart extraction profile กับรูปแบบ toolsets ของ Hermes ที่ติดตั้งจริง
+- **Server `Hermes` (แก้ runtime config เท่านั้น ไม่ compile หรือ deploy source บน Ubuntu)**
+  - `~/.hermes/profiles/alex-extraction/` — เพิ่ม: profile สำหรับสกัดข้อมูลภาพโดยเฉพาะ ใช้ model/provider เดิมจาก Hermes และ global auth fallback โดยไม่คัดลอก OAuth token ตั้ง api_server/cli toolsets เป็น [] ปิด memory/user profile ไม่ผูก LINE/Telegram เปิด API เฉพาะ 172.18.0.1:8642 พร้อม key สุ่มแยก
+  - `~/.config/systemd/user/hermes-alex-extraction.service` — เพิ่ม: user service ที่ enable และ active แล้ว; Linger=yes; ไม่ restart gateway หลัก ตรวจ gateway หลักยัง active และ endpoint ที่ไม่แนบ key ตอบ 401
+  - `~/alex-connectingpoint/.env` — แก้: ตั้ง HERMES_API_URL/HERMES_API_KEY/HERMES_MODEL/HERMES_TIMEOUT_SECONDS สำรองเดิมเป็น .env.before-hermes-20261026-130127 และเขียน atomic แบบ mode 600 ตรวจ key ตรงกับ profile โดยไม่แสดงค่าใน output/log
+- **โฟลเดอร์ `dist/` (build บน Docker Desktop local เท่านั้น)**
+  - `line-linux/` — แก้: backend Linux release `rel-20261026060511-4bd5b97e9ff0` พร้อม checksum/tag/metadata
+  - `frontend-linux/` — แก้: frontend Linux release `front-20261026060513-5d6f1e105e1d` พร้อม runtime/static/public และ checksum 2,108 ไฟล์
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 37/37 บน MongoDB disposable พอร์ต 27018; npm.cmd run lint/build ผ่าน; runtime Docker image ทั้งสองส่วน build ผ่าน; checksum backend/frontend ทุกไฟล์และ git diff --check ผ่าน ไม่เพิ่ม dependency
+- **ทดสอบ Hermes จริง:** ส่งภาพ fixture ที่สร้างเองเพื่อทดสอบ OCR ไป API บน server ได้ HTTP 200 และ finish_reason=stop อ่าน nina/dark brown/M ค่าเช่า 550 บาท ค่าส่ง Flash 40 บาท แปลงวันส่ง 4/11 เป็น 2026-11-04 และคงวันรับ 5,6 เป็นคำถาม จากนั้นทดสอบผ่าน backend local รุ่นใหม่กับ Mongo แยกและ Hermes จริงผ่าน SSH tunnel: อัปโหลดภาพ/บันทึกสรุป/prepare/poll ได้ DONE พร้อมหลักฐานครบทั้ง v1 ที่ใช้ปีปัจจุบัน 2026 และ v2 ที่ระบุ พ.ศ. 2570 แล้วได้ปี 2027 ไม่ส่ง LINE หรือสร้างบิลจริง script ทดสอบอยู่ใน ignored data/hermes-live-check.py และไม่มี key ในไฟล์ ปิด backend/tunnel/HTTP fixture/Mongo disposable ที่สร้างเองแล้ว
+- **ยังต้องดำเนินการก่อนใช้บนหน้าเว็บจริง:** ยังไม่ commit/push ตาม AGENTS.md และยังไม่ deploy source/release ใหม่ บัญชี SSH ต้องใส่รหัสผ่าน sudo จึงไม่ restart แอปที่รันอยู่ ผลตรวจสุดท้าย /api/admin/session ของ production ยัง hermes_configured=false เพราะ process เดิมยังไม่โหลด .env ต้องใช้ rungit.bat ส่ง source พร้อม dist แล้วบน Ubuntu รัน bash ./loadgit.sh main, sudo bash ./docker-build.sh --full-stack และ sudo bash ./docker-deploy.sh --full-stack จากนั้นรีเฟรชหน้าเว็บและกดเตรียมออเดอร์ด้วย AI; การ reload เฉพาะ config ให้รุ่นเก่ายังติด parser toolsets จึงต้องใช้ release ใหม่ด้วย
+
 ## 2026-10-26 12:44 — รีโหลด server และยืนยัน login Alex ผ่านตัวแอปสำเร็จ
 - **คำอธิบาย:** ผู้ใช้สั่งทำต่อให้เสร็จหลังตั้ง ALEX_* ใน .env บน server แล้ว บัญชี SSH ต้องใช้ sudo จึงเปิดหน้าต่าง SSH ให้ผู้ใช้กรอกรหัสผ่าน Ubuntu โดยตรง ผู้ใช้ยืนยันว่ากรอกแล้ว จากนั้นดำเนินการ deploy config และตรวจผลผ่านตัวแอปจริง
 - **Server `Hermes:~/alex-connectingpoint/`**

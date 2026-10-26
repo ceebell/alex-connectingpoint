@@ -9,6 +9,41 @@ use axum::{Json, response::IntoResponse};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
+fn missing_date_year_uses_bangkok_request_year_at_new_year_boundary() {
+    for (timestamp, expected) in [
+        ("2026-12-31T16:59:59Z", 2026),
+        ("2026-12-31T17:00:00Z", 2027),
+        ("2027-01-01T00:00:00Z", 2027),
+    ] {
+        assert_eq!(
+            draft_worker::bangkok_year(DateTime::parse_rfc3339_str(timestamp).unwrap()).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn hermes_toolset_formats_allow_disabled_tools_and_reject_unsafe_or_unknown_results() {
+    let disabled = json!([{"enabled":false,"configured":true,"tools":["terminal"]}]);
+    for value in [
+        disabled.clone(),
+        json!({"object":"list","platform":"api_server","data":disabled}),
+    ] {
+        assert!(draft_worker::validate_toolsets(&value).is_ok());
+    }
+    for value in [
+        json!({"object":"list","platform":"api_server","data":[{"enabled":true,"configured":true,"tools":["terminal"]}]}),
+        json!({"object":"list","platform":"api_server","data":[{}]}),
+        json!({"object":"list","platform":"cli","data":[]}),
+        json!({"object":"list","platform":"api_server","data":null}),
+        json!({}),
+        json!([null]),
+    ] {
+        assert!(draft_worker::validate_toolsets(&value).is_err());
+    }
+}
+
+#[test]
 fn image_only_requests_accept_five_and_keep_per_item_dates() {
     let mut input = PrepareInput {
         request_id: "photos-only".into(),
@@ -178,15 +213,16 @@ async fn ai_mock(
         result
     } else {
         let refs = data["selected_image_event_refs"].as_array().unwrap();
-        let fields = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่และปี"},
-            {"product_name":"Haatiya","color":"Blush Pink","size":"M","notes":"ใช้ 14/11 รับ 12/11 คืน 15/11 ต้องยืนยันปีและราคาที่ตกลง"}]});
+        let year = data["current_year"].as_u64().unwrap();
+        let fields = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")},"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"},
+            {"product_name":"Haatiya","color":"Blush Pink","size":"M","rental":{"pickup_date":format!("{year}-11-12"),"usage_date":format!("{year}-11-14"),"return_date":format!("{year}-11-15")},"notes":"ต้องยืนยันราคาที่ตกลง"}]});
         let fields: DraftFields = serde_json::from_value(fields).unwrap();
         let mut evidence = Vec::new();
         for key in fields.values().keys() {
             let index = if key.starts_with("items.1.") { 1 } else { 0 };
             evidence.push(json!({"field":key,"source_type":"admin_attachment","source_ref":refs[index],"quote":"ข้อความบนรูปสรุป"}));
         }
-        json!({"fields":fields,"evidence":evidence,"conflicts":[],"questions":["วันที่ในภาพเป็นปีใด และวันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
+        json!({"fields":fields,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
     };
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
 }
@@ -207,7 +243,9 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     let app = axum::Router::new()
         .route(
             "/v1/toolsets",
-            axum::routing::get(|| async { Json(json!([])) }),
+            axum::routing::get(|| async {
+                Json(json!({"object":"list","platform":"api_server","data":[]}))
+            }),
         )
         .route("/v1/chat/completions", axum::routing::post(ai_mock))
         .with_state(mock.clone());
@@ -344,6 +382,23 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     );
     assert!(saved[0]["result"]["fields"]["items"][0]["product_code"].is_null());
     assert!(saved[0]["result"]["fields"]["rental"]["pickup_date"].is_null());
+    let calls = mock.calls.lock().await;
+    let request: Value = serde_json::from_str(
+        calls.last().unwrap()["messages"][1]["content"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let year = request["current_year"].as_u64().unwrap();
+    assert_eq!(
+        saved[0]["result"]["fields"]["items"][0]["rental"]["dispatch_date"],
+        format!("{year}-11-04")
+    );
+    assert_eq!(
+        saved[0]["result"]["fields"]["items"][1]["rental"]["return_date"],
+        format!("{year}-11-15")
+    );
+    drop(calls);
     assert_eq!(
         saved[0]["result"]["fields"]["items"][0]["amounts"]["shipping_fee_satang"],
         4000
