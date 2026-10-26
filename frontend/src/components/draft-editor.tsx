@@ -27,6 +27,9 @@ function orderLevel(initial: Fields): Fields {
     if (written && !receivingMethod(written)) extra.push(`ขนส่ง: ${written}`);
   } else rental.delivery_provider = null;
   const amounts: Amounts = { ...emptyAmounts(), ...fields.amounts };
+  // No discount is shown as 0; the cart fills in the quoted-price difference when there is one.
+  amounts.rental_discount_satang ??= 0;
+  amounts.deposit_discount_satang ??= 0;
   for (const key of quotedKeys) {
     const perItem = fields.items.map(item => item.amounts?.[key]).filter((value): value is number => typeof value === "number");
     if (amounts[key] == null && perItem.length) amounts[key] = perItem.reduce((sum, value) => sum + value, 0);
@@ -71,6 +74,26 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const setRental = (key: keyof Rental, value: string) => setFields(current => ({ ...current, rental: { ...current.rental, [key]: value || null } }));
   const setReceiving = (method: string) => setFields(current => ({ ...current, rental: { ...current.rental, fulfillment_method: method === STORE_PICKUP ? "store_pickup" : "delivery", delivery_provider: method === STORE_PICKUP ? null : method } }));
   const setAmount = (key: keyof Amounts, value: string) => setFields(current => ({ ...current, amounts: { ...current.amounts, [key]: value ? Math.round(Number(value) * 100) : null } }));
+  // Discounts are filled with the quoted-price difference (Alex price in the cart − quoted fee, 0 when none)
+  // and follow cart changes while they still hold the previous automatic value; a value the admin typed is kept.
+  // When the saved cart first loads, only a discount the saved draft left empty is filled.
+  const cartLoaded = useRef(false);
+  function cartChanged(items: CartItem[]) {
+    const previous = cart;
+    const first = !cartLoaded.current;
+    cartLoaded.current = true;
+    setCart(items);
+    setFields(current => {
+      const amounts = { ...current.amounts };
+      for (const [key, fee] of [["rental_discount_satang", "rental_fee_satang"], ["deposit_discount_satang", "deposit_satang"]] as const) {
+        const quoted = current.amounts[fee] ?? null;
+        const auto = (list: CartItem[]) => !list.length || quoted === null ? 0 : Math.max(0, list.reduce((sum, item) => sum + (item.candidate[fee] ?? 0) * item.quantity, 0) - quoted);
+        const now = current.amounts[key] ?? null;
+        if (now === null || (first ? initial.amounts?.[key] == null : now === auto(previous))) amounts[key] = auto(items);
+      }
+      return JSON.stringify(amounts) === JSON.stringify(current.amounts) ? current : { ...current, amounts };
+    });
+  }
   const text = (key: "intent" | "customer_name" | "customer_phone" | "customer_address" | "branch") => <label className={key === "customer_address" ? "span-2" : ""}>{labels[key]}{key === "customer_address" ? <textarea rows={3} value={fields[key] ?? ""} maxLength={1000} disabled={busy} onChange={e => setFields({ ...fields, [key]: e.target.value || null })} /> : <input value={fields[key] ?? ""} maxLength={200} disabled={busy} inputMode={key === "customer_phone" ? "tel" : undefined} onChange={e => setFields({ ...fields, [key]: (key === "customer_phone" ? cleanPhone(e.target.value) : e.target.value) || null })} />}</label>;
   const money = (key: keyof Amounts, label: string, max?: number, auto?: number) => <label>{label} (บาท)<input type="number" min="0" max={max === undefined ? undefined : max / 100} step="0.01" disabled={busy} placeholder={auto ? `อัตโนมัติ ${price(auto)}` : undefined} value={amount(key) == null ? "" : amount(key)! / 100} onChange={e => setAmount(key, e.target.value)} /></label>;
   // Same rule as the bill on the server: with no written discount, a fee quoted below the Alex prices in the cart is the discount.
@@ -79,7 +102,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const autoDeposit = fromQuote(amount("deposit_satang"), depositTotal);
   const rentalDiscount = amount("rental_discount_satang") ?? autoRental;
   const depositDiscount = amount("deposit_discount_satang") ?? autoDeposit;
-  const usesAuto = (amount("rental_discount_satang") == null && autoRental > 0) || (amount("deposit_discount_satang") == null && autoDeposit > 0);
+  const usesAuto = (autoRental > 0 && rentalDiscount === autoRental) || (autoDeposit > 0 && depositDiscount === autoDeposit);
   const aboveCatalog = !!cart.length && ((amount("rental_fee_satang") ?? 0) > rentalTotal || (amount("deposit_satang") ?? 0) > depositTotal);
   const tooMuch = !!cart.length && (rentalDiscount > rentalTotal || depositDiscount > depositTotal);
 
@@ -89,7 +112,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <div className="field-grid">{text("customer_name")}{text("customer_phone")}{text("customer_address")}</div>
       <CustomerExtractButton inquiryId={inquiryId} disabled={busy} onUnauthorized={onUnauthorized} onFill={value => setFields(current => ({ ...current, customer_name: value.display_name ?? current.customer_name, customer_phone: value.phone ? cleanPhone(value.phone) : current.customer_phone, customer_address: value.address ?? current.customer_address }))} />
     </section>
-    <OrderCart inquiryId={inquiryId} draft={draft} items={fields.items} messages={messages} attachments={attachments} availability={availability} disabled={busy} onCart={setCart} onUnauthorized={onUnauthorized} />
+    <OrderCart inquiryId={inquiryId} draft={draft} items={fields.items} messages={messages} attachments={attachments} availability={availability} disabled={busy} onCart={cartChanged} onUnauthorized={onUnauthorized} />
     <section className="order-section section-dates">
       <h3 className="form-heading"><span aria-hidden="true">📅</span> วันรับ–คืนชุด <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
       {!!draft?.result?.date_options?.length && <div className="request-list date-options"><span className="muted small">วันที่อ่านได้จากรูป/สรุป (กดเพื่อใช้):</span>{draft.result.date_options.map((option, i) => {
@@ -110,7 +133,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
         {money("deposit_discount_satang", "ส่วนลดค่าประกัน", cart.length ? depositTotal : undefined, autoDeposit)}
         {money("shipping_fee_satang", "ค่าจัดส่ง")}
       </div>
-      {usesAuto && <p className="notice info">ส่วนลดที่เว้นว่างคิดจากราคาที่แจ้งลูกค้าเทียบกับราคาใน Alex{autoRental > 0 && ` · ค่าเช่า ${price(autoRental)} บาท`}{autoDeposit > 0 && ` · ค่าประกัน ${price(autoDeposit)} บาท`} — กรอก 0 ถ้าไม่ต้องการให้ส่วนลด</p>}
+      {usesAuto && <p className="notice info">ใส่ส่วนลดอัตโนมัติจากราคาที่แจ้งลูกค้าเทียบกับราคาใน Alex{autoRental > 0 && rentalDiscount === autoRental && ` · ค่าเช่า ${price(autoRental)} บาท`}{autoDeposit > 0 && depositDiscount === autoDeposit && ` · ค่าประกัน ${price(autoDeposit)} บาท`} — แก้ตัวเลขได้ หรือกรอก 0 ถ้าไม่ให้ส่วนลด แล้วกดบันทึกร่าง</p>}
       {aboveCatalog && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex กรุณาตรวจสินค้าในตะกร้า</p>}
       {!!cart.length && <p className={tooMuch ? "notice warning" : "cart-total"}>{tooMuch ? "ส่วนลดมากกว่ายอดตามแค็ตตาล็อก" : `ยอดหลังหักส่วนลด: ค่าเช่า ${price(rentalTotal - rentalDiscount)} บาท · ค่าประกัน ${price(depositTotal - depositDiscount)} บาท`}</p>}
       <label className="order-notes">หมายเหตุ / อุปกรณ์<textarea rows={3} value={fields.notes ?? ""} maxLength={3000} disabled={busy} onChange={e => setFields({ ...fields, notes: e.target.value || null })} /></label>
