@@ -72,7 +72,9 @@ export type CartItem = { _id: string; product_item_id: string; branch_id: string
 export type Availability = { state: string; checked_at: string; items: { item_index: number; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
-export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[] } };
+export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[]; date_options?: DateOption[] } };
+// Pickup/return pairs the AI read from images; the admin picks one for the order.
+export type DateOption = { pickup_date: string | null; return_date: string | null; label: string };
 export type Job = { id: string; status: string; error_code: string | null };
 export type Profile = { _id: string; line_user_id: string; version: number; display_name: string | null; phone: string | null; address: string | null; notes: string | null; updated_by: string; updated_at: string };
 export type Order = { _id: string; inquiry_id: string; draft_id: string; draft_version: number; status: string; approved_by: string; approved_at: string; fields: Fields };

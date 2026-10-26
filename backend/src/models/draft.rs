@@ -79,6 +79,16 @@ pub struct Evidence {
     pub quote: String,
 }
 
+// A pickup/return pair read from an image or summary. Like questions, it is a suggestion the
+// admin may apply to the order; it is never booked without that choice.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DateOption {
+    pub pickup_date: Option<String>,
+    pub return_date: Option<String>,
+    pub label: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftResult {
@@ -89,6 +99,8 @@ pub struct DraftResult {
     pub conflicts: Vec<String>,
     #[serde(default)]
     pub questions: Vec<String>,
+    #[serde(default)]
+    pub date_options: Vec<DateOption>,
 }
 
 impl DraftResult {
@@ -242,7 +254,17 @@ impl DraftFields {
     }
 
     // Applied after evidence checks: these are house rules, not facts read from a source.
+    // The shop ships by Flash unless the order says otherwise.
     pub fn normalize(&mut self) {
+        let method = self
+            .rental
+            .fulfillment_method
+            .get_or_insert_with(|| "delivery".into());
+        if method == "delivery" {
+            self.rental
+                .delivery_provider
+                .get_or_insert_with(|| "Flash".into());
+        }
         self.customer_phone = self
             .customer_phone
             .as_deref()
@@ -378,6 +400,20 @@ pub fn validate_evidence(
     {
         return Err(AppError::Validation("Oversized AI result"));
     }
+    if result.date_options.len() > 10
+        || result.date_options.iter().any(|option| {
+            option.label.trim().is_empty()
+                || option.label.chars().count() > 300
+                || (option.pickup_date.is_none() && option.return_date.is_none())
+                || [&option.pickup_date, &option.return_date]
+                    .into_iter()
+                    .flatten()
+                    .any(|date| !valid_date(date))
+                || matches!((&option.pickup_date, &option.return_date), (Some(pickup), Some(returned)) if returned < pickup)
+        })
+    {
+        return Err(AppError::Validation("Invalid date options"));
+    }
     let mut covered = BTreeSet::new();
     for item in &result.evidence {
         let key = format!("{}:{}", item.source_type, item.source_ref);
@@ -449,6 +485,7 @@ mod tests {
             evidence: vec![],
             conflicts: vec![],
             questions: vec![],
+            date_options: vec![],
         };
         let sources = BTreeMap::from([("admin_summary:s1".into(), "Customer A".into())]);
         assert!(validate_evidence(&result, &sources, &BTreeSet::new()).is_err());

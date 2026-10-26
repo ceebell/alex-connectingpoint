@@ -406,10 +406,11 @@ async fn drafts_are_versioned_grounded_isolated_and_recoverable() {
         "2026-11-15"
     );
     assert_eq!(saved[0]["stale"], false);
-    // Products come from the cart, so only order-level facts can be missing.
+    // Products come from the cart and delivery defaults to Flash, so only the return date is missing.
+    assert_eq!(saved[0]["missing_fields"], json!(["rental.return_date"]));
     assert_eq!(
-        saved[0]["missing_fields"],
-        json!(["rental.return_date", "rental.fulfillment_method"])
+        saved[0]["result"]["fields"]["rental"]["delivery_provider"],
+        "Flash"
     );
     // Restart recovery sees the committed pointer and does not call Hermes twice.
     let done = state

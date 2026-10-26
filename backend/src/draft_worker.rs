@@ -1,7 +1,7 @@
 use crate::{
     db::drafts,
     error::AppError,
-    models::draft::{DraftResult, Evidence, PrepareInput, validate_evidence},
+    models::draft::{DraftResult, Evidence, PrepareInput, valid_date, validate_evidence},
     state::AppState,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -25,6 +25,53 @@ pub(crate) fn bangkok_year(reference: DateTime) -> Result<u16, AppError> {
         .ok_or(AppError::Data)?
         .parse()
         .map_err(|_| AppError::Data)
+}
+
+// Older prompt shapes put dates on items; keep valid ones as date choices instead of dropping them.
+fn lift_item_dates(value: &mut Value) {
+    if !value.is_object() {
+        return;
+    }
+    let lifted: Vec<Value> = value["fields"]["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let rental = item.get("rental")?;
+            let date = |key: &str| {
+                rental
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|date| valid_date(date))
+            };
+            let (pickup, returned) = (date("pickup_date"), date("return_date"));
+            if (pickup.is_none() && returned.is_none())
+                || pickup
+                    .zip(returned)
+                    .is_some_and(|(pickup, returned)| returned < pickup)
+            {
+                return None;
+            }
+            let label = ["category", "product_name", "product_code"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .unwrap_or("รายการจากรูป");
+            Some(json!({"pickup_date":pickup,"return_date":returned,"label":label}))
+        })
+        .collect();
+    if lifted.is_empty() {
+        return;
+    }
+    if !value["date_options"].is_array() {
+        value["date_options"] = json!([]);
+    }
+    if let Some(options) = value["date_options"].as_array_mut() {
+        for option in lifted {
+            if options.len() < 10 && !options.contains(&option) {
+                options.push(option);
+            }
+        }
+    }
 }
 
 pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
@@ -109,6 +156,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             evidence,
             conflicts: vec![],
             questions: vec![],
+            date_options: vec![],
         }
     } else {
         let reference = *job.get_datetime("created_at").map_err(|_| AppError::Data)?;
@@ -151,10 +199,10 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             parts.push(json!({"type":"text","text":format!("Image evidence source: {source_type}:{image_id}")}));
             parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{}",STANDARD.encode(bytes))}}));
         }
-        let mut result: DraftResult = serde_json::from_value(
-            ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?,
-        )
-        .map_err(|_| AppError::HermesFailed)?;
+        let mut raw = ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?;
+        lift_item_dates(&mut raw);
+        let mut result: DraftResult =
+            serde_json::from_value(raw).map_err(|_| AppError::HermesFailed)?;
         result.drop_retired_evidence();
         result
     };
@@ -184,6 +232,10 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
                 .clone(),
         )
         .map_err(|_| AppError::Data)?;
+        // A manual edit keeps the date choices read from the images until a new AI draft replaces them.
+        if input.fields.is_some() && result.date_options.is_empty() {
+            result.date_options = prior.date_options.clone();
+        }
         let prior_values = prior.fields.values();
         if let Ok(fields) = previous.get_array("confirmed_fields") {
             for key in fields.iter().filter_map(|v| v.as_str()) {

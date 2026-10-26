@@ -5,6 +5,7 @@ import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
 
 const rentalKeys = Object.keys(emptyRental()) as (keyof Rental)[];
+const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
 const quotedKeys = ["rental_fee_satang", "deposit_satang", "shipping_fee_satang"] as const;
 
 // Older drafts kept dates, fees and notes per item; lift them to the order, which is what Alex books.
@@ -12,6 +13,9 @@ function orderLevel(initial: Fields): Fields {
   const fields = structuredClone(initial);
   const rental = emptyRental();
   for (const key of rentalKeys) rental[key] = fields.rental?.[key] ?? fields.items.find(item => item.rental?.[key])?.rental?.[key] ?? null;
+  // The shop ships by Flash unless the order says otherwise (same rule as the backend).
+  rental.fulfillment_method ??= "delivery";
+  if (rental.fulfillment_method === "delivery") rental.delivery_provider ??= "Flash";
   const amounts: Amounts = { ...emptyAmounts(), ...fields.amounts };
   for (const key of quotedKeys) {
     const perItem = fields.items.map(item => item.amounts?.[key]).filter((value): value is number => typeof value === "number");
@@ -45,9 +49,13 @@ export default function DraftEditor({ inquiryId, draft, initial, busy, messages,
     <OrderCart inquiryId={inquiryId} draft={draft} items={fields.items} messages={messages} attachments={attachments} disabled={busy} onCart={setCart} onUnauthorized={onUnauthorized} />
     <section className="order-section">
       <h3 className="form-heading"><span aria-hidden="true">📅</span> วันรับ–คืนชุด <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
+      {!!draft?.result?.date_options?.length && <div className="request-list date-options"><span className="muted small">วันที่อ่านได้จากรูป/สรุป (กดเพื่อใช้):</span>{draft.result.date_options.map((option, i) => {
+        const chosen = option.pickup_date === fields.rental.pickup_date && option.return_date === fields.rental.return_date;
+        return <button type="button" key={i} className={`request-chip ${chosen ? "selected" : ""}`} aria-pressed={chosen} disabled={busy} onClick={() => setFields(current => ({ ...current, rental: { ...current.rental, pickup_date: option.pickup_date ?? current.rental.pickup_date, return_date: option.return_date ?? current.rental.return_date } }))}>{option.label}<span> · รับ {option.pickup_date ? day(option.pickup_date) : "ยังไม่ระบุ"} – คืน {option.return_date ? day(option.return_date) : "ยังไม่ระบุ"}</span></button>;
+      })}</div>}
       <div className="field-grid">
         {(["pickup_date", "return_date"] as const).map(key => <label key={key}>{labels[`rental.${key}`]}<input type="date" value={fields.rental[key] ?? ""} disabled={busy} onChange={e => setRental(key, e.target.value)} /></label>)}
-        <label>วิธีรับสินค้า<select value={fields.rental.fulfillment_method ?? ""} disabled={busy} onChange={e => setRental("fulfillment_method", e.target.value)}><option value="">ยังไม่ระบุ</option><option value="store_pickup">รับหน้าร้าน</option><option value="delivery">จัดส่ง</option></select></label>
+        <label>วิธีรับสินค้า<select value={fields.rental.fulfillment_method ?? ""} disabled={busy} onChange={e => { const method = e.target.value; setFields(current => ({ ...current, rental: { ...current.rental, fulfillment_method: method || null, delivery_provider: method === "delivery" ? current.rental.delivery_provider ?? "Flash" : current.rental.delivery_provider } })); }}><option value="delivery">จัดส่ง</option><option value="store_pickup">รับหน้าร้าน</option><option value="">ยังไม่ระบุ</option></select></label>
         <label>ขนส่ง<input value={fields.rental.delivery_provider ?? ""} disabled={busy} maxLength={100} onChange={e => setRental("delivery_provider", e.target.value)} /></label>
         <label>ส่งคืนก่อนเวลา<input type="time" value={fields.rental.return_shipping_deadline ?? ""} disabled={busy} onChange={e => setRental("return_shipping_deadline", e.target.value)} /></label>
       </div>

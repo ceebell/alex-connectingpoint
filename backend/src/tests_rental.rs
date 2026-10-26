@@ -96,10 +96,44 @@ fn image_only_requests_accept_five_and_keep_order_level_fields() {
         .collect(),
         conflicts: vec![],
         questions: vec![],
+        date_options: vec![],
     };
     result.drop_retired_evidence();
     assert_eq!(result.evidence.len(), 1);
     assert_eq!(result.evidence[0].field, "rental.pickup_date");
+    // Unstated fulfillment is delivery by Flash; a stated store pickup stays as it is.
+    let mut defaults = DraftFields::default();
+    defaults.normalize();
+    assert_eq!(
+        defaults.rental.fulfillment_method.as_deref(),
+        Some("delivery")
+    );
+    assert_eq!(defaults.rental.delivery_provider.as_deref(), Some("Flash"));
+    let mut pickup = DraftFields::default();
+    pickup.rental.fulfillment_method = Some("store_pickup".into());
+    pickup.normalize();
+    assert!(pickup.rental.delivery_provider.is_none());
+    let sources = std::collections::BTreeMap::new();
+    let images = std::collections::BTreeSet::new();
+    result.evidence.clear();
+    result.date_options = vec![crate::models::draft::DateOption {
+        pickup_date: Some("2026-11-12".into()),
+        return_date: None,
+        label: "Haatiya: รับ 12/11".into(),
+    }];
+    assert!(crate::models::draft::validate_evidence(&result, &sources, &images).is_ok());
+    for (pickup, returned) in [
+        (Some("2026-11-15"), Some("2026-11-12")),
+        (Some("2026-13-01"), None),
+        (None, None),
+    ] {
+        result.date_options = vec![crate::models::draft::DateOption {
+            pickup_date: pickup.map(String::from),
+            return_date: returned.map(String::from),
+            label: "รูป 1".into(),
+        }];
+        assert!(crate::models::draft::validate_evidence(&result, &sources, &images).is_err());
+    }
 }
 
 #[test]
@@ -243,7 +277,7 @@ async fn ai_mock(
         let year = data["current_year"].as_u64().unwrap();
         // Items still carry an older prompt's per-item extras; only order-level values are kept.
         let raw = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")}},
-            {"product_name":"Haatiya","color":"Blush Pink","size":"M","notes":"ต้องยืนยันราคาที่ตกลง"}],
+            {"product_name":"Haatiya","color":"Blush Pink","size":"M","notes":"ต้องยืนยันราคาที่ตกลง","rental":{"pickup_date":format!("{year}-11-12"),"return_date":format!("{year}-11-15")}}],
             "rental":{"return_date":format!("{year}-11-15"),"fulfillment_method":"delivery","delivery_provider":"Flash"},
             "amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"});
         let fields: DraftFields = serde_json::from_value(raw.clone()).unwrap();
@@ -255,7 +289,8 @@ async fn ai_mock(
         // An older prompt shape still cites retired fields; the worker drops them instead of failing.
         evidence.push(json!({"field":"items.0.rental.dispatch_date","source_type":"admin_attachment","source_ref":refs[0],"quote":"ส่ง 4/11"}));
         evidence.push(json!({"field":"items.1.notes","source_type":"admin_attachment","source_ref":refs[1],"quote":"ต้องยืนยันราคาที่ตกลง"}));
-        json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"]})
+        let options = json!([{"pickup_date":format!("{year}-11-05"),"return_date":format!("{year}-11-08"),"label":"nina: รับ 5 คืน 8"}]);
+        json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"],"date_options":options})
     };
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
 }
@@ -431,6 +466,12 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     assert_eq!(fields["rental"]["return_date"], format!("{year}-11-15"));
     drop(calls);
     assert_eq!(fields["amounts"]["shipping_fee_satang"], 4000);
+    // Every date pair read from the images is offered as a choice, including older per-item dates.
+    let options = &saved[0]["result"]["date_options"];
+    assert_eq!(options.as_array().unwrap().len(), 2);
+    assert_eq!(options[0]["pickup_date"], format!("{year}-11-05"));
+    assert_eq!(options[1]["pickup_date"], format!("{year}-11-12"));
+    assert_eq!(options[1]["label"], "Haatiya");
     assert!(fields["notes"].as_str().unwrap().contains("รับชุด 5,6"));
     let calls = mock.calls.lock().await;
     let call = calls.last().unwrap();

@@ -4,6 +4,19 @@
 
 <!-- entries -->
 
+## 2026-10-26 21:34 — ตัวเลือกวันรับ/คืนจากรูป และวิธีรับเริ่มต้นเป็น Flash
+- **คำอธิบาย:** ผู้ใช้พบว่าวันรับ/คืนชุดว่างทั้งที่มีในรูป สาเหตุคือรูปสองชุดมีวันต่างกัน (และ "รับ 5,6" กำกวม) กติกาออเดอร์เดียวจึงให้ AI เว้นวันว่างแล้วถาม ผู้ใช้ขอให้แสดงเป็นตัวเลือก และให้วิธีรับสินค้าเริ่มต้นเป็น Flash
+- **โฟลเดอร์ `backend/src/`**
+  - `models/draft.rs` — เพิ่ม/แก้: `DateOption {pickup_date, return_date, label}` และ `DraftResult.date_options` (เป็นคำแนะนำเหมือน questions ไม่ต้องมี evidence) ตรวจไม่เกิน 10 ตัว วันที่ถูกต้อง คืนไม่ก่อนรับ label 1–300 ตัวอักษร; `normalize` ตั้งวิธีรับว่างเป็น delivery และขนส่งว่างของ delivery เป็น Flash
+  - `draft_worker.rs` — แก้: วันรับ/คืนต่อรายการรูปแบบเก่าที่ AI อาจยังส่งมาถูกยกเป็น date_options แทนการทิ้ง; การบันทึกร่างด้วยมือคง date_options จากร่างก่อนหน้า
+  - `order_draft_prompt.txt` — แก้: ให้ส่ง date_options ทุกคู่วันที่เห็นในรูป/สรุป (วันกำกวมให้หนึ่งตัวเลือกต่อความเป็นไปได้) และไม่ถามเรื่องวิธีรับเพราะ backend ตั้ง Flash ให้
+  - `tests_rental.rs`, `tests_step2.rs` — แก้: ตรวจ date_options จาก AI และจากวันต่อรายการแบบเก่า, การตรวจตัวเลือกวันที่ผิด, ค่าเริ่มต้น delivery/Flash และ store_pickup ไม่ถูกเติมขนส่ง, ข้อมูลขาดเหลือวันคืน
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/draft-editor.tsx`, `components/order-cart.css`, `lib/api.ts` — แก้: ปุ่ม **วันที่อ่านได้จากรูป/สรุป** เหนือช่องวันที่ กดแล้วใส่วันรับ/คืน และแสดงปุ่มที่เลือกอยู่; วิธีรับเริ่มต้น "จัดส่ง" + ขนส่ง Flash และเลือกจัดส่งแล้วเติม Flash ถ้าว่าง
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md` — แก้: ตัวเลือกวันที่จากรูปและค่าเริ่มต้น Flash
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 43/43 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint และ npm run build ผ่าน; ร่างที่สร้างก่อนรุ่นนี้ไม่มีตัวเลือกวันที่ ต้องกดเตรียมออเดอร์ด้วย AI ใหม่; ยังไม่ได้ build release — ต้องรัน build-backend.bat และ build-frontend.bat ก่อน rungit.bat
+
 ## 2026-10-26 17:23 — ชื่อบนโปสเตอร์เป็นประเภท (category) ของ Alex: หา code ก่อนค้นสินค้า
 - **คำอธิบาย:** ผู้ใช้ชี้ว่ารูปแบบโปสเตอร์ร้าน ชื่อตัวใหญ่ (เช่น Haatiya) คือประเภทสินค้า ไม่ใช่ชื่อสินค้า ต้องหา code ของประเภทก่อนแล้วจึงค้น ตรวจ JS สาธารณะของ shop.alexrental.app พบว่าเว็บ Alex อ่านประเภทจาก `GET /api/category` (ต้องใช้ token) เป็น `{code, description, state}` และกรอง `state=true`; `GetProductItems` รับ `category` เป็น code อยู่แล้ว
 - **โฟลเดอร์ `backend/src/`**
