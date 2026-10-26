@@ -18,7 +18,7 @@ function orderLevel(initial: Fields): Fields {
     if (amounts[key] == null && perItem.length) amounts[key] = perItem.reduce((sum, value) => sum + value, 0);
   }
   const notes = [fields.notes, ...fields.items.map((item, i) => item.notes ? (fields.items.length > 1 ? `รายการ ${i + 1}: ${item.notes}` : item.notes) : null)].filter(Boolean);
-  return { ...fields, rental, amounts, notes: notes.join("\n") || null, items: fields.items.map(item => ({ product_code: item.product_code, product_name: item.product_name ?? null, color: item.color, size: item.size, quantity: item.quantity })) };
+  return { ...fields, rental, amounts, notes: notes.join("\n") || null, items: fields.items.map(item => ({ product_code: item.product_code, product_name: item.product_name ?? null, category: item.category ?? null, color: item.color, size: item.size, quantity: item.quantity })) };
 }
 
 export default function DraftEditor({ inquiryId, draft, initial, busy, messages, attachments, onSave, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onUnauthorized: () => void }) {

@@ -54,6 +54,7 @@ Credentials และ token อยู่ฝั่ง backend การค้น�
 | Endpoint | หน้าที่ |
 | --- | --- |
 | `GET /api/admin/alex` | สถานะ config และสาขาที่ login ได้ โดยไม่คืน credentials |
+| `GET /api/admin/alex/categories` | ประเภทสินค้าที่ใช้งานอยู่จาก Alex `GET /api/category` เป็น `{code, name}` ให้ช่อง **ประเภท** ในส่วนค้นหาชุด |
 | `GET /api/inquiries/{id}/products` | ผลจับคู่เฉพาะร่างล่าสุดและสถานะยืนยันครบ |
 | `POST /api/inquiries/{id}/products/search` | ค้นด้วย mode `code`, `text`, `product_url`, `image` |
 | `GET/POST /api/inquiries/{id}/cart` | อ่านตะกร้า / เพิ่ม candidate จาก search (`search_id`, `product_item_id`, `quantity`) |

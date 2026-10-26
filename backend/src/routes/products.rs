@@ -22,6 +22,13 @@ pub async fn settings(State(state): State<AppState>) -> Result<Json<Value>, AppE
         "product_url_configured":state.config.alex.as_ref().is_some_and(|cfg| cfg.product_url_prefix.is_some())})))
 }
 
+pub async fn categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    let session = alex::login(&state).await?;
+    Ok(Json(
+        json!({"categories":alex::categories(&state, &session).await?}),
+    ))
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Path(inquiry): Path<String>,

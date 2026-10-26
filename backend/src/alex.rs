@@ -1,7 +1,7 @@
 use crate::{
     config::AlexConfig,
     error::AppError,
-    models::product::{Branch, Candidate, SearchInput, SearchMode, satang, valid_id},
+    models::product::{Branch, Candidate, Category, SearchInput, SearchMode, satang, valid_id},
     state::AppState,
 };
 use reqwest::Url;
@@ -231,6 +231,54 @@ pub fn product_code_from_url(cfg: &AlexConfig, value: &str) -> Result<String, Ap
     Ok(code)
 }
 
+// Alex's own web app lists product lines from GET /api/category; only active ones are offered.
+pub async fn categories(state: &AppState, session: &Session) -> Result<Vec<Category>, AppError> {
+    let cfg = config(state)?;
+    let response = state
+        .http
+        .get(format!("{}/api/category", cfg.api_url))
+        .bearer_auth(&session.token)
+        .send()
+        .await
+        .map_err(|_| AppError::AlexFailed)?;
+    let value = response_json(response).await?;
+    let items = value
+        .as_array()
+        .filter(|items| items.len() <= 5000)
+        .ok_or(AppError::AlexFailed)?;
+    Ok(items
+        .iter()
+        .filter(|item| item["state"] == true)
+        .filter_map(|item| {
+            let code = item["code"].as_str()?.trim();
+            let name = item["description"].as_str()?.trim();
+            (!code.is_empty() && code.len() <= 64 && !name.is_empty() && name.len() <= 200).then(
+                || Category {
+                    code: code.into(),
+                    name: name.into(),
+                },
+            )
+        })
+        .collect())
+}
+
+// Matches a name read from an image or summary to a category, by name first and then by code.
+pub fn find_category<'a>(categories: &'a [Category], wanted: &str) -> Option<&'a Category> {
+    let wanted = wanted.split_whitespace().collect::<Vec<_>>().join(" ");
+    let same = |value: &str| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+            == wanted.to_lowercase()
+    };
+    categories
+        .iter()
+        .find(|category| same(&category.name))
+        .or_else(|| categories.iter().find(|category| same(&category.code)))
+}
+
 pub async fn search_page(
     state: &AppState,
     session: &Session,
@@ -411,6 +459,24 @@ pub async fn image(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn category_names_resolve_to_alex_codes() {
+        let list = vec![
+            Category {
+                code: "HT".into(),
+                name: "Haatiya".into(),
+            },
+            Category {
+                code: "NN".into(),
+                name: "Nina  Dress".into(),
+            },
+        ];
+        assert_eq!(find_category(&list, " haatiya ").unwrap().code, "HT");
+        assert_eq!(find_category(&list, "nina dress").unwrap().code, "NN");
+        assert_eq!(find_category(&list, "ht").unwrap().name, "Haatiya");
+        assert!(find_category(&list, "Haati").is_none());
+    }
 
     #[test]
     fn catalog_images_use_the_shop_item_store() {

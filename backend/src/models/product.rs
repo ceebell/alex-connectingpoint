@@ -7,6 +7,13 @@ pub struct Branch {
     pub name: String,
 }
 
+// An Alex product line such as "Haatiya"; product searches filter by its code.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct Category {
+    pub code: String,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Candidate {
     pub product_item_id: String,

@@ -52,6 +52,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             post(drafts::extract_customer),
         )
         .route("/api/admin/alex", get(products::settings))
+        .route("/api/admin/alex/categories", get(products::categories))
         .route("/api/inquiries/{id}/products", get(products::list))
         .route(
             "/api/inquiries/{id}/products/search",

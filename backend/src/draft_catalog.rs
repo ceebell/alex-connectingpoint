@@ -4,7 +4,7 @@ use crate::{
     error::AppError,
     models::{
         draft::{DraftItem, DraftResult, Evidence},
-        product::{Candidate, SearchInput, SearchMode},
+        product::{Candidate, Category, SearchInput, SearchMode},
     },
     state::AppState,
 };
@@ -30,6 +30,10 @@ fn evidence(result: &mut DraftResult, field: &str, reference: &str, value: Value
 }
 
 fn identity_matches(item: &DraftItem, candidate: &Candidate) -> bool {
+    // A category-only search is already narrowed to that product line by Alex.
+    if item.product_code.is_none() && item.product_name.is_none() {
+        return item.category.is_some();
+    }
     if let Some(code) = &item.product_code {
         return code.trim().eq_ignore_ascii_case(&candidate.code);
     }
@@ -197,13 +201,41 @@ pub async fn enrich(
     let draft_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let inquiry_id = inquiry.get_object_id("_id").map_err(|_| AppError::Data)?;
     let mut lookups = vec![];
+    let mut categories: Option<Vec<Category>> = None;
     for index in 0..result.fields.items.len() {
-        let item = result.fields.items[index].clone();
+        let mut item = result.fields.items[index].clone();
+        // A poster title is an Alex category: resolve its code first, then search inside it.
+        let category = if let Some(name) = item.category.clone() {
+            if categories.is_none() {
+                categories = Some(
+                    match timeout_at(deadline, alex::categories(state, &session)).await {
+                        Ok(Ok(list)) => list,
+                        _ => vec![],
+                    },
+                );
+            }
+            let found = categories
+                .as_deref()
+                .and_then(|list| alex::find_category(list, &name))
+                .cloned();
+            if found.is_none() {
+                // An unknown category name may still be a product name, so search it as text.
+                question(
+                    result,
+                    format!("ไม่พบประเภท {name} ใน Alex จึงค้นด้วยชื่อแทน กรุณาตรวจประเภทในส่วนค้นหาชุด"),
+                );
+                item.product_name = item.product_name.or(Some(name));
+                item.category = None;
+            }
+            found
+        } else {
+            None
+        };
         let query = item
             .product_code
             .clone()
             .or_else(|| item.product_name.clone());
-        if query.as_ref().is_none_or(|query| query.trim().is_empty()) {
+        if category.is_none() && query.as_ref().is_none_or(|query| query.trim().is_empty()) {
             question(
                 result,
                 format!("กรุณาระบุชื่อหรือรหัสสินค้ารายการ {} เพื่อค้นใน Alex", index + 1),
@@ -225,7 +257,7 @@ pub async fn enrich(
             color: item.color.clone(),
             size: item.size.clone(),
             image_event_id: None,
-            category: None,
+            category: category.as_ref().map(|category| category.code.clone()),
             texture: None,
             page: 1,
         };

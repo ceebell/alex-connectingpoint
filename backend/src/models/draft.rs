@@ -25,6 +25,8 @@ pub struct DraftFields {
 pub struct DraftItem {
     pub product_code: Option<String>,
     pub product_name: Option<String>,
+    // Alex product line (e.g. a poster title like "Haatiya"), resolved to a category code for search.
+    pub category: Option<String>,
     pub color: Option<String>,
     pub size: Option<String>,
     pub quantity: Option<i64>,

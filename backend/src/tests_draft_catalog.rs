@@ -42,6 +42,21 @@ async fn catalog(
     }
     let candidate = |id: &str| json!({"productItemId":id,"code":"DR-NINA","name":"Nina dress","color":if mode==5{"blue"}else{"dark brown"},"size":if mode==5{"L"}else{"M"},"rentalPrice":1000,"bail":2000,"mainImage":"/photo.png"});
     let items = match mode {
+        // Searching inside the resolved category: no keyword, only the category code and options.
+        8 => {
+            assert_eq!(body["category"], "HT");
+            assert_eq!(body["keyword"], "");
+            let mut item = candidate("haatiya-1");
+            item["code"] = json!("0288HTBP");
+            item["name"] = json!("Haatiya - Blush Pink");
+            item["color"] = json!("Blush Pink");
+            vec![item]
+        }
+        9 => {
+            assert_eq!(body["category"], "");
+            assert_eq!(body["keyword"], "Unknown line");
+            vec![]
+        }
         1 => vec![candidate("nina-1"), candidate("nina-2")],
         2 => vec![],
         6 if body["pageNumber"] == 1 => (0..15)
@@ -56,6 +71,13 @@ async fn catalog(
     Json(json!({"itemNumber":if mode==6{16}else{items.len()},"itemList":items}))
 }
 
+async fn categories(headers: axum::http::HeaderMap) -> Json<Value> {
+    assert_eq!(headers["authorization"], "Bearer fixture-alex-token");
+    Json(
+        json!([{"code":"HT","description":"Haatiya","state":true},{"code":"OLD","description":"Unknown line","state":false}]),
+    )
+}
+
 async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Value> {
     let data: Value =
         serde_json::from_str(body["messages"][1]["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -67,6 +89,15 @@ async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Valu
     let mut fields: DraftFields = serde_json::from_value(json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","quantity":1}],"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000}})).unwrap();
     if flow.mode.load(Ordering::SeqCst) == 4 {
         fields.amounts.rental_fee_satang = None;
+    }
+    if [8, 9].contains(&flow.mode.load(Ordering::SeqCst)) {
+        fields.items[0].product_name = None;
+        fields.items[0].color = Some("Blush Pink".into());
+        fields.items[0].category = Some(if flow.mode.load(Ordering::SeqCst) == 8 {
+            "haatiya".into()
+        } else {
+            "Unknown line".into()
+        });
     }
     let image = data["selected_image_event_refs"]
         .as_array()
@@ -90,6 +121,7 @@ async fn fixture(mode: usize) -> (AppState, Flow, tokio::task::JoinHandle<()>, O
     let app = axum::Router::new()
         .route("/api/user/login", axum::routing::post(login))
         .route("/api/v2/GetProductItems", axum::routing::post(catalog))
+        .route("/api/category", axum::routing::get(categories))
         .route(
             "/v1/toolsets",
             axum::routing::get(|| async {
@@ -259,6 +291,43 @@ async fn admin_inputs_search_logged_in_catalog_fill_real_fields_and_keep_ambiguo
             assert_eq!(status, StatusCode::OK);
             assert_eq!(cart["items"][0]["candidate"]["product_item_id"], "nina-1");
             assert_eq!(cart["items"][0]["quantity"], 1);
+        }
+        state.db.drop().await.unwrap();
+        server.abort();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn poster_titles_are_searched_as_alex_categories_by_code() {
+    for mode in [8, 9] {
+        let (state, _flow, server, id) = fixture(mode).await;
+        let job = enqueue(&state, id, true).await;
+        draft_worker::process(&state, &job).await.unwrap();
+        let inquiry = drafts::inquiry(&state, id).await.unwrap();
+        let latest = &drafts::safe_drafts(&state, &inquiry).await.unwrap()[0];
+        let item = &latest["result"]["fields"]["items"][0];
+        let lookup = &latest["catalog_lookup"][0];
+        if mode == 8 {
+            assert_eq!(lookup["status"], "MATCHED");
+            assert_eq!(item["category"], "haatiya");
+            assert_eq!(item["product_code"], "0288HTBP");
+            assert_eq!(item["product_name"], "Haatiya - Blush Pink");
+            let suggestions = products::list(&state, id).await.unwrap();
+            assert_eq!(suggestions["suggestions"][0]["search"]["category"], "HT");
+        } else {
+            // An inactive or unknown category is never used; the title is searched as a name.
+            assert_eq!(lookup["status"], "NOT_FOUND");
+            assert!(
+                latest["result"]["questions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|question| question
+                        .as_str()
+                        .unwrap()
+                        .contains("ไม่พบประเภท Unknown line"))
+            );
         }
         state.db.drop().await.unwrap();
         server.abort();

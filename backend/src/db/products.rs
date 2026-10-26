@@ -144,7 +144,7 @@ pub async fn list(state: &AppState, inquiry_id: ObjectId) -> Result<Value, AppEr
                             .map(candidate_view)
                             .collect::<Result<Vec<_>, _>>()?;
                         value["search"] = json!({"search_id":id.to_hex(),"item_index":input.item_index,"branch_id":input.branch_id,
-                            "mode":input.mode,"query":input.query,"color":input.color,"size":input.size,
+                            "mode":input.mode,"query":input.query,"color":input.color,"size":input.size,"category":input.category,
                             "method":"admin_input","page":input.page,"has_more":record.get_bool("has_more").unwrap_or(false),"candidates":candidates});
                     }
                     Ok(_) | Err(AppError::ProductConflict) => {

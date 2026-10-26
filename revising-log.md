@@ -4,6 +4,20 @@
 
 <!-- entries -->
 
+## 2026-10-26 17:23 — ชื่อบนโปสเตอร์เป็นประเภท (category) ของ Alex: หา code ก่อนค้นสินค้า
+- **คำอธิบาย:** ผู้ใช้ชี้ว่ารูปแบบโปสเตอร์ร้าน ชื่อตัวใหญ่ (เช่น Haatiya) คือประเภทสินค้า ไม่ใช่ชื่อสินค้า ต้องหา code ของประเภทก่อนแล้วจึงค้น ตรวจ JS สาธารณะของ shop.alexrental.app พบว่าเว็บ Alex อ่านประเภทจาก `GET /api/category` (ต้องใช้ token) เป็น `{code, description, state}` และกรอง `state=true`; `GetProductItems` รับ `category` เป็น code อยู่แล้ว
+- **โฟลเดอร์ `backend/src/`**
+  - `alex.rs`, `models/product.rs` — เพิ่ม: `Category {code, name}`, `alex::categories` (เฉพาะที่ใช้งาน) และ `find_category` เทียบชื่อแบบไม่สนตัวพิมพ์/ช่องว่างซ้ำ แล้วจึงเทียบ code; unit test
+  - `routes/products.rs`, `routes/mod.rs` — เพิ่ม: `GET /api/admin/alex/categories`
+  - `models/draft.rs`, `order_draft_prompt.txt` — แก้: รายการสินค้ามี `category`; prompt ให้ชื่อตัวใหญ่บนโปสเตอร์/การ์ดจองเป็น category ไม่ใช่ product_name/product_code
+  - `draft_catalog.rs`, `db/products.rs` — แก้: AI lookup หา code ของประเภทก่อน แล้วค้นด้วย `category=<code>` (ไม่ใส่ keyword เมื่อไม่มีชื่อ/รหัส) พร้อมสี/ไซซ์; ไม่พบประเภทหรือประเภทปิดใช้งาน → ค้นด้วยชื่อแทนและถามให้ตรวจ; ผลค้นอัตโนมัติส่ง `category` ให้หน้าเว็บ
+  - `tests_draft_catalog.rs` — เพิ่ม: mock `/api/category` และทดสอบ "haatiya" → `HT` ค้นด้วย code แล้ว MATCHED และประเภทที่ปิดใช้งานไม่ถูกใช้ ค้นด้วยชื่อแทนพร้อมคำถาม
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/order-cart.tsx`, `components/draft-editor.tsx`, `lib/api.ts` — แก้: ช่อง **ประเภท** (dropdown จาก Alex) ในตัวกรองหลักแทนช่องรหัสหมวดหมู่ ชิปสิ่งที่ลูกค้าขอแสดงประเภทและเลือกประเภทให้อัตโนมัติ ร่างเก็บ `category` ของรายการไว้เมื่อบันทึก
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md`, `step-3-products.md` — แก้: ตัวอย่าง Haatiya เป็นประเภท และ endpoint categories
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 43/43 บน MongoDB disposable พอร์ต 27018 (ปิดแล้ว); npm run lint และ npm run build ผ่าน; ยังไม่ได้เรียก `/api/category` ของร้านจริง (ใช้รูปแบบจาก JS ของ Alex) และยังไม่ได้ build release — `dist/` ยังเป็นรุ่นก่อนงานหน้าออเดอร์เดียว ต้องรัน build-backend.bat และ build-frontend.bat ก่อน rungit.bat
+
 ## 2026-10-26 16:01 — หน้าออเดอร์เดียวในร่างล่าสุด: ค้นชุด + ตะกร้า + เช็คคิว, ข้อมูลระดับออเดอร์
 - **คำอธิบาย:** ผู้ใช้ขอ (1) ค้นและเลือกสินค้า Alex พร้อมรูปในแท็บร่างล่าสุดแล้วตัดแท็บเลือกชุด (2) วันรับ/คืน หมายเหตุ ส่วนลดค่าเช่า/ค่าประกันเป็นต่อออเดอร์ไม่ใช่ต่อสินค้า (3) เช็คคิวในหน้าเดียวกัน (4) ตัดแท็บลูกค้า (5) แสดงสินค้าที่ได้แบบตะกร้า (6) ตัดการ์ดสถิติ และยืนยันรูปแบบลิงก์รูป Alex `/images/{shopInfoId}/item/{file}` ซึ่งตรงกับที่ทำไว้ เดิมผลเลือกชุดผูกกับเวอร์ชันร่างและรายการ จึงหายทุกครั้งที่บันทึกร่าง ตอนนี้ย้ายเป็นตะกร้าต่อ inquiry
 - **โฟลเดอร์ `backend/src/`**

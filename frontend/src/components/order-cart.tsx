@@ -3,7 +3,8 @@
 import { KeyboardEvent, useEffect, useState } from "react";
 import { api, ApiError, Attachment, Availability, Candidate, CartItem, Draft, DraftItem, errorText, LineEvent } from "@/lib/api";
 
-type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null };
+type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
+type Category = { code: string; name: string };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
 type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean };
 type Mode = "code" | "text" | "product_url" | "image";
@@ -60,7 +61,9 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   const [query, setQuery] = useState(items[0]?.product_code ?? items[0]?.product_name ?? "");
   const [color, setColor] = useState(items[0]?.color ?? "");
   const [size, setSize] = useState(items[0]?.size ?? "");
+  // Alex category code; a poster title like "Haatiya" is a category, not a product name.
   const [category, setCategory] = useState("");
+  const [categories, setCategories] = useState<Category[]>([]);
   const [texture, setTexture] = useState("");
   const [image, setImage] = useState("");
   const [result, setResult] = useState<Search | null>(null);
@@ -75,7 +78,8 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   function keep(value: { items: CartItem[] }) { setCart(value.items); onCart(value.items); }
-  function show(search: Search) { setResult(search); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
+  function show(search: Search) { setResult(search); setCategory(search.category ?? ""); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
+  const categoryCode = (name: string | null | undefined, list = categories) => { const wanted = name?.trim().toLowerCase(); return wanted ? list.find(value => value.name.toLowerCase() === wanted || value.code.toLowerCase() === wanted)?.code ?? "" : ""; };
 
   useEffect(() => {
     let cancelled = false;
@@ -83,9 +87,11 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       api<Settings>("/api/admin/alex"),
       api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart`),
       draft ? api<{ suggestions?: Suggestion[] }>(`/api/inquiries/${inquiryId}/products`).catch(() => ({ suggestions: [] })) : Promise.resolve({ suggestions: [] }),
-    ]).then(([settings, cart, found]) => {
+      api<{ categories: Category[] }>("/api/admin/alex/categories").catch(() => ({ categories: [] })),
+    ]).then(([settings, cart, found, listed]) => {
       if (cancelled) return;
-      setSettings(settings); setCart(cart.items); onCart(cart.items);
+      setSettings(settings); setCart(cart.items); onCart(cart.items); setCategories(listed.categories);
+      setCategory(categoryCode(items[0]?.category, listed.categories));
       const usable = (found.suggestions ?? []).filter(suggestion => suggestion.search?.candidates.length);
       setSuggestions(found.suggestions ?? []);
       const first = usable[0]?.search;
@@ -97,7 +103,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   function pickRequest(item: DraftItem, index: number) {
     const suggestion = suggestions.find(value => value.item_index === index && value.search?.candidates.length);
-    setMode(item.product_code ? "code" : "text"); setQuery(item.product_code ?? item.product_name ?? ""); setColor(item.color ?? ""); setSize(item.size ?? ""); setError("");
+    setMode(item.product_code ? "code" : "text"); setQuery(item.product_code ?? item.product_name ?? ""); setCategory(categoryCode(item.category)); setColor(item.color ?? ""); setSize(item.size ?? ""); setError("");
     if (suggestion?.search) { setBranch(suggestion.search.branch_id); show(suggestion.search); } else { setResult(null); setChoices([]); }
   }
 
@@ -138,16 +144,17 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       {loading && <p role="status" className="muted small">กำลังโหลดตะกร้าและสาขา…</p>}
       {settings && !settings.configured && <div className="notice warning">ยังไม่เชื่อมบัญชี Alex กรุณาให้ผู้ดูแลระบบตั้งค่าการเชื่อมต่อก่อนค้นสินค้า</div>}
       {error && <div className="notice warning" role="alert">{error}</div>}
-      {items.length > 0 && <div className="request-list"><span className="muted small">สิ่งที่ลูกค้าขอจากรูป/สรุป (กดเพื่อค้น):</span>{items.map((item, index) => { const lookup = suggestions.find(value => value.item_index === index); return <button type="button" key={index} className="request-chip" disabled={working} onClick={() => pickRequest(item, index)}>{[item.product_code || item.product_name || "ไม่มีชื่อ", item.color, item.size].filter(Boolean).join(" · ")}{lookup && <span> · {lookupStates[lookup.status] ?? lookup.status}</span>}</button>; })}</div>}
+      {items.length > 0 && <div className="request-list"><span className="muted small">สิ่งที่ลูกค้าขอจากรูป/สรุป (กดเพื่อค้น):</span>{items.map((item, index) => { const lookup = suggestions.find(value => value.item_index === index); return <button type="button" key={index} className="request-chip" disabled={working} onClick={() => pickRequest(item, index)}>{[item.category && `ประเภท ${item.category}`, item.product_code || item.product_name, item.color, item.size].filter(Boolean).join(" · ") || "ไม่มีชื่อ"}{lookup && <span> · {lookupStates[lookup.status] ?? lookup.status}</span>}</button>; })}</div>}
       <div className="field-grid search-grid">
         {(settings?.branches.length ?? 0) > 1 && <label className="span-2">สาขา Alex<select value={branch} disabled={working} onChange={e => setBranch(e.target.value)}><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}
         <label>ค้นหาจาก<select value={mode} disabled={working} onChange={e => setMode(e.target.value as Mode)}><option value="text">ชื่อหรือคำบรรยาย</option><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้า</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากแชท/รูปแนบ</option></select></label>
         {mode === "image" ? <label>รูปอ้างอิง<select value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>
-          : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในสาขา" : "เช่น 0291FRLDBRM"} /></label>}
+          : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในประเภท/สาขา" : "เช่น 0291FRLDBRM"} /></label>}
+        <label className="span-2">ประเภท<select value={category} disabled={working} onChange={e => setCategory(e.target.value)}><option value="">ทุกประเภท</option>{categories.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{category && !categories.some(value => value.code === category) && <option value={category}>{category}</option>}</select></label>
         <label>สี<input maxLength={200} value={color} disabled={working} onKeyDown={enter} onChange={e => setColor(e.target.value)} placeholder="เช่น น้ำตาล" /></label>
         <label>ไซซ์<input maxLength={200} value={size} disabled={working} onKeyDown={enter} onChange={e => setSize(e.target.value)} placeholder="เช่น M" /></label>
       </div>
-      <details className="product-filters"><summary>ตัวกรองเพิ่มเติม</summary><div className="field-grid">{([["หมวดหมู่ (รหัส)", category, setCategory], ["ลาย/เนื้อผ้า (รหัส)", texture, setTexture]] as const).map(([label, value, set]) => <label key={label}>{label}<input maxLength={200} value={value} disabled={working} onKeyDown={enter} onChange={e => set(e.target.value)} /></label>)}</div></details>
+      <details className="product-filters"><summary>ตัวกรองเพิ่มเติม</summary><div className="field-grid"><label>ลาย/เนื้อผ้า (รหัส)<input maxLength={200} value={texture} disabled={working} onKeyDown={enter} onChange={e => setTexture(e.target.value)} /></label></div></details>
       <button type="button" className="button secondary full" disabled={working || !branch || (mode === "image" && !image)} onClick={() => search()}>{busy ? "กำลังค้นหา…" : "ค้นหาสินค้าใน Alex"}</button>
       {result && <p className="muted small">พบ {choices.length} ตัวเลือก · หน้าที่ {result.page}{result.method === "admin_input" ? " · ผลค้นอัตโนมัติจากรูป/สรุป" : result.method === "image_code" ? " · อ่านรหัสจากรูปแล้วยืนยันใน Alex" : result.method === "image_similarity" ? " · เรียงตามความคล้ายของรูป" : ""}</p>}
       {result && !choices.length && <div className="notice info">ยังไม่พบตัวเลือก ลองปรับชื่อ สี หรือไซซ์{result.has_more ? " หรือโหลดหน้าถัดไป" : ""}</div>}
