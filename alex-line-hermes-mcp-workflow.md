@@ -162,17 +162,29 @@ LINE แนะนำการประมวลผล webhook แบบ asynchro
 
 หน้าหลังบ้านใช้ `build-frontend.bat` ได้แล้ว สคริปต์สร้าง Linux standalone ใน `dist/frontend-linux/` พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน [คู่มือ build local](docs/build-local.md)
 
-**ผู้ดูแลระบบ:** บน Ubuntu ให้ทำตามลำดับ:
+**ขั้นตอน deploy มาตรฐาน (ทุกครั้งที่แก้โค้ด):**
+
+1. **Windows (local):** build เฉพาะส่วนที่แก้ แล้วส่งขึ้น Git (แก้ Rust → `build-backend.bat`, แก้หน้าเว็บ → `build-frontend.bat`, แก้แค่ docs/config ไม่ต้อง build)
+
+```bat
+build-backend.bat
+build-frontend.bat
+rungit.bat "ข้อความ commit"
+```
+
+2. **Ubuntu (`ssh Hermes`):** หน้า admin รันบน server แล้ว ใช้ `--full-stack` ทุกครั้ง ถ้าไม่ใส่ frontend จะไม่อัปเดต
 
 ```sh
 cd ~/alex-connectingpoint
 # 1. Pull scripts and compiled objects.
 bash ./loadgit.sh main
-# 2. Package the compiled Linux binary into a Docker image.
-sudo bash ./docker-build.sh
-# 3. Deploy the already-built image.
-sudo bash ./docker-deploy.sh
+# 2. Package the compiled backend and frontend into Docker images.
+sudo bash ./docker-build.sh --full-stack
+# 3. Deploy the already-built images.
+sudo bash ./docker-deploy.sh --full-stack
 ```
+
+แก้แค่ `.env` บน server ให้รันเฉพาะ `sudo bash ./docker-deploy.sh --full-stack` ไฟล์ `.sh` รันบน Ubuntu เท่านั้น
 
 ครั้งแรกที่ยังไม่เปิด Swarm เพิ่ม `--init-swarm` ในคำสั่ง docker-deploy.sh เก็บ config จริงใน `/home/ubuntu/alex-connectingpoint/.env` สิทธิ์ 600 และไม่ส่งขึ้น Git
 
@@ -184,7 +196,7 @@ Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime i
 
 ## 5. Step 2 — รวมสรุปแอดมินและสกัดร่างออเดอร์
 
-เพิ่มตัวเชื่อมข้อความแอดมินจาก OA Manager บน Ubuntu แล้ว: ผู้พัฒนา build บน local และส่ง release เข้า Git; ผู้ดูแล pull/package/deploy backend และ `deploy-oa-connector.sh`; ผู้ดูแลบัญชีรัน `login-oa.bat` เพื่อล็อกอิน LINE ให้ browser บน Ubuntu ครั้งแรก ดู [ขั้นตอนและ config OA auto-sync](docs/line-oa-auto-sync.md) ต้องทดสอบบัญชีจริงก่อนยืนยันว่า sync สำเร็จ ไม่มีช่องคัดลอกข้อความเอง
+การใช้งานปัจจุบันให้แอดมินตอบลูกค้าจาก Alex แล้วระบบรวมข้อความขาออกในบริบท AI ตัวเชื่อม OA Manager บน Ubuntu เป็นทางเลือกและปิดเป็นค่าเริ่มต้น (`OA_CONNECTOR_ENABLED=false`) ดู [ขั้นตอนและ config OA auto-sync](docs/line-oa-auto-sync.md) หากต้องการเปิดเพิ่ม
 
 **สถานะโค้ด:** มี frontend หลังบ้านและ backend สำหรับ Step 2 แล้ว แอดมินล็อกอิน เลือก inquiry อ่านแชท/เลือกรูป ใส่สรุป และกดเตรียมออเดอร์ด้วย AI ได้เมื่อผู้ดูแลตั้ง Hermes API เรียบร้อย ผลผ่าน validator แล้วเก็บเป็นร่างเวอร์ชันใหม่ พร้อมหลักฐาน ข้อมูลที่ขาดและขัดกัน แก้ร่างด้วยมือและดูประวัติได้ ยังไม่เช็คคิวหรือ submit order
 
@@ -203,6 +215,8 @@ Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime i
 ### 5.1 ช่องทางรับสรุปจากแอดมิน
 
 แนวทางเริ่มต้นคือเพิ่มปุ่ม **เตรียมออเดอร์ด้วย AI** ในหน้าหลังบ้าน แอดมินเลือก inquiry วางข้อความสรุป แล้วส่งให้ AI ช่วยจัดรูปแบบ ตัวอย่าง:
+
+บันทึกข้อความและรูปที่เลือกด้วยปุ่ม **บันทึกสรุป** ได้ก่อนใช้ AI ระบบเก็บ revision พร้อมผู้แก้ไขและบริบทแชท เมื่อกดเตรียมออเดอร์จะบันทึกสรุปที่แก้ให้อัตโนมัติ จึงกลับมาทำต่อได้แม้ AI ล้มเหลว หากสองหน้าต่างแก้พร้อมกัน ระบบแจ้งให้โหลดสรุปล่าสุดโดยเก็บข้อความที่กำลังพิมพ์ไว้ ร่างที่อ้างสรุปรุ่นเก่าหรือแชทที่เปลี่ยนจะต้องตรวจและเตรียมใหม่
 
 > คุณเอ เช่าชุด DR-012 สีแดง ไซซ์ M รับวันที่ 15 พ.ย. 2569 คืนวันที่ 18 พ.ย. 2569 ค่าเช่า 1,500 บาท มัดจำ 2,000 บาท รับหน้าร้านสาขา A
 
@@ -235,6 +249,8 @@ Webhook มาตรฐานของ LINE ระบุการรับข้
 **Output:** ร่างออเดอร์ที่ยังแก้ไขได้ พร้อม `missing_fields`, `conflicts`, แหล่งที่มาของข้อมูล และ `draft_version`
 
 ## 6. Step 3 — ระบุ Product ID และชุดที่จะเช่า
+
+**สถานะโค้ด:** มีแท็บ **เลือกชุด**, Alex catalog adapter และ MCP read-only tools แล้ว ค้นรหัส/คำบรรยาย/ลิงก์ที่อนุญาต/รูปจาก inquiry แสดงหลาย candidate และให้แอดมินยืนยัน `productItemId` พร้อมสาขาและหลักฐาน ผลผูกกับร่างและบริบท ตรวจ API login/product search จริงแล้ว ดู [คู่มือ Step 3: config, MCP และวิธีใช้งาน](docs/step-3-products.md) การค้นภาพใช้ Hermes เปรียบเทียบรูปในแค็ตตาล็อกหน้าที่กรองและยังต้องมีรูปสินค้าใน Alex
 
 **Input:** product code, product URL, รูป หรือคำบรรยายชุด
 
@@ -535,7 +551,7 @@ Authorization: Bearer <ALEX_ACCESS_TOKEN>
 Content-Type: application/json
 ```
 
-`ALEX_ACCESS_TOKEN` คือ `token` ที่ Alex login คืนให้ แยกจาก LINE channel access token และ `INQUIRY_ADMIN_TOKEN` ของ backend ใหม่ ชื่อนี้ใช้สื่อความหมายในเอกสาร ยังไม่ได้เพิ่ม config หรือ Connector สำหรับ Alex ลงใน backend ของ Step 1
+`ALEX_ACCESS_TOKEN` คือ `token` ที่ Alex login คืนให้ แยกจาก LINE channel access token และ `INQUIRY_ADMIN_TOKEN` ของ backend ใหม่ Adapter Step 3 อ่านบัญชีจาก `ALEX_USERNAME`/`ALEX_PASSWORD` ฝั่ง server และใช้ token ในหน่วยความจำระหว่างอ่านแค็ตตาล็อก ดู [การตั้งค่า Step 3](docs/step-3-products.md)
 
 Login body เป็นโครงสร้างนี้ โดย username/password ต้องอ่านจาก secret ฝั่ง server:
 
@@ -700,7 +716,7 @@ Connector ใหม่ต้องตรวจ HTTP status, รูปแบบ r
 5. ทดสอบ conflict, concurrent booking และ response หายร่วมกับทีม Alex ก่อนกำหนด retry/reconciliation policy
 6. จึงนำ mapping นี้ไปสร้าง backend adapter/MCP tools และส่งผลมาตรฐานให้ Hermes ตาม workflow เดิม
 
-การปรับเอกสารครั้งนี้ยังไม่ได้เพิ่ม Alex adapter หรือ MCP tools ให้ backend ของ Step 1
+มี Alex adapter และ MCP tools สำหรับ Step 3 ใน backend แล้ว ดู [คู่มือ Step 3](docs/step-3-products.md) ส่วน mapping สำหรับ checkq และ AddRentalOrder ในหัวข้อนี้ยังเป็นข้อมูลส่งต่อการพัฒนา Step 4–5
 
 ## 11. สถานะงานและข้อมูลที่ต้องเก็บ
 

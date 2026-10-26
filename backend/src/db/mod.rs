@@ -7,4 +7,5 @@ pub mod media;
 pub mod oa_sync;
 pub mod orders;
 pub mod outbound;
+pub mod products;
 pub mod users;

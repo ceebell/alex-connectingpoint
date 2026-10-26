@@ -3,6 +3,12 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  ALEX_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าบัญชี Alex กรุณาติดต่อผู้ดูแลระบบ",
+  ALEX_FAILED: "อ่านแค็ตตาล็อก Alex ไม่สำเร็จ กรุณาลองใหม่หรือตรวจบัญชีกับผู้ดูแลระบบ",
+  ALEX_SCOPE_DENIED: "บัญชี Alex ไม่มีสิทธิ์ในร้านหรือสาขาที่เลือก",
+  PRODUCT_CONFLICT: "รายการสินค้าหรือร่างเปลี่ยนไป หรือผลค้นหาหมดอายุ กรุณาโหลดผลล่าสุดแล้วค้นหาใหม่",
+  PRODUCT_OPTIONS_DIFFER: "รหัส สี หรือไซซ์จาก Alex ต่างจากร่าง กรุณาตรวจและยืนยันส่วนที่ต่างก่อนเลือก",
+  CATALOG_IMAGES_UNAVAILABLE: "อ่านรหัสจากรูปไม่ได้ และยังไม่มีรูปแค็ตตาล็อกที่ใช้เปรียบเทียบ กรุณาค้นด้วยข้อความ หรือเพิ่มรูปสินค้าใน Alex",
   UNAUTHORIZED: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง หรือหมดเวลาเข้าสู่ระบบ",
   ADMIN_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าบัญชีแอดมิน กรุณาติดต่อผู้ดูแลระบบ",
   LOGIN_RATE_LIMITED: "ลองเข้าสู่ระบบหลายครั้ง กรุณารอ 1 นาที",
@@ -11,11 +17,14 @@ const errors: Record<string, string> = {
   HERMES_TOOLS_ENABLED: "กรุณาให้ผู้ดูแลระบบตั้งค่า Hermes สำหรับการสกัดร่างก่อนใช้งาน",
   CONTEXT_CHANGED: "มีข้อความใหม่หรือข้อความถูกยกเลิก กรุณารอประมวลผลแล้วเตรียมร่างอีกครั้ง",
   DRAFT_CONFLICT: "ร่างมีการเปลี่ยนแปลงหรือมีผู้ดูแลกำลังทำงาน กรุณาโหลดข้อมูลล่าสุด",
+  DRAFT_WAITING: "ข้อความยังประมวลผลไม่เสร็จ กรุณารอสักครู่แล้วลองใหม่",
+  SUMMARY_CONFLICT: "สรุปถูกแก้จากหน้าต่างอื่นแล้ว ข้อความที่กำลังแก้ยังอยู่ กรุณาโหลดสรุปล่าสุดก่อนบันทึก",
   DATABASE_UNAVAILABLE: "ฐานข้อมูลไม่พร้อมใช้งาน กรุณาลองใหม่",
   VALIDATION_ERROR: "ข้อมูลไม่ผ่านการตรวจสอบ ตรวจวันที่ จำนวน เงิน หรือหลักฐาน แล้วลองใหม่",
   NOT_FOUND: "ไม่พบข้อมูล หรือรูปหมดอายุหรือถูกยกเลิกแล้ว",
   RECORD_CONFLICT: "ข้อมูลถูกแก้จากหน้าต่างอื่นก่อนหน้า ระบบโหลดข้อมูลล่าสุดแล้ว กรุณาตรวจแล้วบันทึกอีกครั้ง",
   ORDER_EXISTS: "เรื่องนี้อนุมัติเป็นออเดอร์ไปแล้ว",
+  IMAGE_UNAVAILABLE: "ยังส่งรูปไม่ได้ ผู้ดูแลระบบต้องตั้ง PUBLIC_BASE_URL (HTTPS) บน server",
   REPLY_UNAVAILABLE: "ส่งข้อความได้เฉพาะแชท 1:1 กับลูกค้าที่ทักเข้ามาทาง LINE OA",
   LINE_UNAVAILABLE: "ติดต่อ LINE ไม่สำเร็จ ข้อความยังไม่ถูกส่ง กดส่งอีกครั้งได้โดยไม่ส่งซ้ำ",
   LINE_RATE_LIMITED: "LINE ปฏิเสธเพราะส่งถี่เกินไปหรือโควตาข้อความของ OA เดือนนี้หมด",
@@ -52,7 +61,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; draft_version?: number; order_id?: string; customer?: Customer };
 export type Customer = { display_name?: string | null; picture_url?: string | null };
-export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[] }; postback?: { data: string } } };
+export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string }; postback?: { data: string } } };
 export type Fields = {
   intent: string | null; customer_name: string | null; customer_phone: string | null; branch: string | null;
   items: { product_code: string | null; color: string | null; size: string | null; quantity: number | null }[];
@@ -64,7 +73,8 @@ export type Draft = { _id: string; draft_version: number; workflow_status: strin
 export type Job = { id: string; status: string; error_code: string | null };
 export type Profile = { _id: string; line_user_id: string; version: number; display_name: string | null; phone: string | null; address: string | null; notes: string | null; updated_by: string; updated_at: string };
 export type Order = { _id: string; inquiry_id: string; draft_id: string; draft_version: number; status: string; approved_by: string; approved_at: string; fields: Fields };
-export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null; context_hash:string };
+export type AdminSummary = { revision: number; text?: string; image_event_ids?: string[]; updated_by: string; updated_at: string; stale: boolean; redacted: boolean };
+export type DraftList = { version: number; drafts: Draft[]; latest_request?: Job | null; context_hash:string; summary: AdminSummary | null };
 export const emptyFields = (): Fields => ({ intent: null, customer_name: null, customer_phone: null, branch: null, items: [], rental: { usage_date: null, pickup_date: null, return_date: null, fulfillment_method: null }, amounts: { rental_fee_satang: null, deposit_satang: null }, notes: null });
 export const labels: Record<string, string> = { intent: "ความต้องการ", customer_name: "ชื่อลูกค้า", customer_phone: "เบอร์โทร", branch: "สาขา", items: "รายการสินค้า", product_code: "รหัสสินค้า", color: "สี", size: "ไซซ์", quantity: "จำนวน", "rental.usage_date": "วันใช้งาน", "rental.pickup_date": "วันรับ", "rental.return_date": "วันคืน", "rental.fulfillment_method": "วิธีรับสินค้า", "amounts.rental_fee_satang": "ค่าเช่า", "amounts.deposit_satang": "มัดจำ", notes: "หมายเหตุ" };
 export function fieldLabel(key: string) { const match = key.match(/^items\.(\d+)\.(.+)$/); return match ? `สินค้ารายการ ${Number(match[1]) + 1} · ${labels[match[2]] ?? match[2]}` : labels[key] ?? key; }

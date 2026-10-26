@@ -3,6 +3,17 @@ use std::{env, time::Duration};
 use crate::error::AppError;
 
 #[derive(Clone)]
+pub struct AlexConfig {
+    pub api_url: String,
+    pub username: String,
+    pub password: String,
+    pub shop_info_id: String,
+    pub branch_ids: Vec<String>,
+    pub product_url_prefix: Option<String>,
+    pub image_origins: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct Config {
     pub port: u16,
     pub mongodb_uri: String,
@@ -30,6 +41,9 @@ pub struct Config {
     pub line_login_redirect_uri: Option<String>,
     pub admin_line_user_ids: Vec<String>,
     pub oa_connector_enabled: bool,
+    pub public_base_url: Option<String>,
+    pub alex: Option<AlexConfig>,
+    pub alex_mcp_token: Option<String>,
 }
 
 impl Config {
@@ -73,6 +87,9 @@ impl Config {
                 .map(String::from)
                 .collect(),
             oa_connector_enabled: env::var("OA_CONNECTOR_ENABLED").is_ok_and(|v| v == "true"),
+            public_base_url: public_base_url(),
+            alex: alex_config()?,
+            alex_mcp_token: optional("ALEX_MCP_TOKEN"),
         })
     }
 
@@ -89,6 +106,58 @@ impl Config {
     pub fn http_timeout(&self) -> Duration {
         Duration::from_secs(30)
     }
+}
+
+// HTTPS origin LINE uses to fetch images sent from Alex. Defaults to the
+// LINE Login callback's origin, which is the public admin hostname.
+fn public_base_url() -> Option<String> {
+    let value = optional("PUBLIC_BASE_URL").or_else(|| {
+        let uri = optional("LINE_LOGIN_REDIRECT_URI")?;
+        let rest = uri.strip_prefix("https://")?;
+        Some(format!("https://{}", rest.split('/').next()?))
+    })?;
+    let host = value.strip_prefix("https://")?.trim_end_matches('/');
+    (!host.is_empty() && !host.contains(['/', '?', '#', '@', ' ']))
+        .then(|| format!("https://{host}"))
+}
+
+fn alex_config() -> Result<Option<AlexConfig>, AppError> {
+    if optional("ALEX_USERNAME").is_none() && optional("ALEX_PASSWORD").is_none() {
+        return Ok(None);
+    }
+    let api_url = optional("ALEX_API_URL").unwrap_or_else(|| "https://shop.alexrental.app".into());
+    let url = reqwest::Url::parse(&api_url)
+        .map_err(|_| AppError::Config("Invalid ALEX_API_URL".into()))?;
+    if !["http", "https"].contains(&url.scheme())
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(AppError::Config("Invalid ALEX_API_URL".into()));
+    }
+    Ok(Some(AlexConfig {
+        api_url: api_url.trim_end_matches('/').into(),
+        username: required("ALEX_USERNAME")?,
+        password: required("ALEX_PASSWORD")?,
+        shop_info_id: required("ALEX_SHOP_INFO_ID")?,
+        branch_ids: optional("ALEX_BRANCH_IDS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
+        product_url_prefix: optional("ALEX_PRODUCT_URL_PREFIX"),
+        image_origins: optional("ALEX_IMAGE_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
+    }))
 }
 
 fn optional(name: &str) -> Option<String> {

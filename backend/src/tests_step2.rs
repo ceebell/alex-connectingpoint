@@ -162,6 +162,192 @@ async fn hermes_tools(
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn admin_summaries_survive_without_ai_and_reject_stale_or_concurrent_edits() {
+    let mut cfg = config();
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    cfg.burst_ms = 0;
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    events::persist(&state, &event("summary-start", "summary-customer", 1))
+        .await
+        .unwrap();
+    let incoming = events::claim(&state).await.unwrap().unwrap();
+    worker::process(&state, &incoming).await.unwrap();
+    let inquiry = all(&state, "inquiries").await[0].clone();
+    let id = inquiry.get_object_id("_id").unwrap();
+    let path = format!("/api/inquiries/{id}/summary");
+    let context = drafts::snapshot(&state, &inquiry).await.unwrap();
+    let input = json!({"expected_revision":0,"text":"คุณเอ รับ 15 พ.ย. 2569",
+        "image_event_ids":[],"context_hash":context.hash});
+    assert_eq!(
+        request(&state, &path, "POST", input.clone(), false).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, saved) = request(&state, &path, "POST", input.clone(), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["revision"], 1);
+    assert_eq!(saved["text"], input["text"]);
+    assert_eq!(saved["stale"], false);
+    assert!(saved["updated_by"].is_string());
+    assert!(saved.get("source_event_ids").is_none());
+    assert!(all(&state, "draft_requests").await.is_empty());
+    assert!(all(&state, "order_drafts").await.is_empty());
+    assert!(all(&state, "orders").await.is_empty());
+    let (status, reloaded) = request(
+        &state,
+        &format!("/api/inquiries/{id}/drafts"),
+        "GET",
+        Value::Null,
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reloaded["summary"]["text"], input["text"]);
+    let fields = serde_json::from_value(json!({"customer_name":"คุณเอ","branch":"A",
+        "items":[{"product_code":"DR-012","color":"แดง","size":"M","quantity":1}],
+        "rental":{"pickup_date":"2026-11-15","return_date":"2026-11-18","fulfillment_method":"store_pickup"}})).unwrap();
+    drafts::enqueue(
+        &state,
+        id,
+        PrepareInput {
+            request_id: "manual-from-saved-summary".into(),
+            expected_version: 0,
+            summary: input["text"].as_str().unwrap().into(),
+            image_event_ids: vec![],
+            fields: Some(fields),
+            confirmed_fields: vec![],
+            context_hash: Some(context.hash.clone()),
+        },
+        true,
+    )
+    .await
+    .unwrap();
+    run_next(&state).await.unwrap();
+    let ready = drafts::inquiry(&state, id).await.unwrap();
+    assert_eq!(
+        drafts::safe_drafts(&state, &ready).await.unwrap()[0]["stale"],
+        false
+    );
+    // Compare-and-set permits exactly one writer at a given summary revision.
+    let mut edit = input.clone();
+    edit["expected_revision"] = json!(1);
+    edit["text"] = json!("คุณเอ เปลี่ยนเป็นสีแดง");
+    let mut second = edit.clone();
+    second["text"] = json!("คุณเอ เปลี่ยนเป็นสีน้ำเงิน");
+    let (a, b) = tokio::join!(
+        request(&state, &path, "POST", edit, true),
+        request(&state, &path, "POST", second, true)
+    );
+    assert!(
+        (a.0 == StatusCode::OK && b.1["error"]["code"] == "SUMMARY_CONFLICT")
+            || (b.0 == StatusCode::OK && a.1["error"]["code"] == "SUMMARY_CONFLICT")
+    );
+    let changed = drafts::inquiry(&state, id).await.unwrap();
+    assert_eq!(
+        drafts::safe_drafts(&state, &changed).await.unwrap()[0]["stale"],
+        true
+    );
+    let approval = json!({"draft_id":ready.get_object_id("active_draft_id").unwrap().to_hex(),"draft_version":1,"context_hash":context.hash});
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/inquiries/{id}/order"),
+            "POST",
+            approval,
+            true
+        )
+        .await
+        .1["error"]["code"],
+        "ORDER_NOT_READY"
+    );
+    let mut invalid = input.clone();
+    invalid["expected_revision"] = json!(2);
+    invalid["image_event_ids"] = json!([ObjectId::new().to_hex()]);
+    assert_eq!(
+        request(&state, &path, "POST", invalid, true).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut other = state.clone();
+    let mut other_cfg = (*state.config).clone();
+    other_cfg.shop_id = "another-shop".into();
+    other.config = Arc::new(other_cfg);
+    assert_eq!(
+        request(&other, &path, "POST", input.clone(), true).await.0,
+        StatusCode::NOT_FOUND
+    );
+    events::persist(&state, &event("summary-new", "summary-customer", 2))
+        .await
+        .unwrap();
+    let mut edit = input.clone();
+    edit["expected_revision"] = json!(2);
+    assert_eq!(
+        request(&state, &path, "POST", edit.clone(), true).await.1["error"]["code"],
+        "CONTEXT_CHANGED"
+    );
+    let incoming = events::claim(&state).await.unwrap().unwrap();
+    worker::process(&state, &incoming).await.unwrap();
+    let current = drafts::inquiry(&state, id).await.unwrap();
+    let snapshot = drafts::snapshot(&state, &current).await.unwrap();
+    assert_eq!(
+        drafts::safe_summary(&current, &snapshot).unwrap().unwrap()["stale"],
+        true
+    );
+    // Even a configured AI request must not silently adopt context newer than the admin saw.
+    let mut configured = state.clone();
+    let mut cfg = (*state.config).clone();
+    cfg.hermes_url = Some("http://127.0.0.1:9/v1/chat/completions".into());
+    cfg.hermes_api_key = Some("test-only-hermes-key".into());
+    configured.config = Arc::new(cfg);
+    let prepare = json!({"request_id":"old-context","expected_version":1,"summary":input["text"],"context_hash":context.hash});
+    let mut prepare = prepare;
+    prepare["summary"] = json!(
+        current
+            .get_document("working_summary")
+            .unwrap()
+            .get_str("text")
+            .unwrap()
+    );
+    assert_eq!(
+        request(
+            &configured,
+            &format!("/api/inquiries/{id}/prepare"),
+            "POST",
+            prepare,
+            true
+        )
+        .await
+        .1["error"]["code"],
+        "CONTEXT_CHANGED"
+    );
+    // Withdrawn chat cannot be exposed through a separately saved summary.
+    media::tombstone(&state, incoming.get_str("message_id").unwrap())
+        .await
+        .unwrap();
+    // The saved summary predates this second message; withdraw its first source as well.
+    let first = all(&state, "line_events")
+        .await
+        .into_iter()
+        .find(|event| event.get_str("event_id") == Ok("summary-start"))
+        .unwrap();
+    media::tombstone(&state, first.get_str("message_id").unwrap())
+        .await
+        .unwrap();
+    let current = drafts::inquiry(&state, id).await.unwrap();
+    let snapshot = drafts::snapshot(&state, &current).await.unwrap();
+    let redacted = drafts::safe_summary(&current, &snapshot).unwrap().unwrap();
+    assert_eq!(redacted["redacted"], true);
+    assert!(redacted.get("text").is_none() && redacted.get("image_event_ids").is_none());
+    edit["context_hash"] = json!(snapshot.hash);
+    edit["text"] = json!("สรุปใหม่หลังตรวจข้อความที่ยกเลิก");
+    let (status, fresh) = request(&state, &path, "POST", edit, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fresh["revision"], 3);
+    assert_eq!(fresh["redacted"], false);
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
 async fn drafts_are_versioned_grounded_isolated_and_recoverable() {
     let mock = MockHermes::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -266,6 +452,49 @@ async fn drafts_are_versioned_grounded_isolated_and_recoverable() {
             2
         );
     }
+    // Saving a newer admin summary during inference also fences the old result.
+    mock.mode.store(3, Ordering::SeqCst);
+    let mut summary_race = input.clone();
+    summary_race.request_id = "summary-race".into();
+    summary_race.expected_version = 2;
+    drafts::enqueue(&state, id, summary_race, false)
+        .await
+        .unwrap();
+    let job = drafts::claim(&state).await.unwrap().unwrap();
+    let cloned = state.clone();
+    let task_job = job.clone();
+    let processing = tokio::spawn(async move { draft_worker::process(&cloned, &task_job).await });
+    mock.started.notified().await;
+    let current = drafts::inquiry(&state, id).await.unwrap();
+    let snapshot = drafts::snapshot(&state, &current).await.unwrap();
+    drafts::save_summary(
+        &state,
+        id,
+        crate::models::draft::SummaryInput {
+            expected_revision: 0,
+            text: input.summary.clone(),
+            image_event_ids: vec![],
+            context_hash: snapshot.hash,
+        },
+        &crate::models::customer::Actor {
+            id: "test-admin".into(),
+            name: "Admin".into(),
+        },
+    )
+    .await
+    .unwrap();
+    mock.resume.notify_one();
+    assert!(matches!(
+        processing.await.unwrap(),
+        Err(crate::error::AppError::ContextChanged)
+    ));
+    drafts::finish(&state, &job, "STALE", Some("CONTEXT_CHANGED"))
+        .await
+        .unwrap();
+    assert_eq!(
+        drafts::version(&drafts::inquiry(&state, id).await.unwrap()),
+        2
+    );
     // A new event received during inference fences the old context before commit.
     mock.mode.store(3, Ordering::SeqCst);
     let mut race = input.clone();

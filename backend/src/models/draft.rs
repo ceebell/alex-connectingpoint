@@ -80,6 +80,33 @@ pub struct PrepareInput {
     pub context_hash: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryInput {
+    pub expected_revision: i64,
+    pub text: String,
+    #[serde(default)]
+    pub image_event_ids: Vec<String>,
+    pub context_hash: String,
+}
+
+impl SummaryInput {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.expected_revision < 0
+            || self.expected_revision == i64::MAX
+            || self.text.chars().count() > 20_000
+            || self.context_hash.len() != 64
+            || !self.context_hash.bytes().all(|c| c.is_ascii_hexdigit())
+            || self.image_event_ids.len() > 4
+            || self.image_event_ids.iter().collect::<BTreeSet<_>>().len()
+                != self.image_event_ids.len()
+        {
+            return Err(AppError::Validation("Invalid admin summary"));
+        }
+        Ok(())
+    }
+}
+
 impl PrepareInput {
     pub fn validate(&self) -> Result<(), AppError> {
         if self.request_id.is_empty()
@@ -89,7 +116,8 @@ impl PrepareInput {
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || c == b'-')
             || self.expected_version < 0
-            || self.summary.len() > 20_000
+            || self.expected_version == i64::MAX
+            || self.summary.chars().count() > 20_000
             || self.image_event_ids.len() > 4
             || self.confirmed_fields.len() > 200
         {
@@ -308,6 +336,25 @@ pub fn validate_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn summaries_accept_thai_text_and_bound_revisions_and_images() {
+        let mut input = SummaryInput {
+            expected_revision: 0,
+            text: "ก".repeat(20_000),
+            image_event_ids: vec![],
+            context_hash: "a".repeat(64),
+        };
+        assert!(input.validate().is_ok());
+        input.text.push('ก');
+        assert!(input.validate().is_err());
+        input.text.clear();
+        input.expected_revision = i64::MAX;
+        assert!(input.validate().is_err());
+        input.expected_revision = 0;
+        input.image_event_ids = vec!["same-image".into(), "same-image".into()];
+        assert!(input.validate().is_err());
+    }
+
     #[test]
     fn dates_money_and_evidence_are_checked() {
         assert!(valid_date("2028-02-29"));

@@ -482,3 +482,165 @@ async fn mongo_line_profiles_are_cached_daily_and_shown_on_inquiries() {
     assert!(blocked_inquiry["customer"]["display_name"].is_null());
     state.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+async fn image_upload_requires_a_public_https_base_before_database_access() {
+    let mut cfg = config();
+    cfg.public_base_url = None;
+    let state = lazy_state(cfg).await;
+    let path = format!("/api/inquiries/{}/media", ObjectId::new().to_hex());
+    let (status, error) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"original":"","preview":""}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error["error"]["code"], "IMAGE_UNAVAILABLE");
+    let missing = get(
+        &state,
+        &format!("/api/line/outbound-media/{}/original", "a".repeat(64)),
+        None,
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn mongo_stickers_and_images_are_sent_with_line_limits() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (base, mock) = mock_line().await;
+    let mut cfg = line_config(&base);
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    cfg.burst_ms = 0;
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    events::persist(&state, &event("media-start", "Umedia", 1))
+        .await
+        .unwrap();
+    drain(&state).await;
+    let id = all(&state, "inquiries").await[0]
+        .get_object_id("_id")
+        .unwrap()
+        .to_hex();
+    let send = format!("/api/inquiries/{id}/messages");
+    let (status, sent) = request(&state, &send, "POST", json!({"request_id":"55555555-5555-4555-8555-555555555555","sticker":{"package_id":"11537","sticker_id":"52002734"}}), true).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(sent["message"]["payload"]["message"]["type"], "sticker");
+    assert_eq!(
+        mock.pushes.lock().await.last().unwrap().1["messages"][0],
+        json!({"type":"sticker","packageId":"11537","stickerId":"52002734"})
+    );
+    let (status, error) = request(&state, &send, "POST", json!({"request_id":"66666666-6666-4666-8666-666666666666","sticker":{"package_id":"11537","sticker_id":"1"}}), true).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["error"]["code"], "VALIDATION_ERROR");
+
+    // Upload: only JPEG/PNG; the stored copy is served publicly by token.
+    let original = [&[0xFF, 0xD8, 0xFF, 0xE0][..], b"original-bytes"].concat();
+    let preview = [&[0xFF, 0xD8, 0xFF, 0xE0][..], b"preview"].concat();
+    let upload = format!("/api/inquiries/{id}/media");
+    let (status, error) = request(
+        &state,
+        &upload,
+        "POST",
+        json!({"original":STANDARD.encode(b"GIF89a"),"preview":STANDARD.encode(&preview)}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["error"]["code"], "VALIDATION_ERROR");
+    let (status, uploaded) = request(
+        &state,
+        &upload,
+        "POST",
+        json!({"original":STANDARD.encode(&original),"preview":STANDARD.encode(&preview)}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let original_url = uploaded["media"]["original_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        original_url.starts_with("/api/line/outbound-media/")
+            && original_url.ends_with("/original")
+    );
+    assert!(!original_url.contains(&id));
+    let served = get(&state, &original_url, None).await;
+    assert_eq!(served.status(), StatusCode::OK);
+    assert_eq!(served.headers()["content-type"], "image/jpeg");
+    assert_eq!(served.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(
+        to_bytes(served.into_body(), 1000).await.unwrap().as_ref(),
+        &original[..]
+    );
+    let tampered = original_url.replace("/original", "/thumbnail");
+    assert_eq!(
+        get(&state, &tampered, None).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let image_id = uploaded["media"]["_id"]["$oid"].as_str().unwrap();
+    let (status, sent) = request(
+        &state,
+        &send,
+        "POST",
+        json!({"request_id":"77777777-7777-4777-8777-777777777777","image_id":image_id}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let pushed = mock.pushes.lock().await.last().unwrap().1["messages"][0].clone();
+    assert_eq!(pushed["type"], "image");
+    assert_eq!(
+        pushed["originalContentUrl"],
+        format!("https://alex.test{original_url}")
+    );
+    assert_eq!(
+        pushed["previewImageUrl"],
+        format!(
+            "https://alex.test{}",
+            uploaded["media"]["preview_url"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        sent["message"]["payload"]["message"]["preview_url"],
+        uploaded["media"]["preview_url"]
+    );
+    // An image uploaded for another inquiry cannot be sent here.
+    let (status, _) = request(
+        &state,
+        &format!("/api/inquiries/{}/messages", ObjectId::new().to_hex()),
+        "POST",
+        json!({"request_id":"88888888-8888-4888-8888-888888888888","image_id":image_id}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, context) = request(
+        &state,
+        &format!("/api/inquiries/{id}/context"),
+        "GET",
+        json!(null),
+        true,
+    )
+    .await;
+    let kinds: Vec<String> = context["batches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|b| b.as_array().unwrap())
+        .map(|m| {
+            m["payload"]["message"]["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(kinds, vec!["text", "sticker", "image"]);
+    state.db.drop().await.unwrap();
+}

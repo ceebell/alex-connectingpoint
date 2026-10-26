@@ -1,7 +1,9 @@
 mod admin;
 mod customers;
 mod drafts;
+mod mcp;
 mod oa_sync;
+mod products;
 mod session;
 mod users;
 pub(crate) mod webhook;
@@ -22,6 +24,21 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             get(session::info).delete(session::logout),
         )
         .route("/api/inquiries/{id}/drafts", get(drafts::list))
+        .route("/api/admin/alex", get(products::settings))
+        .route("/api/inquiries/{id}/products", get(products::list))
+        .route(
+            "/api/inquiries/{id}/products/search",
+            post(products::search),
+        )
+        .route(
+            "/api/inquiries/{id}/products/confirm",
+            post(products::confirm),
+        )
+        .route(
+            "/api/inquiries/{id}/product-searches/{search}/images/{product}",
+            get(products::image),
+        )
+        .route("/api/inquiries/{id}/summary", post(drafts::save_summary))
         .route("/api/inquiries/{id}/prepare", post(drafts::prepare))
         .route("/api/inquiries/{id}/draft", post(drafts::revise))
         .route("/api/draft-requests/{id}", get(drafts::job))
@@ -43,6 +60,11 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             "/api/inquiries/{id}/messages",
             post(customers::send_message),
         )
+        .route(
+            "/api/inquiries/{id}/media",
+            // Base64 of a 10 MB original plus a 1 MB preview.
+            post(customers::upload_media).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/api/line/events/{id}/assign", post(admin::assign))
         .route("/api/line/events/{id}/retry", post(admin::retry))
         .route("/api/line/status", get(admin::status))
@@ -53,6 +75,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             admin::authorize,
         ));
     let mut router = Router::new()
+        .route("/api/admin/alex/mcp", post(mcp::handle).get(mcp::get))
         .route("/api/admin/login", post(session::login))
         .route("/api/admin/login-options", get(session::options))
         .route("/api/admin/line/start", get(session::line_start))
@@ -62,6 +85,10 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             get(|| async { Json(serde_json::json!({"status":"ok"})) }),
         )
         .route("/api/line/webhook", post(webhook::receive))
+        .route(
+            "/api/line/outbound-media/{token}/{variant}",
+            get(customers::outbound_media),
+        )
         .route("/api/connectors/line-oa/messages", post(oa_sync::ingest))
         .route("/api/connectors/line-oa/status", post(oa_sync::heartbeat))
         .merge(admin)

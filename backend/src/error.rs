@@ -53,6 +53,8 @@ pub enum AppError {
     DraftWaiting,
     #[error("Record changed; reload and try again")]
     RecordConflict,
+    #[error("Admin summary changed; reload it before saving")]
+    SummaryConflict,
     #[error("This inquiry already has an approved order")]
     OrderExists,
     #[error("Only the latest complete, conflict-free and current draft can be approved")]
@@ -61,6 +63,22 @@ pub enum AppError {
     ReplyUnavailable,
     #[error("LINE did not accept the message")]
     LineSend(&'static str),
+    #[error("Sending images needs a public HTTPS address (PUBLIC_BASE_URL)")]
+    ImageUnavailable,
+    #[error("Alex catalog is not configured")]
+    AlexUnavailable,
+    #[error("Alex did not return a valid catalog response")]
+    AlexFailed,
+    #[error("The Alex account or branch is outside the configured shop scope")]
+    AlexScope,
+    #[error("Product selection changed or expired; search again")]
+    ProductConflict,
+    #[error(
+        "No readable code or usable catalog images; search by text or add catalog images in Alex"
+    )]
+    CatalogImagesUnavailable,
+    #[error("Catalog options differ from the draft; explicit acknowledgement is required")]
+    ProductOptionsMismatch,
 }
 
 impl AppError {
@@ -83,10 +101,18 @@ impl AppError {
             Self::ContextChanged => "CONTEXT_CHANGED",
             Self::DraftWaiting => "DRAFT_WAITING",
             Self::RecordConflict => "RECORD_CONFLICT",
+            Self::SummaryConflict => "SUMMARY_CONFLICT",
             Self::OrderExists => "ORDER_EXISTS",
             Self::OrderNotReady => "ORDER_NOT_READY",
             Self::ReplyUnavailable => "REPLY_UNAVAILABLE",
             Self::LineSend(code) => code,
+            Self::ImageUnavailable => "IMAGE_UNAVAILABLE",
+            Self::AlexUnavailable => "ALEX_NOT_CONFIGURED",
+            Self::AlexFailed => "ALEX_FAILED",
+            Self::AlexScope => "ALEX_SCOPE_DENIED",
+            Self::ProductConflict => "PRODUCT_CONFLICT",
+            Self::CatalogImagesUnavailable => "CATALOG_IMAGES_UNAVAILABLE",
+            Self::ProductOptionsMismatch => "PRODUCT_OPTIONS_DIFFER",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -105,9 +131,19 @@ impl IntoResponse for AppError {
             Self::OaUnlinked | Self::OaMessageConflict => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
-            Self::RecordConflict | Self::OrderExists | Self::OrderNotReady => StatusCode::CONFLICT,
+            Self::RecordConflict
+            | Self::SummaryConflict
+            | Self::OrderExists
+            | Self::OrderNotReady => StatusCode::CONFLICT,
             Self::ReplyUnavailable => StatusCode::CONFLICT,
             Self::LineSend(_) => StatusCode::BAD_GATEWAY,
+            Self::ImageUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::AlexUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::AlexFailed => StatusCode::BAD_GATEWAY,
+            Self::AlexScope => StatusCode::FORBIDDEN,
+            Self::ProductConflict => StatusCode::CONFLICT,
+            Self::CatalogImagesUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::ProductOptionsMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,

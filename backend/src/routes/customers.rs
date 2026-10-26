@@ -3,14 +3,15 @@ use crate::{
     error::AppError,
     models::{
         customer::{ApproveInput, ProfileInput, valid_user_id},
-        outbound::SendInput,
+        outbound::{SendInput, UploadInput},
     },
     state::AppState,
 };
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use mongodb::bson::oid::ObjectId;
 use serde_json::{Value, json};
@@ -76,4 +77,39 @@ pub async fn send_message(
     let actor = super::session::actor(&state, &headers);
     let message = outbound::send(&state, inquiry(&id)?, input, &actor).await?;
     Ok((StatusCode::CREATED, Json(json!({"message":message}))))
+}
+
+pub async fn upload_media(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    input: Result<Json<UploadInput>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    let actor = super::session::actor(&state, &headers);
+    let media = outbound::upload(&state, inquiry(&id)?, input, &actor).await?;
+    Ok((StatusCode::CREATED, Json(json!({"media":media}))))
+}
+
+// Public by design: LINE downloads sent images from this unguessable URL.
+pub async fn outbound_media(
+    State(state): State<AppState>,
+    Path((token, variant)): Path<(String, String)>,
+) -> Result<Response, AppError> {
+    let (mime, bytes) = outbound::read(&state, &token, &variant).await?;
+    let mut response = bytes.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&mime).map_err(|_| AppError::Data)?,
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok(response)
 }

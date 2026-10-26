@@ -134,17 +134,18 @@
 <p class="location-note">ผู้พัฒนา compile บน local และ push Linux release เข้า Git ผู้ดูแลระบบ pull แล้วนำ binary ที่เสร็จแล้วใส่ Docker บน Ubuntu</p>
 <article class="owner-card developer" data-owner="dev"><span class="role-badge dev">ผู้พัฒนา · local</span><h3>Build และส่งรุ่นขึ้น Git</h3>
 <pre><code class="language-bat">build-backend.bat
-rungit.bat "Update Linux release"</code></pre><p>Frontend ใช้ <code>build-frontend.bat</code> เมื่อมีซอร์ส frontend แล้ว ได้ Linux standalone ใน <code>dist/frontend-linux/</code> ดู <a href="docs/build-local.md">คู่มือ build local</a></p>
+build-frontend.bat
+rungit.bat "ข้อความ commit"</code></pre><p>แก้ Rust → <code>build-backend.bat</code> · แก้หน้าเว็บ → <code>build-frontend.bat</code> · แก้แค่ docs/config ไม่ต้อง build; Frontend ใช้ <code>build-frontend.bat</code> ได้ Linux standalone ใน <code>dist/frontend-linux/</code> ดู <a href="docs/build-local.md">คู่มือ build local</a></p>
 <p>Git เก็บเฉพาะ binary, checksum, tag และ manifest ใน <code>dist/line-linux/</code> พร้อมโค้ดรุ่นเดียวกัน ส่วน <code>.env</code> และ Windows output ถูก ignore</p></article>
 <article class="owner-card operator" data-owner="ops"><span class="role-badge ops">ผู้ดูแลระบบ · Ubuntu</span><h3>1. Pull จาก Git</h3>
 <pre><code class="language-bash">cd ~/alex-connectingpoint
 bash ./loadgit.sh main</code></pre>
 <h3>2. สร้าง Docker จาก compiled object</h3>
-<pre><code class="language-bash">sudo bash ./docker-build.sh</code></pre>
-<p>ตรวจ checksum และ ELF แล้ว COPY binary เข้า image ไม่มี compile โปรแกรมบน server และไม่ต้องมี frontend</p>
+<pre><code class="language-bash">sudo bash ./docker-build.sh --full-stack</code></pre>
+<p>ตรวจ checksum และ ELF แล้ว COPY backend binary และ frontend standalone เข้า image ไม่มี compile โปรแกรมบน server ใช้ <code>--full-stack</code> ทุกครั้งเพราะหน้า admin รันบน server แล้ว</p>
 <h3>3. เปิด/อัปเดตบริการจาก image ที่สร้างแล้ว</h3>
-<pre><code class="language-bash">sudo bash ./docker-deploy.sh</code></pre>
-<p>ครั้งแรกที่ยังไม่ได้เปิด Swarm เพิ่ม <code>--init-swarm</code> ในคำสั่ง deploy คำสั่งนี้ตรวจ image ตรงกับ release แล้วเปิด backend + MongoDB โดยไม่ build image ซ้ำ</p>
+<pre><code class="language-bash">sudo bash ./docker-deploy.sh --full-stack</code></pre>
+<p>ครั้งแรกที่ยังไม่ได้เปิด Swarm เพิ่ม <code>--init-swarm</code> ในคำสั่ง deploy คำสั่งนี้ตรวจ image ตรงกับ release แล้วเปิด backend + frontend + MongoDB โดยไม่ build image ซ้ำ ถ้าไม่ใส่ <code>--full-stack</code> frontend จะค้างรุ่นเก่า แก้แค่ <code>.env</code> ให้รันเฉพาะคำสั่งนี้</p>
 <details class="inline-details"><summary>ครั้งแรก: clone และเตรียม config</summary>
 <pre><code class="language-bash">cd ~
 git clone https://github.com/ceebell/alex-connectingpoint.git
@@ -438,15 +439,21 @@ sudo docker service ps --no-trunc alex-line_mongo</code></pre>
 <section class="doc-section" id="s04-server"><h3>4.2 Server pull จาก Git แล้วสร้าง Docker จาก compiled object</h3>
 <p><strong>ผู้พัฒนา:</strong> compile Linux/amd64 บน local ด้วย <code>build-backend.bat</code> (<code>build-line.bat</code> เดิม) แล้วใช้ <code>rungit.bat "Update Linux release"</code> commit/push โค้ดและไฟล์ <code>dist/line-linux/backend</code>, <code>backend.sha256</code>, <code>release.tag</code>, <code>release.json</code> ให้เป็นรุ่นเดียวกัน Windows output/archives และ <code>.env</code> ยังถูก ignore</p>
 <p>สำหรับ frontend ใช้ <code>build-frontend.bat</code> เมื่อเพิ่ม frontend application แล้ว สคริปต์สร้าง Linux standalone ใน <code>dist/frontend-linux/</code> พร้อม dependencies/static/checksum และ tag แยกจาก backend ดูคำสั่งและเงื่อนไขใน <a href="docs/build-local.md">คู่มือ build local</a></p>
-<p><strong>ผู้ดูแลระบบ:</strong> บน Ubuntu ให้ทำตามลำดับ:</p>
+<p><strong>ขั้นตอน deploy มาตรฐาน (ทุกครั้งที่แก้โค้ด):</strong></p>
+<p>1. <strong>Windows (local):</strong> build เฉพาะส่วนที่แก้ แล้วส่งขึ้น Git (แก้ Rust → <code>build-backend.bat</code>, แก้หน้าเว็บ → <code>build-frontend.bat</code>, แก้แค่ docs/config ไม่ต้อง build)</p>
+<pre><code class="language-bat">build-backend.bat
+build-frontend.bat
+rungit.bat "ข้อความ commit"</code></pre>
+<p>2. <strong>Ubuntu (<code>ssh Hermes</code>):</strong> หน้า admin รันบน server แล้ว ใช้ <code>--full-stack</code> ทุกครั้ง ถ้าไม่ใส่ frontend จะไม่อัปเดต</p>
 <pre><code class="language-sh">cd ~/alex-connectingpoint
 # 1. Pull scripts and compiled objects.
 bash ./loadgit.sh main
-# 2. Package the compiled Linux binary into a Docker image.
-sudo bash ./docker-build.sh
-# 3. Deploy the already-built image.
-sudo bash ./docker-deploy.sh
+# 2. Package the compiled backend and frontend into Docker images.
+sudo bash ./docker-build.sh --full-stack
+# 3. Deploy the already-built images.
+sudo bash ./docker-deploy.sh --full-stack
 </code></pre>
+<p>แก้แค่ <code>.env</code> บน server ให้รันเฉพาะ <code>sudo bash ./docker-deploy.sh --full-stack</code> ไฟล์ <code>.sh</code> รันบน Ubuntu เท่านั้น</p>
 <p>ครั้งแรกที่ยังไม่เปิด Swarm เพิ่ม <code>--init-swarm</code> ในคำสั่ง docker-deploy.sh เก็บ config จริงใน <code>/home/ubuntu/alex-connectingpoint/.env</code> สิทธิ์ 600 และไม่ส่งขึ้น Git</p>
 <p>Ubuntu ตรวจ checksum/ELF แล้ว COPY binary เข้า runtime image ไม่มีการ compile Rust หรือ build frontend บน server หาก binary ขาด ให้ build/push จาก local แล้ว pull ใหม่ <code>loadgit.sh</code> เก็บ tracked server edits ใน stash ก่อน pull ส่วน <code>docker-deploy.sh</code> ตรวจ image ตรงกับ releaseและไม่ build image ซ้ำ</p>
 <p>หาก backend ล้มด้วย <code>Database unavailable</code> แล้ว service กลับไปใช้ image/constraint เก่า ให้ตรวจ <code>sudo bash ./diagnose-line.sh</code> เพื่อแยกปัญหาการเชื่อมฐานข้อมูลออกจาก rollback ผลตรวจไม่แสดง password/token และบันทึกใน <code>data/line-diagnostics-latest.txt</code> การแก้ไฟล์ YAML อย่างเดียวยังไม่เปลี่ยน service ที่ deploy อยู่</p>
@@ -597,6 +604,7 @@ sudo bash ./deploy-oa-connector.sh</code></pre>ใช้ .env เดิมที
 <figcaption id="step2-overview-caption"><strong>ภาพรวม Step 2:</strong> ข้อมูลต้นทาง 5 กลุ่ม ความสัมพันธ์ของแหล่งข้อมูล การจัดชุดบริบทก่อนส่ง AI การสกัดและเทียบข้อมูลโดย Hermes การตรวจด้วย Validator และการบันทึกเป็นร่างที่ยังแก้ไขได้ ซึ่ง<strong>ยังไม่ใช่ออเดอร์จริง</strong></figcaption>
 </figure>
 <h3>5.1 ช่องทางรับสรุปจากแอดมิน</h3>
+<p><strong>บันทึกสรุปก่อนใช้ AI:</strong> ปุ่ม <strong>บันทึกสรุป</strong> เก็บข้อความและรูปที่เลือกไว้พร้อม revision และผู้แก้ไข ใช้ได้แม้ยังไม่ตั้ง Hermes เมื่อกดเตรียมออเดอร์ด้วย AI ระบบจะบันทึกสรุปที่แก้ให้อัตโนมัติก่อนเข้าคิว หาก AI ล้มเหลวก็กลับมาเปิดต่อได้ สองหน้าต่างเขียนทับกันไม่ได้ และร่างที่อ้างสรุปหรือแชทรุ่นเก่าต้องตรวจและเตรียมใหม่ การใช้งานปัจจุบันให้ตอบลูกค้าจาก Alex ตัวเชื่อม OA Manager เป็นทางเลือกที่ปิดเป็นค่าเริ่มต้น (<code>OA_CONNECTOR_ENABLED=false</code>) ดู <a href="docs/step-2-admin.md">คู่มือ Step 2 และ API บันทึกสรุป</a></p>
 <p>แนวทางเริ่มต้นคือเพิ่มปุ่ม <strong>เตรียมออเดอร์ด้วย AI</strong> ในหน้าหลังบ้าน แอดมินเลือก inquiry วางข้อความสรุป แล้วส่งให้ AI ช่วยจัดรูปแบบ ตัวอย่าง:</p>
 <blockquote>
 <p>คุณเอ เช่าชุด DR-012 สีแดง ไซซ์ M รับวันที่ 15 พ.ย. 2569 คืนวันที่ 18 พ.ย. 2569 ค่าเช่า 1,500 บาท มัดจำ 2,000 บาท รับหน้าร้านสาขา A</p>
@@ -691,6 +699,7 @@ sudo bash ./deploy-oa-connector.sh</code></pre>ใช้ .env เดิมที
 </tbody>
 </table>
 <h3>6.1 สิ่งที่ต้องเตรียมสำหรับการค้นภาพ</h3>
+<p><strong>สถานะ Step 3:</strong> มีแท็บ <strong>เลือกชุด</strong>, Alex catalog adapter และ MCP tools สำหรับอ่านแค็ตตาล็อกแล้ว รองรับรหัส คำบรรยาย ลิงก์ที่อนุญาต และรูปจาก inquiry แสดงหลาย candidate ให้แอดมินยืนยัน Product ID สี ไซซ์ และสาขา พร้อมผู้ยืนยันและหลักฐาน ผลจับคู่ผูกกับร่างเวอร์ชันและบริบท การเปรียบเทียบรูปใช้ Hermes กับรูปแค็ตตาล็อกในหน้าที่กรอง ดู <a href="docs/step-3-products.md">คู่มือ Step 3: config, MCP และวิธีใช้</a></p>
 <ul>
 <li>รูปแค็ตตาล็อกที่เชื่อมกับ Product ID และ product code ของ Alex</li>
 <li>mapping สี ไซซ์ สาขา และชุดรายตัวตามโมเดลข้อมูลจริง</li>
@@ -1108,7 +1117,7 @@ sudo bash ./deploy-oa-connector.sh</code></pre>ใช้ .env เดิมที
 <pre><code class="language-http">Authorization: Bearer &lt;ALEX_ACCESS_TOKEN&gt;
 Content-Type: application/json
 </code></pre>
-<p><code>ALEX_ACCESS_TOKEN</code> คือ <code>token</code> ที่ Alex login คืนให้ แยกจาก LINE channel access token และ <code>INQUIRY_ADMIN_TOKEN</code> ของ backend ใหม่ ชื่อนี้ใช้สื่อความหมายในเอกสาร ยังไม่ได้เพิ่ม config หรือ Connector สำหรับ Alex ลงใน backend ของ Step 1</p>
+<p><code>ALEX_ACCESS_TOKEN</code> คือ <code>token</code> ที่ Alex login คืนให้ แยกจาก LINE channel access token และ <code>INQUIRY_ADMIN_TOKEN</code> ของ backend ใหม่ Adapter Step 3 อ่านบัญชีจาก <code>ALEX_USERNAME</code>/<code>ALEX_PASSWORD</code> ฝั่ง server และใช้ token ในหน่วยความจำระหว่างอ่านแค็ตตาล็อก ดู <a href="docs/step-3-products.md">การตั้งค่า Step 3</a></p>
 <p>Login body เป็นโครงสร้างนี้ โดย username/password ต้องอ่านจาก secret ฝั่ง server:</p>
 <pre><code class="language-json">{
   "username": "EXAMPLE_ALEX_USER",
@@ -1316,7 +1325,7 @@ Content-Type: application/json
 <li>ทดสอบ conflict, concurrent booking และ response หายร่วมกับทีม Alex ก่อนกำหนด retry/reconciliation policy</li>
 <li>จึงนำ mapping นี้ไปสร้าง backend adapter/MCP tools และส่งผลมาตรฐานให้ Hermes ตาม workflow เดิม</li>
 </ol>
-<p>การปรับเอกสารครั้งนี้ยังไม่ได้เพิ่ม Alex adapter หรือ MCP tools ให้ backend ของ Step 1</p></section><section class="doc-section" id="s11"><h2>11. สถานะงานและข้อมูลที่ต้องเก็บ</h2>
+<p>มี Alex adapter และ MCP tools สำหรับ Step 3 แล้ว ดู <a href="docs/step-3-products.md">คู่มือ Step 3</a> ส่วน mapping สำหรับ checkq และ AddRentalOrder ในหัวข้อนี้เป็นข้อมูลส่งต่อการพัฒนา Step 4–5</p></section><section class="doc-section" id="s11"><h2>11. สถานะงานและข้อมูลที่ต้องเก็บ</h2>
 <p>สถานะต่อไปนี้เป็น <strong>workflow ของระบบกลาง</strong> ไม่ใช่การตั้งชื่อ OrderStatus ใหม่ให้ Alex ต้องมี mapping แยกไปยังสถานะจริงของ Alex</p>
 <table>
 <thead>

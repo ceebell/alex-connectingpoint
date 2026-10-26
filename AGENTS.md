@@ -50,8 +50,8 @@
 | เปิดหน้าล็อกอิน OA browser บน Ubuntu ผ่าน SSH | `login-oa.bat` | Windows |
 | Commit + push | `rungit.bat "ข้อความ commit"` | Windows |
 | Pull โค้ดลง server | `./loadgit.sh [branch]` | Ubuntu |
-| Build Docker image | `./docker-build.sh` | Ubuntu |
-| Deploy Swarm stack | `./docker-deploy.sh` | Ubuntu |
+| Build Docker image (backend + frontend) | `sudo bash ./docker-build.sh --full-stack` | Ubuntu |
+| Deploy Swarm stack (backend + frontend) | `sudo bash ./docker-deploy.sh --full-stack` | Ubuntu |
 
 พอร์ต dev: frontend `3000` · backend `8080` · MongoDB `27017`
 
@@ -84,17 +84,20 @@
 
 **สีและพื้นหลัง:**
 
-- พื้นหลังหลัก **ขาว** สลับกับ **เทาอ่อน** เป็นแถบ section (`bg-white` ↔ `bg-gray-50` / `bg-gray-100`)
-- ธีมหลัก **เขียว · ส้ม · ฟ้า** — ตั้งชื่อ semantic ใน `@theme` ของ `globals.css`
+- พื้นหลังหลัก **ขาว** สลับกับ **ฟ้าอ่อน/เทาอมฟ้า** (`bg-white` ↔ `sky-50` / `slate-50`)
+- ธีมหลัก **ขาว · ฟ้า · น้ำเงิน**; สีเสริม (option) **เขียว · ส้ม · ชมพู** ใช้ตามความหมายเท่านั้น — ตั้งชื่อ semantic ใน `@theme` ของ `globals.css`
 
 | Role | ใช้กับ | พื้น/ขอบ/ไฮไลต์ | ปุ่มและตัวอักษรบนพื้นขาว |
 |---|---|---|---|
-| `primary` เขียว | CTA หลัก, สำเร็จ | `green-500` | `green-700` |
-| `accent` ส้ม | ไฮไลต์, เตือน, ป้ายสำคัญ | `orange-500` | `orange-700` |
-| `info` ฟ้า | ลิงก์, ข้อมูล, รอง | `sky-500` | `sky-700` |
+| `primary` น้ำเงิน | CTA หลัก, แท็บ/การ์ดที่เลือก, ลิงก์หลัก | `blue-500` (พื้นอ่อน `blue-50`) | `blue-700` (hover `blue-800`) |
+| `info` ฟ้า | ข้อมูล, notice, focus ring | `sky-500` (พื้นอ่อน `sky-50`) | `sky-700` |
+| `success` เขียว (option) | สำเร็จ/อนุมัติแล้ว, ออนไลน์, ป้าย LINE | `green-500` | `green-700` |
+| `accent` ส้ม (option) | เตือน, ต้องตรวจ | `orange-500` | `orange-700` |
+| `highlight` ชมพู (option) | ป้ายเวอร์ชัน, ไฮไลต์รอง | `pink-500` (พื้นอ่อน `pink-50`) | `pink-700` |
 
 - ตัวอักษรบนพื้นสีให้ใช้เฉดเข้ม (700) เพื่อให้ contrast ผ่าน WCAG AA — `*-500` ใช้กับพื้นผิว/ขอบ/ป้าย
-- ข้อความหลัก `text-gray-900` · ข้อความรอง `text-gray-600`
+- ขนาดตัวอักษร: เนื้อหาหลัก 16px, ข้อความรอง/ป้ายไม่ต่ำกว่า 12px (เวลาในแชทอย่างน้อย 11px)
+- ข้อความหลัก `slate-900` · ข้อความรอง `slate-500`/`slate-600`
 
 **Emoji:** ใช้ประกอบหัวข้อ, ปุ่ม, empty state และ badge ตามสมควร (ไม่เกิน 1 ตัว/หัวข้อ)
 emoji ที่เป็นแค่การตกแต่งให้ใส่ `aria-hidden="true"` · ห้ามใช้ emoji แทนข้อความที่จำเป็นต้องอ่านออก
@@ -112,7 +115,22 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 ## 8. Docker / Deploy
 
 - **นโยบายผู้ใช้ล่าสุด:** compile/build โปรแกรมบน local เท่านั้น Ubuntu ใช้ precompiled Linux release และ Dockerfile runtime ที่ COPY binary/standalone เข้า image ห้าม compile Rust หรือ npm build บน server
-- **ลำดับบน server:** `bash ./loadgit.sh main` → `sudo bash ./docker-build.sh` สร้าง image จาก compiled object ที่ pull มา → `sudo bash ./docker-deploy.sh` เปิด/อัปเดตบริการ
+- **ขั้นตอน deploy มาตรฐาน (ทุกครั้งที่แก้โค้ด):**
+  1. Windows (local): build release เฉพาะส่วนที่แก้ แล้วส่งขึ้น Git
+     ```bat
+     build-backend.bat
+     build-frontend.bat
+     rungit.bat "ข้อความ commit"
+     ```
+     แก้ Rust → `build-backend.bat` · แก้ frontend → `build-frontend.bat` · แก้แค่ docs/config ไม่ต้อง build; agent ห้ามรัน `rungit.bat` เอง
+  2. Ubuntu (`ssh Hermes`):
+     ```sh
+     cd ~/alex-connectingpoint
+     bash ./loadgit.sh main
+     sudo bash ./docker-build.sh --full-stack
+     sudo bash ./docker-deploy.sh --full-stack
+     ```
+     ใช้ `--full-stack` เสมอเพราะหน้า admin รันบน server แล้ว (ไม่ใส่ frontend จะค้างรุ่นเก่า เพราะ stack ไม่ prune) · แก้แค่ `.env` บน server ให้รันเฉพาะ `sudo bash ./docker-deploy.sh --full-stack` · ห้ามรันไฟล์ `.sh` บน Windows
 - Git เก็บ `dist/line-linux/backend`, `backend.sha256`, `release.tag`, `release.json` และ Linux frontend standalone ใน `dist/frontend-linux/` เมื่อมี frontend เพื่อให้ pull แล้วนำไปใส่ Docker ได้ทันที; `.env`, Windows output และ archives ยังถูก ignore
 - `build-frontend.bat` สร้าง frontend บน local และเก็บ runtime dependencies/public/static พร้อม checksum และ tag แยก; Ubuntu ใช้ `docker-build.sh --full-stack` / `docker-deploy.sh --full-stack` เมื่อมีทั้งสอง release
 - Full-stack ของหน้าหลังบ้านใช้ `docker-stack.line.yml` + `docker-stack.admin.yml` เพื่อคง Mongo volume/LINE network เดิม; ไม่ใช้ docker-stack.yml ชุด legacy สำหรับอัปเกรด LINE ที่มีข้อมูลอยู่แล้ว ดู docs/step-2-admin.md
@@ -161,4 +179,4 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 - [ ] `runall.bat` ยังรันขึ้นครบ 3 ส่วน (ถ้าแก้ส่วนที่กระทบ)
 - [ ] ถ้าแก้ Dockerfile/stack: `docker build` ผ่าน
 - [ ] อัปเดต `revising-log.md` แล้ว
-- [ ] สรุปให้ผู้ใช้สั้น ๆ: แก้อะไร, ไฟล์ไหน, ต้องรันอะไรต่อ
+- [ ] สรุปให้ผู้ใช้สั้น ๆ: แก้อะไร, ไฟล์ไหน, ต้องรันอะไรต่อ (ถ้าต้อง deploy ให้แนบขั้นตอน 1–2 ในข้อ 8 พร้อม release tag ที่ build แล้ว)

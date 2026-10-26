@@ -50,6 +50,7 @@ pub async fn approve(
         return Err(AppError::ContextChanged);
     }
     if drafts::references_withdrawn(&draft, &snapshot)
+        || !drafts::summary_matches(&draft, &inquiry)
         || draft.get_str("workflow_status").ok() != Some("READY_FOR_REVIEW")
         || draft.get_i64("draft_version").ok() != Some(input.draft_version)
     {

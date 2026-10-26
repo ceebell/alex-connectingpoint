@@ -24,6 +24,8 @@ mod customer_tests;
 mod line_tests;
 #[path = "tests_oa_sync.rs"]
 mod oa_sync_tests;
+#[path = "tests_products.rs"]
+mod product_tests;
 #[path = "tests_step2.rs"]
 mod step2;
 
@@ -55,6 +57,9 @@ fn config() -> Config {
         line_login_redirect_uri: None,
         admin_line_user_ids: vec![],
         oa_connector_enabled: true,
+        public_base_url: Some("https://alex.test".into()),
+        alex: None,
+        alex_mcp_token: None,
     }
 }
 

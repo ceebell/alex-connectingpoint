@@ -35,7 +35,7 @@ export default function ChatMessage({ message, customer, selectedImages, disable
     <div className="message-body">
       <span className="message-sender">{sender}</span>
       <div className={`message-bubble ${content?.type === "sticker" && !message.withdrawn ? "sticker-bubble" : ""}`}>
-        {message.withdrawn ? <p className="muted">ข้อความถูกยกเลิกแล้ว</p> : content?.type === "image" ? message.media_id ? <>
+        {message.withdrawn ? <p className="muted">ข้อความถูกยกเลิกแล้ว</p> : content?.type === "image" && content.preview_url?.startsWith("/api/line/outbound-media/") ? <a href={content.original_url ?? content.preview_url} target="_blank" rel="noreferrer"><img src={content.preview_url} alt={`รูปที่${sender}ส่ง`} loading="lazy" /></a> : content?.type === "image" ? message.media_id ? <>
           <a href={`/api/media/${message.media_id}`} target="_blank" rel="noreferrer"><img src={`/api/media/${message.media_id}`} alt={`รูปจาก${sender}`} loading="lazy" /></a>
           <label className="checkbox-row small"><input type="checkbox" checked={selectedImages.includes(message._id)} disabled={disabled || (!selectedImages.includes(message._id) && selectedImages.length >= 4)} onChange={event => onToggleImage(message._id, event.target.checked)} />แนบรูปนี้ให้ AI</label>
         </> : <p className="muted">รูปยังไม่พร้อมหรือหมดอายุ</p> : content?.type === "sticker" ? <Sticker id={String(content.stickerId ?? "")} keywords={content.keywords} /> : <p>{content?.text ?? message.payload?.postback?.data ?? `ข้อความประเภท ${content?.type ?? message.payload?.type ?? "อื่น ๆ"}`}</p>}

@@ -4,6 +4,88 @@
 
 <!-- entries -->
 
+## 2026-10-26 11:10 — ตรวจรวมงานสติกเกอร์/รูป + Step 3 ก่อน deploy
+- **คำอธิบาย:** หลังงาน Step 3 (entry 11:00) เสร็จ ตรวจซ้ำว่า release ล่าสุดรวมงานทั้งสองฝั่งและพร้อม deploy — คำเตือน "ห้าม deploy" ใน entry 10:35 ใช้กับ release 10:33 (rel-20261026033312, front-20261026033426) เท่านั้น ซึ่งถูกแทนที่แล้ว
+- **ไฟล์:** ไม่ได้แก้ source/config ในรอบนี้ (บันทึกผลตรวจเท่านั้น)
+- **ผลตรวจสอบ:** release ปัจจุบัน `line-linux/` rel-20261026035638-9868a8c39c0b (10:56) และ `frontend-linux/` front-20261026035745-26c4e8e53c6d (10:57) ใหม่กว่า source ทุกไฟล์; backend checksum และ frontend checksum 2,108 ไฟล์ผ่าน ไม่มีไฟล์ release ถูก gitignore; cargo fmt --check, clippy --all-targets -D warnings ผ่าน; cargo test -- --include-ignored ผ่าน 30/30 (MongoDB disposable 27018); npm lint/build ผ่าน; git diff --check ผ่าน; Chrome headless บนโค้ดที่รวมแล้ว: ส่งสติกเกอร์ 446/1988, retry key เดิมหลัง LINE 500, รูป 4000×3000 → 2048×1536 + preview 240×180 เปิดได้โดยไม่ล็อกอิน, ไม่ล้น 390px, ไม่มี page error; หยุดบริการทดสอบที่สร้างเองแล้ว ยังไม่ commit/push/deploy
+
+## 2026-10-26 11:00 — Step 3 ค้นสินค้า Alex และยืนยัน Product ID พร้อม MCP
+- **คำอธิบาย:** ผู้ใช้ให้ทำข้อ 6 / Step 3 ต่อจากร่าง Step 2 และส่งตัวอย่าง product search กับบัญชี Alex ให้ทดสอบ อ่าน login/catalog จริงได้แล้ว พบสาขาที่บัญชีได้รับสิทธิ์ต่างจาก branchId ในตัวอย่าง จึงผูกสิทธิ์กับ shopInfoId/userBranch จาก login และให้แอดมินเลือก candidate พร้อมยืนยันทุกครั้ง เก็บ credentials เฉพาะในหน่วยความจำระหว่างทดสอบ ไม่เพิ่ม dependency
+- **โฟลเดอร์ `backend/src/`**
+  - `alex.rs` — เพิ่ม: server-side login, ตรวจร้าน/สาขา, POST GetProductItems ตาม contract ที่ผู้ใช้ให้ (15 รายการต่อหน้า, showNotAvailable=false, category/texture/สี/ไซซ์), กรอง code แบบตรงตัว, pagination จาก itemNumber, แปลงราคาเป็นสตางค์ และ proxy รูปเฉพาะ origin ที่อนุญาตโดยไม่ตาม redirect
+  - `models/product.rs`, `models/mod.rs` — เพิ่ม/แก้: DTO ค้นหา/ยืนยัน, Candidate/Branch, ตรวจ input และ decimal parser ที่ไม่ใช้ float คำนวณเงิน
+  - `db/products.rs`, `db/mod.rs`, `db/indexes.rs` — เพิ่ม/แก้: product_searches และ product_matches, unique index ต่อ shop/channel/inquiry/draft/item, ยืนยันจาก snapshot ที่มีอายุ 30 นาทีและอ่าน catalog ซ้ำ, CAS กันเขียนทับ, ผู้ยืนยัน/เวลา/วิธีจับคู่/ค่าที่ต่างจากร่าง, ปฏิเสธบริบทเก่าและข้อความยกเลิก ผลจับคู่เดิมอยู่กับร่างเก่าเมื่อเปลี่ยนเวอร์ชัน
+  - `product_vision.rs`, `draft_worker.rs` — เพิ่ม/แก้: ใช้ Hermes JSON client ร่วมกับ Step 2 โดยคงการตรวจ extraction profile ปิด tools; อ่านรหัสจากรูปแล้วค้นตรงตัว หรือเปรียบเทียบกับรูปแค็ตตาล็อกในหน้าที่กรอง ตรวจ ID/score ที่โมเดลคืนให้ตรงรูปที่แนบและจำกัดภาพรวม 8 MB แอดมินยังต้องยืนยัน
+  - `routes/products.rs`, `routes/mcp.rs`, `routes/mod.rs` — เพิ่ม/แก้: settings/search/confirm/list/image endpoints ภายใต้ admin auth/CSRF เดิม และ MCP JSON-RPC endpoint `/api/admin/alex/mcp` ที่ใช้ token แยก ตรวจ Origin รองรับ initialize/ping/tools/list/tools/call มีเพียง search_products และ find_product_candidates_by_image ไม่มีเครื่องมือยืนยันหรือสร้างออเดอร์
+  - `config.rs`, `error.rs`, `main.rs` — แก้: config ALEX_* แบบ server-only, แยก error สำหรับ scope/schema/selection/รูปแค็ตตาล็อก และลงทะเบียน modules
+  - `tests_products.rs`, `tests.rs` — เพิ่ม/แก้: ตรวจ Product URL, MCP lifecycle/auth/read-only, cross-shop/branch, ราคาเปลี่ยน, ID ปลอม, options ที่ต่าง, pagination, ร่างเก่า, image ranking/OCR/ID ที่โมเดลแต่ง และ unsend
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/product-matcher.tsx`, `components/product-matcher.css` — เพิ่ม: เลือกรายการ/สาขา/วิธีค้นและตัวกรอง แสดงหลาย candidate พร้อม Product ID/สี/ไซซ์/ราคา/รูป/score, โหลดหน้าเพิ่ม, ยืนยันแบบ checkbox และยืนยันส่วนที่ต่างจากร่างเพิ่ม แสดงผู้ยืนยันและผลครบทุก item
+  - `components/admin-workspace.tsx`, `app/globals.css`, `lib/api.ts` — แก้: แท็บเลือกชุด, ป้องกันทำงานกับสรุปที่ยังไม่บันทึก, tabs เลื่อนแนวนอนได้ และ error ภาษาไทย
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `.env.example`, `docker-stack.line.yml` — แก้: ALEX_API_URL/USERNAME/PASSWORD/SHOP_INFO_ID/BRANCH_IDS/PRODUCT_URL_PREFIX/IMAGE_ORIGINS/MCP_TOKEN (ไม่มี credentials จริง)
+  - `docs/step-3-products.md` — เพิ่ม: ตั้งค่า env และ shop/branch ที่ตรวจจริง, ขั้นตอนใช้งาน, API/data contract, ขอบเขตค้นภาพต่อหน้า, config ต่อ Hermes MCP คนละ profile กับ extraction และขั้นตอน build/deploy
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: สถานะ Step 3, ลิงก์คู่มือ และแก้ข้อความเก่าว่ายังไม่มี Alex adapter
+- **โฟลเดอร์ `dist/` (build จริงบน Docker Desktop local)**
+  - `line-linux/` — rel-20261026035638-9868a8c39c0b
+  - `frontend-linux/` — front-20261026035745-26c4e8e53c6d
+- **ผลตรวจสอบ:** cargo fmt --check และ clippy --all-targets -D warnings ผ่าน; cargo test -- --include-ignored ผ่าน 30/30 ด้วย MongoDB disposable 27018; npm lint/build ผ่านทั้ง Windows และ Linux; Chrome headless กับ backend/Mongo จริงและ Alex production แบบอ่านอย่างเดียวผ่าน login/catalog/scoped branch, exact Product ID, checkbox ยืนยัน, reload, pagination 15→30 candidates และ tools/call ผ่าน MCP ไม่พบ credentials ใน DOM ไม่มี page error และไม่ล้นที่ 390px; build runtime Docker images backend/frontend ผ่าน; full-stack Swarm config มี env Alex ครบและคง LINE network/Mongo volume; ตรวจ ELF amd64/backend checksum และ frontend checksum 2,108 ไฟล์ ไม่มี release ถูก ignore หรือมี .env; git diff --check ผ่าน
+- **ขอบเขต:** ไม่สร้างออเดอร์/เช็คคิวหรือแก้สินค้าใน Alex จริง การค้นภาพทดสอบด้วย Hermes จำลองและยังต้องตั้ง vision-enabled extraction profile พร้อมรูปแค็ตตาล็อกจึงเปรียบเทียบได้ คงงาน Step 2/ธีม/ส่งสติกเกอร์และรูปที่มีอยู่แล้ว; ไม่ commit/push/deploy หรือแก้ .env บน server; หยุด backend/frontend/Chrome/Mongo ทดสอบที่สร้างเองแล้ว
+
+## 2026-10-26 10:35 — แอดมินส่งสติกเกอร์และแนบรูปจาก Alex
+- **คำอธิบาย:** ผู้ใช้ขอให้แอดมินส่งสติกเกอร์แบบ LINE OA และแนบรูปได้ ตรวจรายการสติกเกอร์ที่ Messaging API อนุญาตจากเอกสาร LINE (15 ชุด) และยืนยัน ID ครบทุกตัวจาก productInfo.meta ของแต่ละชุด (456 ตัว ต่อเนื่องทุกชุด); รูปต้องเป็น HTTPS URL สาธารณะ จึงเก็บใน GridFS และเสิร์ฟผ่าน URL token สุ่ม
+- **โฟลเดอร์ `backend/src/`**
+  - `models/outbound.rs` — แก้: STICKER_PACKAGES + `valid_sticker`, SendInput รับ text | sticker | image_id อย่างใดอย่างหนึ่ง (enum Outgoing), UploadInput ตรวจ base64/magic bytes JPEG/PNG และขนาด ≤10 MB/≤1 MB ตาม LINE พร้อม unit test
+  - `db/outbound.rs` — แก้: push ข้อความทุกชนิด, ตรวจแชท 1:1, render ข้อความ LINE + payload ใน chat, idempotency hash ของข้อความจริง, upload เก็บ original/preview ใน GridFS (media::store เดิม) + collection `outbound_media` (token HMAC 64 hex, หมดอายุตาม LINE_MEDIA_RETENTION_DAYS), read สำหรับ URL สาธารณะ, รูปต้องเป็นของ inquiry เดียวกัน
+  - `routes/customers.rs`, `routes/mod.rs` — เพิ่ม: POST `/api/inquiries/{id}/media` (admin, body limit 16 MB) และ GET สาธารณะ `/api/line/outbound-media/{token}/{original|preview}` (nosniff)
+  - `config.rs`, `error.rs`, `db/indexes.rs` — แก้: `PUBLIC_BASE_URL` (ค่าเริ่มต้น = origin https ของ LINE_LOGIN_REDIRECT_URI), error IMAGE_UNAVAILABLE (503), unique index outbound_media token
+  - `tests.rs`, `tests_line.rs` — แก้/เพิ่ม: ไม่มี HTTPS base ปฏิเสธก่อนแตะ DB, ส่งสติกเกอร์/ID ที่ไม่อนุญาต, อัปโหลด GIF ถูกปฏิเสธ, URL สาธารณะส่ง bytes เดิม + nosniff, ส่งรูปด้วย originalContentUrl/previewImageUrl ที่ถูกต้อง, ใช้รูปข้าม inquiry ไม่ได้, ลำดับ text/sticker/image ใน context
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/reply-composer.tsx` — เพิ่ม: ช่องตอบแยก component (ข้อความ, ปุ่ม 😊 แผงสติกเกอร์ 15 ชุดกดแล้วส่งทันที, ปุ่ม 🖼️ แนบรูป ย่อด้วย canvas เป็น JPEG ≤2048px + preview 240px แล้วแสดงตัวอย่างก่อนกดส่ง, ปุ่มส่งอีกครั้งด้วย request ID เดิม)
+  - `lib/stickers.ts` — เพิ่ม: รายการสติกเกอร์ชุดเดียวกับ backend พร้อมชื่อชุดภาษาไทย
+  - `components/admin-workspace.tsx` — แก้: ใช้ ReplyComposer (key ตาม inquiry) แทนฟอร์มเดิม ลบ state/ฟังก์ชันตอบเดิม
+  - `components/chat-message.tsx`, `lib/api.ts`, `app/globals.css` — แก้: แสดงรูปที่ส่งจาก Alex, error IMAGE_UNAVAILABLE, สไตล์แผงสติกเกอร์/ตัวอย่างรูป
+- **โฟลเดอร์ `./` และ `docs/`**
+  - `docker-stack.line.yml`, `.env.example` — แก้: `PUBLIC_BASE_URL` (ตรวจด้วย docker stack config)
+  - `docs/step-2-admin.md` — แก้: วิธีส่งสติกเกอร์/รูป ข้อจำกัด และ API
+- **ผลตรวจสอบ:** cargo clippy -D warnings ผ่าน และ cargo test -- --include-ignored ผ่าน 26/26 (ก่อนพบงานคู่ขนานด้านล่าง); npm lint/build ผ่าน; Chrome headless กับ backend local + mock LINE: แผงสติกเกอร์ 40 ตัว/ชุด ส่ง 446/1988 ถูกต้อง, LINE 500 แล้วกดส่งสติกเกอร์อีกครั้งใช้ retry key เดิม, รูป PNG 4000×3000 ย่อเป็น JPEG 2048×1536 (1.6 MB) และ preview 240×180 (20 KB) เปิด URL ได้โดยไม่ล็อกอิน, ไม่ล้นที่ 390px, ไม่มี page error
+- **⚠️ ห้าม deploy release ชุดนี้:** ระหว่าง build พบ agent อีกตัวกำลังเพิ่มการเชื่อม Alex API (`backend/src/alex.rs`, `models/product.rs`, `config.rs` ALEX_*, `main.rs` สร้าง/แก้ 10:31) ยังไม่ผ่าน cargo fmt และยังไม่มี entry ใน log; release ที่ build 10:33 — `line-linux/` rel-20261026033312-e452fcd91f50 และ `frontend-linux/` front-20261026033426-50ec5812b20d — จึงอาจมีโค้ดที่ยังไม่เสร็จของงานนั้น ต้อง build-backend.bat และ build-frontend.bat ใหม่หลังงาน Step 3 เสร็จและผ่าน fmt/clippy/test ก่อน rungit; ไม่ได้แก้หรือ format ไฟล์ของงานนั้น; หยุดบริการทดสอบที่สร้างเองแล้ว
+
+## 2026-10-26 10:20 — เติม Step 2 ให้บันทึกสรุปแอดมินและกู้กลับหลัง AI ล้มเหลวได้
+- **คำอธิบาย:** ตรวจพบว่า Step 2 มีระบบสกัดร่าง/หลักฐาน/ประวัติเวอร์ชันแล้ว แต่หน้าเว็บโหลดสรุปจากร่างที่สำเร็จเท่านั้น ทำให้สรุปใหม่หายจากหน้าจอเมื่อ AI ล้มเหลวแล้วเปิดใหม่ จึงเพิ่มการบันทึกสรุปและรูปก่อนเรียก AI พร้อมป้องกันการเขียนทับและการใช้สรุปหรือแชทรุ่นเก่า ตามขอบเขตข้อ 5 ของ workflow โดยไม่เพิ่ม dependency
+- **โฟลเดอร์ `backend/src/`**
+  - `models/draft.rs` — เพิ่ม/แก้: SummaryInput, ตรวจ revision/hash/รูปซ้ำ, จำกัดสรุป 20,000 ตัวอักษรให้รองรับภาษาไทยตาม UI และป้องกัน version overflow
+  - `db/drafts.rs` — เพิ่ม/แก้: บันทึก `inquiries.working_summary` แบบ compare-and-set พร้อม revision/ผู้แก้ไข/เวลา/รูป/บริบท, ซ่อนสรุปที่อ้างข้อความยกเลิก, ผูกงานและร่างกับ revision ของสรุป และทำให้ร่างรุ่นเก่าเป็น stale
+  - `routes/drafts.rs`, `routes/mod.rs`, `error.rs` — เพิ่ม/แก้: POST `/api/inquiries/{id}/summary` ภายใต้ admin authorization/CSRF เดิม, ส่ง summary ใน GET drafts และ error `SUMMARY_CONFLICT`
+  - `draft_worker.rs`, `db/orders.rs` — แก้: ตรวจ context_hash ของทั้ง AI และ manual, ปฏิเสธงานเมื่อสรุปเปลี่ยนก่อน/ระหว่างประมวลผล, fence revision ตอน commit และไม่อนุมัติร่างที่อ้างสรุปรุ่นเก่า
+  - `tests_step2.rs` — เพิ่ม: บันทึกสรุปได้โดยไม่ต้องมี Hermes, เปิดกลับ, concurrent edits, ข้ามร้าน, รูปที่ไม่ได้อยู่ใน inquiry, แชทเก่า, unsend, stale approval และสรุปเปลี่ยนระหว่าง AI ทำงาน
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx` — เพิ่ม/แก้: ปุ่มบันทึกสรุป, แสดงผู้บันทึก/เวลา/ข้อมูลที่ยังไม่บันทึก, คืนรูปที่เลือกเมื่อเปิดใหม่, บันทึกก่อน AI, คงข้อความที่กำลังแก้เมื่อ refresh/polling หรือเกิด conflict และปุ่มโหลดสรุปล่าสุด; คงการแก้ธีมและกด inquiry เดิมซ้ำที่มีอยู่ก่อนเริ่มงาน
+  - `lib/api.ts` — เพิ่ม: AdminSummary และข้อความ error ภาษาไทยสำหรับ summary conflict/รอข้อความประมวลผล
+- **โฟลเดอร์ `docs/` และ `./`**
+  - `docs/step-2-admin.md`, `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — เพิ่ม/แก้: วิธีบันทึกสรุป/รูป, recovery, API/revision และระบุช่องทางปัจจุบันว่าตอบลูกค้าจาก Alex ส่วนตัวเชื่อม OA เป็นทางเลือก
+- **โฟลเดอร์ `dist/` (build จริงบน Docker Desktop local)**
+  - `line-linux/` — rel-20261026031818-456623f6ba3c
+  - `frontend-linux/` — front-20261026031928-856680f91764 (รวมการแก้ธีมจากงานก่อนหน้าที่ค้าง build)
+- **ผลตรวจสอบ:** cargo fmt --check/clippy -D warnings ผ่าน; cargo test -- --include-ignored ผ่านครบ 23/23 ด้วย MongoDB disposable พอร์ต 27019; npm lint/build ผ่านทั้ง Windows และ Linux release; Chrome headless กับ backend/Mongo จริง + mock Hermes ผ่านการบันทึกสรุป/รูปแล้ว reload, คงข้อความขณะ refresh, แก้สรุปชนสองหน้าต่าง, จำลอง AI ตอบ 503 แล้ว reload/retry จนได้ร่าง, แก้ร่างด้วยมือ/ประวัติ/ยืนยันข้อมูล/เงินสตางค์ และไม่ล้นที่ 390px; ตรวจ Linux ELF/backend checksum และ frontend checksum ครบ 2,108 ไฟล์ ไม่มี release ถูก ignore และไม่มี .env ใน release; git diff --check ผ่าน
+- **ขอบเขต:** ทดสอบ Hermes จำลอง ยังไม่ได้ทดสอบ extraction profile จริงหรือเชื่อม Alex API/MCP; ไม่ commit/push/deploy และไม่แก้ server; หยุด backend/frontend/Chrome/Mongo ทดสอบที่สร้างเองแล้ว คง Docker Desktop ไว้ให้ใช้งาน build ต่อ
+
+## 2026-10-26 10:09 — แก้โหลดแชทค้างเมื่อกดเรื่องเดิมซ้ำ, ขยายตัวอักษร และเปลี่ยนธีมเป็นขาว-ฟ้า-น้ำเงิน
+- **คำอธิบาย:** ผู้ใช้พบว่ากด inquiry เดิมครั้งที่ 2 แล้วค้างที่ "กำลังโหลดบทสนทนา" สาเหตุคือ `selectInquiry` ล้างข้อมูลและตั้ง loading=true แต่ effect โหลดข้อมูลรันเฉพาะเมื่อ selected เปลี่ยน; ผู้ใช้ขอให้ตัวอักษรใหญ่ขึ้น และเปลี่ยนธีมหลักเป็นขาว ฟ้า น้ำเงิน โดยมีเขียว ส้ม ชมพูเป็นสีเสริม
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx` — แก้: กดเรื่องที่เปิดอยู่ซ้ำไม่รีเซ็ต (คงสรุป/ข้อความที่พิมพ์ค้าง); ไอคอนสถิติแรกใช้ class `blue`
+  - `app/globals.css` — แก้: แปลงสีโทนเขียวทั้งหมดด้วยตารางสีเป็นขาว/ฟ้า (sky)/น้ำเงิน (blue-700 สำหรับปุ่มและตัวอักษร) และเทาอมฟ้า (slate-500 ผ่าน AA); `@theme` มี primary/info/success/accent/highlight; คงเขียวเฉพาะสำเร็จ/ออนไลน์/ป้าย LINE/การ์ดอนุมัติ, ส้มสำหรับเตือน, ชมพูสำหรับป้ายเวอร์ชัน; ขยาย font-size ที่ต่ำกว่า 20px (เช่น 8→11, 9→12, 10→13, 11→14, 12→15, body 14→16) และขยายคอลัมน์ (sidebar 228px, workspace 280/300+/370–460px, login card 420px)
+- **โฟลเดอร์ `./`**
+  - `AGENTS.md` — แก้: ข้อ 6 ตารางสีใหม่ (primary น้ำเงิน, info ฟ้า, option เขียว/ส้ม/ชมพู) และขนาดตัวอักษรขั้นต่ำ
+- **ผลตรวจสอบ:** npm lint/build ผ่าน; Chrome headless กับ backend local + mock LINE: กดเรื่องเดิมซ้ำ 3 ครั้งแชทยังแสดง 2 ข้อความไม่ค้าง, สลับเรื่อง A→B→A ถูกต้อง, ข้อความที่พิมพ์ค้างไม่หายเมื่อกดเรื่องเดิม, body/bubble 16px, ปุ่มหลัก/แท็บที่เลือกเป็น rgb(29,78,216), ไม่ล้นที่ 1280/1024/390px, ไม่มี page error
+- **ยังไม่เสร็จ:** build frontend Linux release ไม่ได้เพราะ Docker Desktop ไม่ได้เปิด (`dockerDesktopLinuxEngine` pipe ไม่พบ) — `dist/frontend-linux` ยังเป็น front-20261025170420-588f29abdf8d ซึ่งไม่มีการแก้รอบนี้ ต้องเปิด Docker Desktop แล้วรัน build-frontend.bat ก่อน rungit; backend ไม่ได้แก้ ใช้ rel-20261025170323-3ccacb444b06 เดิม; หยุดบริการทดสอบที่สร้างเองแล้ว
+
+## 2026-10-26 09:45 — เพิ่มขั้นตอน deploy มาตรฐานใน guideline
+- **คำอธิบาย:** ผู้ใช้ให้นำขั้นตอน deploy (1. Windows build + rungit, 2. Ubuntu loadgit/docker-build/docker-deploy) ไปไว้ใน guideline; ตรวจแล้วว่าเอกสารเดิมยังเขียนแบบไม่มี `--full-stack` ซึ่งไม่ตรงกับปัจจุบันที่หน้า admin รันบน server และ `deploy-line.sh` ไม่ใช้ `--prune` ถ้าไม่ใส่ `--full-stack` frontend จะค้างรุ่นเก่า
+- **โฟลเดอร์ `./`**
+  - `AGENTS.md` — แก้: ข้อ 4 ตารางคำสั่งใช้ `--full-stack`; ข้อ 8 เปลี่ยนบรรทัด "ลำดับบน server" เป็นบล็อก "ขั้นตอน deploy มาตรฐาน" (Windows: build เฉพาะส่วนที่แก้ + rungit.bat, Ubuntu: 3 คำสั่ง `--full-stack`, กรณีแก้แค่ .env, ห้ามรัน .sh บน Windows); ข้อ 11 ให้แนบขั้นตอน deploy และ release tag ในสรุป
+  - `alex-line-hermes-mcp-workflow.md`, `alex-line-hermes-mcp-workflow.html` — แก้: หัวข้อ 4.2 และการ์ดผู้พัฒนา/ผู้ดูแลระบบใน HTML ใช้ขั้นตอนเดียวกัน (`--full-stack`, backend + frontend + MongoDB); ตรวจ HTML แล้ว `<pre>` 34/34, `<code>` 298/298 และรูปฝัง 4 ภาพครบ
+
 ## 2026-10-26 00:04 — ชื่อ/รูปโปรไฟล์ LINE ของลูกค้า, แสดงสติกเกอร์ และปิดตัวเชื่อม OA เป็นค่าเริ่มต้น
 - **คำอธิบาย:** ผู้ใช้เข้า LINE Login ได้แล้ว ยืนยันว่าตอบลูกค้าจาก Alex อย่างเดียว (ข้อความที่ตอบใน OA Manager/แอป LINE OA ไม่มี API ทางการให้ดึง) ตรวจ server พบตัวเชื่อม OA ยังส่ง heartbeat NEEDS_LOGIN ทำให้หน้าแชทแสดงข้อความสับสน จึงเพิ่มสวิตช์ปิดตัวเชื่อม; ผู้ใช้ขอให้ดึงชื่อ/รูปลูกค้าและแสดงสติกเกอร์ด้วย
 - **โฟลเดอร์ `backend/src/`**

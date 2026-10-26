@@ -1,8 +1,8 @@
 # Step 2 — หน้าหลังบ้านและร่างออเดอร์
 
-ทำแล้วทั้ง Next.js frontend และ Rust backend: แอดมินเข้าสู่ระบบ → เลือก inquiry → อ่านแชท/รูป → ใส่สรุป → กด **เตรียมออเดอร์ด้วย AI** → ตรวจ/แก้ร่าง → บันทึกเป็นเวอร์ชันใหม่ ไม่มีการส่งข้อความถึงลูกค้า เช็คคิว หรือสร้างออเดอร์ในขั้นนี้
+ทำแล้วทั้ง Next.js frontend และ Rust backend: แอดมินเข้าสู่ระบบ → เลือก inquiry → อ่านแชท/รูป → บันทึกสรุป → กด **เตรียมออเดอร์ด้วย AI** → ตรวจ/แก้ร่าง → บันทึกเป็นเวอร์ชันใหม่ การเตรียมร่างไม่ส่งข้อความ เช็คคิว หรือสร้างออเดอร์กับ Alex ปุ่มตอบลูกค้าและอนุมัติออเดอร์ในฐานข้อมูลเป็นการทำงานแยกที่แอดมินต้องกดเอง
 
-เพิ่มตัวเชื่อม OA Manager บน Ubuntu แล้ว ไม่มีช่องคัดลอกข้อความมาบันทึกเอง ต้อง deploy ตัวเชื่อม ล็อกอิน LINE ครั้งแรก และทดสอบ schema ของ OA จริงก่อนถือว่าเปิดซิงก์สำเร็จ ดูคำสั่งและหน้าที่แต่ละฝ่ายที่ [รับข้อความแอดมินอัตโนมัติ](line-oa-auto-sync.md)
+การใช้งานปัจจุบันให้แอดมินตอบลูกค้าจาก Alex ข้อความขาออกจะถูกรวมในบริบทสกัดร่าง ตัวเชื่อม OA Manager เป็นทางเลือกและปิดเป็นค่าเริ่มต้น (`OA_CONNECTOR_ENABLED=false`) ดู [คู่มือตัวเชื่อม OA](line-oa-auto-sync.md) หากต้องการเปิดเพิ่ม
 
 ## ใครต้องทำอะไร
 
@@ -156,12 +156,15 @@ sudo systemctl reload caddy
 1. ส่งข้อความใหม่เข้า LINE OA หลังเปิด Use webhook; กดโหลดข้อมูลล่าสุดแล้วเลือก inquiry
 2. อ่านแชทและรูป เลือกรูปที่จะส่งให้ AI ได้ไม่เกิน 4 รูป/รวม 8 MB
 3. วางสรุป เช่น `คุณเอ เช่าชุด DR-012 สีแดง ไซซ์ M จำนวน 1 ชุด รับ 15 พ.ย. 2569 คืน 18 พ.ย. 2569 ค่าเช่า 1,500 บาท มัดจำ 2,000 บาท รับหน้าร้านสาขา A`
-4. กดเตรียมออเดอร์ด้วย AI งานจะถูกเก็บใน draft_requests แม้ปิดหน้าเว็บก็กลับมาเปิด inquiry เพื่อตรวจผลได้
+4. กด **บันทึกสรุป** เพื่อเก็บข้อความและรูปที่เลือกไว้ก่อน แม้ยังไม่ตั้ง Hermes ก็ใช้ได้ เมื่อกด **เตรียมออเดอร์ด้วย AI** ระบบจะบันทึกสรุปที่แก้ให้อัตโนมัติก่อนเข้าคิว `draft_requests` ปิดหน้าเว็บแล้วกลับมาเปิด inquiry ต่อได้ รวมถึงเมื่อ AI ล้มเหลว
 5. ตรวจวัน/จำนวน/เงิน ข้อมูลที่ขาด ข้อขัดแย้ง คำถามที่แนะนำ และหลักฐานอ้างอิง แก้ไขแล้วบันทึกเวอร์ชันใหม่ได้
 6. เลือกยืนยันข้อมูลที่กรอกครบเพื่อเป็นข้อมูลอ้างอิงรอบถัดไป การยืนยันนี้ยังไม่ใช่ approval สำหรับ submit order
-7. เมื่อมีข้อความใหม่ระหว่างวิเคราะห์ งานเดิมเป็น STALE ไม่ทับร่างล่าสุด ให้โหลดข้อมูลและเตรียมใหม่ หาก source ถูก unsend ประวัติร่างที่อ้างอิงข้อความนั้นจะถูกซ่อนจาก API/UI
+7. เมื่อมีข้อความใหม่หรือสรุปเปลี่ยนระหว่างวิเคราะห์ งานเดิมจะไม่ทับร่างล่าสุด ให้โหลดข้อมูลและเตรียมใหม่ ร่างที่อ้างสรุปรุ่นเก่าจะแสดงว่าบริบทเปลี่ยนและอนุมัติไม่ได้ หาก source ถูก unsend ทั้งสรุปที่บันทึกไว้และประวัติร่างที่อ้างอิงข้อความนั้นจะถูกซ่อนจาก API/UI
+8. หากสองหน้าต่างแก้สรุปเดียวกัน ระบบยอมรับผู้ที่บันทึกก่อน อีกหน้าต่างจะได้รับ `SUMMARY_CONFLICT` และยังเก็บข้อความที่พิมพ์ไว้ให้คัดลอกก่อนกด **โหลดสรุปล่าสุด** การโหลดข้อมูลทั่วไปหรือ polling ไม่เขียนทับสรุปที่กำลังแก้
 
-ข้อมูลเก็บใน MongoDB `admin_summaries`, `draft_requests`, `order_drafts` และ pointer/version ใน `inquiries` ทุกรายการจำกัด shop/channel จาก config ไม่รับร้านจาก browser ประวัติแสดงล่าสุด 50 ร่าง บริบทเตรียมร่างรองรับ 500 events ต่อ inquiry; เกินจะหยุดพร้อมข้อผิดพลาดโดยไม่ตัดข้อมูลเงียบ ๆ
+ข้อมูลเก็บใน MongoDB `admin_summaries`, `draft_requests`, `order_drafts` และ pointer/version ใน `inquiries` สรุปที่บันทึกก่อนใช้ AI อยู่ใน `inquiries.working_summary` มี revision, ผู้แก้ไข, เวลา, รูปที่เลือก และ hash บริบท ส่วน `admin_summaries` เก็บสำเนาสรุปของงานสกัดแต่ละครั้ง ทุกรายการจำกัด shop/channel จาก config ไม่รับร้านจาก browser ประวัติแสดงล่าสุด 50 ร่าง บริบทเตรียมร่างรองรับ 500 events ต่อ inquiry; เกินจะหยุดพร้อมข้อผิดพลาดโดยไม่ตัดข้อมูลเงียบ ๆ
+
+API บันทึกสรุปคือ `POST /api/inquiries/{id}/summary` รับ `expected_revision` (เริ่มที่ 0), `text`, `image_event_ids` และ `context_hash` จาก `GET /api/inquiries/{id}/drafts` ซึ่งคืน `summary` ด้วย ใช้ HttpOnly session + `X-Admin-Request: 1` เหมือน mutation อื่น ผลสำเร็จคืน revision ใหม่; เวอร์ชันชนตอบ 409 `SUMMARY_CONFLICT` และบริบทแชทเปลี่ยนตอบ 409 `CONTEXT_CHANGED` endpoint นี้ไม่เรียก Hermes หรือสร้างร่าง
 
 ## เข้าสู่ระบบด้วย LINE Login
 
@@ -194,6 +197,13 @@ Session เป็น HttpOnly cookie อายุ 8 ชั่วโมง ผู
 - ข้อความที่ส่งเป็นบริบทของ AI (`admin_message`) และทำให้ร่างเดิมถูกตรวจว่าบริบทเปลี่ยน: ก่อนอนุมัติออเดอร์ให้บันทึกร่างเป็นเวอร์ชันใหม่อีกครั้ง
 - ข้อความที่พิมพ์ใน OA Manager หรือแอป LINE OA ไม่เข้า Alex ทีมควรตอบลูกค้าจาก Alex เท่านั้น ตัวเชื่อม OA Manager ([line-oa-auto-sync.md](line-oa-auto-sync.md)) ปิดไว้เป็นค่าเริ่มต้น (`OA_CONNECTOR_ENABLED=false`): หน้า Alex ไม่แสดงสถานะตัวเชื่อม และ backend ไม่รับข้อมูลจากตัวเชื่อม
 
+## ส่งสติกเกอร์และรูปจาก Alex
+
+- ปุ่ม 😊 ใต้แชทเปิดแผงสติกเกอร์ กดแล้วส่งทันที มีเฉพาะ 15 ชุด (456 ตัว) ที่ Messaging API อนุญาตให้ส่ง ตาม [รายการของ LINE](https://developers.line.biz/en/docs/messaging-api/sticker-list/) สติกเกอร์อื่นที่ OA Manager มีส่งผ่าน API ไม่ได้ backend ตรวจ package/sticker ID ก่อนส่งทุกครั้ง
+- ปุ่ม 🖼️ แนบรูป: browser ย่อรูปเป็น JPEG ด้านยาวไม่เกิน 2048px (ไม่เกิน 10 MB) และ preview 240px (ไม่เกิน 1 MB) ตามข้อกำหนด LINE → อัปโหลดเก็บใน GridFS (`outbound_media`) → แสดงตัวอย่างให้กด **ส่งรูป** อีกครั้งก่อนถึงลูกค้า
+- LINE ดึงรูปจาก `https://<PUBLIC_BASE_URL>/api/line/outbound-media/<token>/original|preview` โดยไม่ต้องล็อกอิน token สุ่มยาว 64 ตัวอักษร เดาไม่ได้ เก็บไว้ตาม `LINE_MEDIA_RETENTION_DAYS` (ค่าเริ่มต้น 30 วัน) ถ้าไม่ตั้ง `PUBLIC_BASE_URL` ระบบใช้ origin ของ `LINE_LOGIN_REDIRECT_URI` (https://hermes.salepie.online) path นี้อยู่ใน `/api/line/*` ที่ Caddy ส่งไป Alex อยู่แล้ว
+- ส่งไม่สำเร็จจะมีปุ่ม "ส่งสติกเกอร์/รูปอีกครั้ง" ซึ่งใช้ request ID เดิม ลูกค้าไม่ได้รับซ้ำ ทุกข้อความนับโควตา Push ของ OA
+
 ## ชื่อ รูปโปรไฟล์ และสติกเกอร์ของลูกค้า
 
 - worker ดึงชื่อที่แสดงและรูปโปรไฟล์ด้วย Messaging API **Get profile** (`/v2/bot/profile/{userId}`, token เดิม) เมื่อประมวลผลข้อความ เก็บใน `line_users` (`display_name`, `picture_url`, `profile_status`) และดึงซ้ำไม่เกินวันละครั้งต่อคน ลูกค้าเก่าที่ยังไม่มีข้อมูลจะถูกดึงเบื้องหลังเมื่อเปิดรายการ inquiry (ครั้งละไม่เกิน 20 คน)
@@ -222,7 +232,9 @@ Session เป็น HttpOnly cookie อายุ 8 ชั่วโมง ผู
 | GET /api/draft-requests/{id} | สถานะงานและ error_code ที่ไม่มี secret/ข้อความ driver |
 | GET /api/admin/login-options | วิธีล็อกอินที่เปิด `{line, password}` |
 | GET /api/admin/line/start → /api/admin/line/callback | LINE Login: redirect ไป LINE และรับ code กลับ ตั้ง session cookie หรือ redirect `/?login_error=...` |
-| POST /api/inquiries/{id}/messages | request_id (UUID), text → 201 ส่งแล้ว; 409 REPLY_UNAVAILABLE / RECORD_CONFLICT; 502 LINE_UNAVAILABLE / LINE_RATE_LIMITED / LINE_SEND_FAILED |
+| POST /api/inquiries/{id}/media | original, preview (base64 JPEG/PNG ≤10 MB/≤1 MB) → 201 `{media:{_id, preview_url, original_url}}`; 503 IMAGE_UNAVAILABLE เมื่อไม่มี HTTPS base |
+| GET /api/line/outbound-media/{token}/{original\|preview} | สาธารณะสำหรับ LINE ดึงรูปที่ส่ง |
+| POST /api/inquiries/{id}/messages | request_id (UUID) + อย่างใดอย่างหนึ่ง: text, sticker {package_id, sticker_id}, image_id → 201 ส่งแล้ว; 409 REPLY_UNAVAILABLE / RECORD_CONFLICT; 502 LINE_UNAVAILABLE / LINE_RATE_LIMITED / LINE_SEND_FAILED |
 | GET /api/line/users/{user_id}/profile | ข้อมูลลูกค้า (หรือ null) |
 | POST /api/line/users/{user_id}/profile | expected_version (0 = สร้างใหม่), display_name, phone, address, notes → 409 RECORD_CONFLICT เมื่อ version ไม่ตรง |
 | GET /api/inquiries/{id}/order | ออเดอร์ที่อนุมัติแล้ว (หรือ null) |

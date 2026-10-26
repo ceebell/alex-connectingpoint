@@ -1,7 +1,10 @@
 use crate::{
     db::{events, media},
     error::AppError,
-    models::draft::PrepareInput,
+    models::{
+        customer::Actor,
+        draft::{PrepareInput, SummaryInput},
+    },
     state::AppState,
 };
 use futures_util::TryStreamExt;
@@ -26,6 +29,18 @@ pub fn hash(value: &Value) -> Result<String, AppError> {
 
 pub fn version(inquiry: &Document) -> i64 {
     inquiry.get_i64("draft_version").unwrap_or(0)
+}
+
+pub fn summary_revision(inquiry: &Document) -> i64 {
+    inquiry
+        .get_document("working_summary")
+        .ok()
+        .and_then(|summary| summary.get_i64("revision").ok())
+        .unwrap_or(0)
+}
+
+pub fn summary_matches(draft: &Document, inquiry: &Document) -> bool {
+    draft.get_i64("summary_revision").unwrap_or(0) == summary_revision(inquiry)
 }
 
 pub async fn inquiry(state: &AppState, id: ObjectId) -> Result<Document, AppError> {
@@ -147,6 +162,93 @@ pub fn references_withdrawn(draft: &Document, snapshot: &Snapshot) -> bool {
     })
 }
 
+pub fn safe_summary(inquiry: &Document, snapshot: &Snapshot) -> Result<Option<Value>, AppError> {
+    let Ok(summary) = inquiry.get_document("working_summary") else {
+        return Ok(None);
+    };
+    let mut summary = summary.clone();
+    let redacted = references_withdrawn(&summary, snapshot);
+    let stale = snapshot.pending || summary.get_str("context_hash").ok() != Some(&snapshot.hash);
+    if redacted {
+        summary.remove("text");
+        summary.remove("image_event_ids");
+    }
+    summary.remove("source_event_ids");
+    summary.remove("updated_by_id");
+    let mut value = serde_json::to_value(summary).map_err(|_| AppError::Data)?;
+    value["redacted"] = json!(redacted);
+    value["stale"] = json!(stale);
+    Ok(Some(value))
+}
+
+pub async fn save_summary(
+    state: &AppState,
+    id: ObjectId,
+    input: SummaryInput,
+    actor: &Actor,
+) -> Result<Value, AppError> {
+    input.validate()?;
+    let inquiry = inquiry(state, id).await?;
+    if inquiry.get_str("status").ok() == Some("CLOSED") {
+        return Err(AppError::DraftConflict);
+    }
+    let snapshot = snapshot(state, &inquiry).await?;
+    if snapshot.pending || snapshot.hash != input.context_hash {
+        return Err(AppError::ContextChanged);
+    }
+    for image in &input.image_event_ids {
+        let image_id = ObjectId::parse_str(image).map_err(|_| AppError::BadRequest)?;
+        let event = snapshot
+            .events
+            .iter()
+            .find(|event| {
+                event.get_object_id("_id").ok() == Some(image_id)
+                    && !event.get_bool("withdrawn").unwrap_or(false)
+                    && event
+                        .get_document("payload")
+                        .ok()
+                        .and_then(|payload| payload.get_document("message").ok())
+                        .and_then(|message| message.get_str("type").ok())
+                        == Some("image")
+            })
+            .ok_or(AppError::Validation(
+                "Image does not belong to this inquiry",
+            ))?;
+        if visible_media(state, event).await?.is_none() {
+            return Err(AppError::Validation("Image is not ready"));
+        }
+    }
+    let now = DateTime::now();
+    let created = inquiry
+        .get_document("working_summary")
+        .ok()
+        .and_then(|summary| summary.get_datetime("created_at").ok())
+        .copied()
+        .unwrap_or(now);
+    let summary = doc! {"revision":input.expected_revision+1,"text":input.text,
+    "image_event_ids":input.image_event_ids,"context_hash":input.context_hash,
+    "source_event_ids":snapshot.events.iter().filter(|event| !event.get_bool("withdrawn").unwrap_or(false))
+        .filter_map(|event| event.get_object_id("_id").ok()).collect::<Vec<_>>(),
+    "created_at":created,"updated_at":now,"updated_by":&actor.name,"updated_by_id":&actor.id};
+    let mut filter = state.scope();
+    filter.insert("_id", id);
+    if input.expected_revision == 0 {
+        filter.insert("working_summary", doc! {"$exists":false});
+    } else {
+        filter.insert("working_summary.revision", input.expected_revision);
+    }
+    let saved = state
+        .collection("inquiries")
+        .find_one_and_update(
+            filter,
+            doc! {"$set":{"working_summary":summary,"updated_at":now}},
+        )
+        .return_document(ReturnDocument::After)
+        .await?
+        .ok_or(AppError::SummaryConflict)?;
+    safe_summary(&saved, &snapshot)?.ok_or(AppError::Data)
+}
+
 pub async fn enqueue(
     state: &AppState,
     id: ObjectId,
@@ -176,10 +278,35 @@ pub async fn enqueue(
     if !manual && (state.config.hermes_url.is_none() || state.config.hermes_api_key.is_none()) {
         return Err(AppError::HermesUnavailable);
     }
+    if !manual && let Ok(summary) = inquiry.get_document("working_summary") {
+        let saved_images = summary
+            .get_array("image_event_ids")
+            .map_err(|_| AppError::Data)?;
+        if summary.get_str("text").ok() != Some(input.summary.as_str())
+            || saved_images
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+                != input
+                    .image_event_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+        {
+            return Err(AppError::SummaryConflict);
+        }
+    }
+    if let Some(context_hash) = &input.context_hash {
+        let snapshot = snapshot(state, &inquiry).await?;
+        if snapshot.pending || context_hash != &snapshot.hash {
+            return Err(AppError::ContextChanged);
+        }
+    }
     let now = DateTime::now();
     let mut record = identity.clone();
     record.extend(doc! {"_id":ObjectId::new(), "input_hash":input_hash,
     "input":bson::to_document(&input).map_err(|_| AppError::Data)?, "manual":manual,
+    "summary_revision":summary_revision(&inquiry),
     "status":"PENDING", "attempts":0_i32, "available_at":now, "created_at":now, "updated_at":now});
     match state
         .collection("draft_requests")
@@ -313,6 +440,12 @@ pub async fn commit(
         .map_err(|_| AppError::Data)?;
     let mut filter = state.scope();
     filter.extend(doc! {"_id":id,"status":{"$ne":"CLOSED"},"draft_job_id":job_id,"draft_lease_token":job.get_object_id("lease_token").map_err(|_|AppError::Data)?});
+    let summary_revision = stored.get_i64("summary_revision").unwrap_or(0);
+    if summary_revision == 0 {
+        filter.insert("working_summary", doc! {"$exists":false});
+    } else {
+        filter.insert("working_summary.revision", summary_revision);
+    }
     if expected == 0 {
         filter.insert(
             "$or",
@@ -352,7 +485,9 @@ pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Val
         .await?;
     let mut result = Vec::new();
     for mut record in records {
-        let stale = record.get_str("context_hash").ok() != Some(&snapshot.hash) || snapshot.pending;
+        let stale = record.get_str("context_hash").ok() != Some(&snapshot.hash)
+            || snapshot.pending
+            || !summary_matches(&record, inquiry);
         // Withdrawn evidence must not leak via an old AI or manual revision.
         let redacted = references_withdrawn(&record, &snapshot);
         if redacted {

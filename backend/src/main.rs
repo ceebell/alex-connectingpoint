@@ -1,8 +1,10 @@
+mod alex;
 mod config;
 mod db;
 mod draft_worker;
 mod error;
 mod models;
+mod product_vision;
 mod routes;
 mod state;
 mod worker;

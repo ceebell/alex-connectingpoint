@@ -4,6 +4,16 @@ use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     for (collection, keys, unique) in [
         (
+            "product_searches",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
+            false,
+        ),
+        (
+            "product_matches",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"draft_id":1,"item_index":1},
+            true,
+        ),
+        (
             "customer_profiles",
             doc! {"shop_id":1,"channel_id":1,"line_user_id":1},
             true,
@@ -16,6 +26,11 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
         (
             "outbound_messages",
             doc! {"shop_id":1,"channel_id":1,"request_id":1},
+            true,
+        ),
+        (
+            "outbound_media",
+            doc! {"shop_id":1,"channel_id":1,"token":1},
             true,
         ),
         (

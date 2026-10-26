@@ -35,15 +35,17 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     )
     .map_err(|_| AppError::Data)?;
     let inquiry = drafts::lock(state, job, input.expected_version).await?;
+    if job.get_i64("summary_revision").unwrap_or(0) != drafts::summary_revision(&inquiry) {
+        return Err(AppError::ContextChanged);
+    }
     let snapshot = drafts::snapshot(state, &inquiry).await?;
     if snapshot.pending {
         return Err(AppError::DraftWaiting);
     }
-    if input.fields.is_some()
-        && input
-            .context_hash
-            .as_ref()
-            .is_some_and(|hash| hash != &snapshot.hash)
+    if input
+        .context_hash
+        .as_ref()
+        .is_some_and(|hash| hash != &snapshot.hash)
     {
         return Err(AppError::ContextChanged);
     }
@@ -170,7 +172,8 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             parts.push(json!({"type":"text","text":format!("Image evidence source: line_event:{image_id}")}));
             parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{mime};base64,{}",STANDARD.encode(bytes))}}));
         }
-        ask_hermes(state, job_id, inquiry_id, parts).await?
+        serde_json::from_value(ask_hermes_json(state, job_id, inquiry_id, PROMPT, parts).await?)
+            .map_err(|_| AppError::HermesFailed)?
     };
     validate_evidence(&result, &sources, &images)?;
     let values = result.fields.values();
@@ -207,8 +210,12 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         }
         confirmed.insert(key.clone());
     }
-    let fresh = drafts::snapshot(state, &inquiry).await?;
-    if fresh.pending || fresh.hash != snapshot.hash {
+    let fresh_inquiry = drafts::inquiry(state, inquiry_id).await?;
+    let fresh = drafts::snapshot(state, &fresh_inquiry).await?;
+    if fresh.pending
+        || fresh.hash != snapshot.hash
+        || drafts::summary_revision(&fresh_inquiry) != drafts::summary_revision(&inquiry)
+    {
         return Err(AppError::ContextChanged);
     }
     // Fence an expired worker: another worker may have reclaimed this request.
@@ -235,6 +242,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         "workflow_status":workflow,"context_hash":snapshot.hash,"admin_summary":&input.summary,
         "result":bson::to_document(&result).map_err(|_|AppError::Data)?,"missing_fields":missing,
         "confirmed_fields":confirmed.into_iter().collect::<Vec<_>>(),"source":"admin_assisted",
+        "summary_revision":drafts::summary_revision(&inquiry),
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
         "created_at":now,"updated_at":now},
     );
@@ -254,12 +262,13 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn ask_hermes(
+pub(crate) async fn ask_hermes_json(
     state: &AppState,
     job: ObjectId,
     inquiry: ObjectId,
+    prompt: &str,
     parts: Vec<Value>,
-) -> Result<DraftResult, AppError> {
+) -> Result<Value, AppError> {
     let endpoint = state
         .config
         .hermes_url
@@ -323,7 +332,7 @@ async fn ask_hermes(
         .header("X-Hermes-Session-Key",format!("alex-draft:{namespace}"))
         .timeout(std::time::Duration::from_secs(state.config.hermes_timeout_seconds))
         .json(&json!({"model":state.config.hermes_model,"stream":false,"tools":[],"tool_choice":"none",
-            "messages":[{"role":"system","content":PROMPT},{"role":"user","content":parts}]}))
+            "messages":[{"role":"system","content":prompt},{"role":"user","content":parts}]}))
         .send().await.map_err(|_|AppError::HermesFailed)?;
     if !response.status().is_success() {
         return Err(AppError::HermesFailed);

@@ -1,8 +1,13 @@
-use crate::{db::drafts, error::AppError, models::draft::PrepareInput, state::AppState};
+use crate::{
+    db::drafts,
+    error::AppError,
+    models::draft::{PrepareInput, SummaryInput},
+    state::AppState,
+};
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use mongodb::bson::{Document, oid::ObjectId};
 use serde_json::{Value, json};
@@ -82,8 +87,22 @@ pub async fn list(
         .sort(mongodb::bson::doc! {"created_at":-1})
         .await?;
     let latest = latest.as_ref().map(job_view).transpose()?;
-    let context_hash = drafts::snapshot(&state, &inquiry).await?.hash;
+    let snapshot = drafts::snapshot(&state, &inquiry).await?;
+    let summary = drafts::safe_summary(&inquiry, &snapshot)?;
     Ok(Json(
-        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?,"latest_request":latest,"context_hash":context_hash}),
+        json!({"version":drafts::version(&inquiry),"drafts":drafts::safe_drafts(&state,&inquiry).await?,"latest_request":latest,"context_hash":snapshot.hash,"summary":summary}),
+    ))
+}
+
+pub async fn save_summary(
+    State(state): State<AppState>,
+    Path(inquiry): Path<String>,
+    headers: HeaderMap,
+    input: Result<Json<SummaryInput>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    let actor = super::session::actor(&state, &headers);
+    Ok(Json(
+        drafts::save_summary(&state, id(&inquiry)?, input, &actor).await?,
     ))
 }
