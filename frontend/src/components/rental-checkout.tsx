@@ -37,6 +37,10 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const group = data?.groups.find(group => group.key === groupKey);
   const pending = data?.submissions.some(submission => ["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status));
   const ready = !!group && !!data?.source_hash && !data.has_conflicts;
+  // The form locks for these reasons; their notices sit at the top, so the one that applies is repeated by the button.
+  const locked = pending ? "บิลก่อนหน้ายังรอตรวจผลใน Alex — เลื่อนขึ้นไปกด “บันทึกผลที่ตรวจจาก Alex” ก่อน ระบบล็อกไว้กันบิลซ้ำ"
+    : data?.has_conflicts ? "ร่างล่าสุดมีข้อมูลขัดกัน — ปิดหน้านี้ ตรวจร่าง ติ๊ก “ยืนยันข้อมูลที่กรอกครบในร่างนี้” แล้วกดบันทึกร่างเป็นเวอร์ชันใหม่"
+    : disabled ? "รอให้งานที่ค้างอยู่เสร็จก่อน (AI กำลังอ่านสรุป/บันทึกร่าง หรือมีสรุปที่ยังไม่ได้บันทึก)" : "";
   const catalogRental = group?.lines.reduce((sum, line) => sum + line.rental_fee_satang * line.quantity, 0) ?? 0;
   const catalogDeposit = group?.lines.reduce((sum, line) => sum + line.deposit_satang * line.quantity, 0) ?? 0;
   const satang = (value: string) => Math.round(Number(value || 0) * 100);
@@ -161,7 +165,8 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
           {((group.quoted_rental_fee_satang ?? 0) > catalogRental || (group.quoted_deposit_satang ?? 0) > catalogDeposit) && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex</p>}
           <p className="muted small">ส่วนลดแก้ได้ที่แท็บร่างล่าสุด{review ? " · ยอดนี้ตรวจกับราคาและคิวใน Alex แล้ว" : " · ยอดจะตรวจกับ Alex อีกครั้งเมื่อเตรียมบิล"}</p>
         </section>
-        {!review && <button className="button primary full" disabled={working || !ready || !!pending}><span aria-hidden="true">🧾</span> ตรวจคิวและเตรียมบิล</button>}
+        {!review && <button className="button primary full" disabled={working || !ready || !!pending}><span aria-hidden="true">🧾</span> {busy ? "กำลังตรวจ…" : "ตรวจคิวและเตรียมบิล"}</button>}
+        {!review && locked && <p className="notice warning" role="status">{locked}</p>}
       </fieldset>
     </form>}
     {review && <section className="invoice-confirm">

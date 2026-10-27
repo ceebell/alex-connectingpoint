@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { CSSProperties, PointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAmounts, emptyRental, Fields, labels, LineEvent, RECEIVING_METHODS, receivingMethod, Rental, STORE_PICKUP } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
@@ -40,8 +40,26 @@ function orderLevel(initial: Fields): Fields {
 
 // The invoice opens as a modal page; the native dialog handles focus and the Escape key.
 // It is portalled to <body> and scrolls in its own body so wheel/touch never reach the panels behind.
+// It opens centred; dragging the top bar moves it, and a double-click puts it back in the centre.
 function InvoiceDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  function startDrag(event: PointerEvent<HTMLDivElement>) {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    const bar = event.currentTarget;
+    // Centred position without the current offset, so the clamp below works in the same coordinates as the offset.
+    const left = box.left - offset.x, top = box.top - offset.y, grabX = event.clientX - offset.x, grabY = event.clientY - offset.y;
+    bar.setPointerCapture(event.pointerId);
+    // Keep part of the bar on screen so the dialog can always be grabbed again.
+    const move = (moved: globalThis.PointerEvent) => setOffset({
+      x: Math.min(Math.max(moved.clientX - grabX, 120 - left - box.width), window.innerWidth - 120 - left),
+      y: Math.min(Math.max(moved.clientY - grabY, -top), window.innerHeight - 48 - top),
+    });
+    const stop = () => { bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", stop); bar.removeEventListener("pointercancel", stop); };
+    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", stop); bar.addEventListener("pointercancel", stop);
+  }
   useEffect(() => {
     const dialog = ref.current;
     if (dialog && !dialog.open) dialog.showModal();
@@ -49,8 +67,11 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = overflow; };
   }, []);
-  return createPortal(<dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose}>
-    <div className="invoice-dialog-bar"><button type="button" className="text-button" onClick={() => ref.current?.close()}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button></div>
+  return createPortal(<dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose} style={{ "--drag-x": `${offset.x}px`, "--drag-y": `${offset.y}px` } as CSSProperties}>
+    <div className="invoice-dialog-bar" onPointerDown={startDrag} onDoubleClick={() => setOffset({ x: 0, y: 0 })}>
+      <span className="invoice-dialog-grip" aria-hidden="true" title="ดับเบิลคลิกเพื่อกลับกลางจอ">⠿ ลากแถบนี้เพื่อย้าย</span>
+      <button type="button" className="text-button" onClick={() => ref.current?.close()}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button>
+    </div>
     <div className="invoice-dialog-body">{children}</div>
   </dialog>, document.body);
 }
