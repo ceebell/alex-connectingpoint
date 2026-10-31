@@ -1,7 +1,7 @@
 "use client";
 import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order } from "@/lib/api";
+import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order, VersionState } from "@/lib/api";
 import DraftEditor from "./draft-editor";
 import SummaryImages from "./summary-images";
 import RentalCheckout from "./rental-checkout";
@@ -30,6 +30,7 @@ function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
   return [...new Map([...previous, ...incoming].map(message => [message._id, message])).values()].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime() || (a.event_id ?? a._id).localeCompare(b.event_id ?? b._id));
 }
 const time = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
+const versionStates: Record<VersionState, [string, string]> = { OPEN: ["ยังไม่ส่ง", "open"], SENT: ["ส่งเข้า Alex แล้ว", "sent"], CANCELLED: ["ยกเลิกแล้ว", "cancelled"] };
 const statusLabels: Record<string, string> = { RECEIVED: "รับเรื่องแล้ว", READY_FOR_REVIEW: "รอตรวจร่าง", NEEDS_INFORMATION: "รอข้อมูลเพิ่ม", NEEDS_REVIEW: "มีข้อมูลขัดกัน", CLOSED: "ปิดเรื่อง", PENDING: "รอประมวลผล", PROCESSING: "AI กำลังเตรียมร่าง", DONE: "เสร็จแล้ว", STALE: "บริบทเปลี่ยนแล้ว", FAILED: "เตรียมร่างไม่สำเร็จ" };
 
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
@@ -281,6 +282,24 @@ export default function AdminWorkspace() {
     } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.code === "SUMMARY_CONFLICT") setSummaryConflict(true); if (cause instanceof ApiError && cause.status === 401) setSession(null); } finally { setBusy(false); }
   }
 
+  // Edit picks up a version that was never sent (the latest one is already the working draft);
+  // clone copies any version. Both become a new version with that version's cart.
+  async function copyVersion(draft: Draft, mode: "edit" | "clone") {
+    if (!selected) return;
+    if (mode === "edit" && draft._id === latest?._id) { setTab("draft"); return; }
+    setBusy(true); setError("");
+    try {
+      setJob(await api<Job>(`/api/inquiries/${selected}/drafts/${draft._id}/copy`, { method: "POST", body: JSON.stringify({ request_id: crypto.randomUUID(), expected_version: version, context_hash: contextHash, mode }) }));
+    } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) setSession(null); else setRefresh(n => n + 1); } finally { setBusy(false); }
+  }
+
+  async function cancelVersion(draft: Draft) {
+    if (!selected || !window.confirm(`ยกเลิกร่างเวอร์ชัน ${draft.draft_version}? ยกเลิกแล้วแก้ไขหรือส่งเข้า Alex ไม่ได้อีก${draft.state === "SENT" ? "\nบิลที่ส่งเข้า Alex แล้วจะไม่ถูกยกเลิกใน Alex ต้องยกเลิกใน Alex เอง" : ""}`)) return;
+    setBusy(true); setError("");
+    try { await api(`/api/inquiries/${selected}/drafts/${draft._id}/cancel`, { method: "POST" }); setRefresh(n => n + 1); }
+    catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) setSession(null); else setRefresh(n => n + 1); } finally { setBusy(false); }
+  }
+
   async function approveOrder() {
     if (!selected || !latest || !canApprove || !approveChecked) return;
     setBusy(true); setError("");
@@ -359,9 +378,23 @@ export default function AdminWorkspace() {
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">แชทหรือสรุปแอดมินมีการเปลี่ยนแปลง ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}
           {order ? <div className="notice success" role="status"><strong><span aria-hidden="true">✅</span> อนุมัติร่างภายในแล้ว</strong><p>จากร่าง v{order.draft_version} · โดย {order.approved_by} · {time(order.approved_at)}<br />บันทึกร่างที่อนุมัติภายในแล้ว สร้างบิลจริงใน Alex ที่แท็บคิว/บิล</p></div>
             : latest?.result && <div className="approve-card">{canApprove ? <><label className="checkbox-row"><input type="checkbox" checked={approveChecked} disabled={working} onChange={e => setApproveChecked(e.target.checked)} />ตรวจร่าง v{latest.draft_version} กับลูกค้าแล้ว ข้อมูลถูกต้อง</label><button type="button" className="button primary full" disabled={working || !approveChecked} onClick={approveOrder}>อนุมัติร่างภายใน</button><p className="muted small">เก็บร่างที่ตรวจแล้วในระบบ หากต้องการสร้างบิลใน Alex ให้ไปที่แท็บคิว/บิล</p></> : <p className="muted small">อนุมัติร่างภายในได้เมื่อร่างล่าสุดข้อมูลครบ ไม่มีข้อขัดแย้ง และแชทไม่มีข้อความใหม่หลังทำร่าง</p>}</div>}
-          <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
+          <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onClone={() => { if (latest) void copyVersion(latest, "clone"); }} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
           {tab === "checkout" && <RentalCheckout key={`${selected}-${version}-${contextHash}`} inquiryId={selected} userId={current?.line_user_id} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
-          {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => <details className="history-card" key={draft._id}><summary><span>ร่างเวอร์ชัน {draft.draft_version}</span><span className="small muted">{time(draft.created_at)}</span></summary><DraftReadOnly draft={draft} /></details>)}</>}
+          {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => {
+            const state = draft.state ?? "OPEN";
+            const [label, tone] = versionStates[state];
+            return <article className={`history-card ${tone}`} key={draft._id}>
+              <div className="history-head"><strong>ร่างเวอร์ชัน {draft.draft_version}</strong>{draft._id === latest?._id && <span className="small muted">ร่างล่าสุด</span>}<span className={`version-state ${tone}`}>{state === "SENT" && <span aria-hidden="true">✅ </span>}{label}</span><span className="small muted">{time(draft.created_at)}</span></div>
+              {draft.bill && <p className="small muted">{draft.bill.alex_order_id ? `เลขออเดอร์ Alex ${draft.bill.alex_order_id}` : "ส่งแล้ว ยังไม่ได้เลขออเดอร์ (ตรวจใน Alex แล้วบันทึกได้ที่แท็บคิว/บิล)"}{draft.bill.submitted_by && ` · ส่งโดย ${draft.bill.submitted_by}`}{draft.bill.created_at && ` · ${time(new Date(draft.bill.created_at).toISOString())}`}</p>}
+              {state === "CANCELLED" && <p className="small muted">ยกเลิก{draft.cancelled_by && `โดย ${draft.cancelled_by}`}{draft.cancelled_at && ` · ${time(draft.cancelled_at)}`}{draft.bill && " · บิลใน Alex ยังอยู่ ต้องยกเลิกใน Alex เอง"}</p>}
+              <div className="history-actions">
+                {state === "OPEN" && <button type="button" className="button secondary" disabled={working || draft.redacted} onClick={() => copyVersion(draft, "edit")}><span aria-hidden="true">✏️</span> แก้ไข</button>}
+                <button type="button" className="button secondary" disabled={working || draft.redacted} onClick={() => copyVersion(draft, "clone")}><span aria-hidden="true">⧉</span> โคลน</button>
+                {state !== "CANCELLED" && <button type="button" className="text-button danger" disabled={working} onClick={() => cancelVersion(draft)}>ยกเลิกเวอร์ชันนี้</button>}
+              </div>
+              <details><summary>ดูรายละเอียด</summary><DraftReadOnly draft={draft} /></details>
+            </article>;
+          })}<p className="muted small">แก้ไข: หยิบเวอร์ชันที่ยังไม่ส่งขึ้นมาเป็นร่างล่าสุด · โคลน: คัดลอกเป็นเวอร์ชันใหม่ได้ทุกสถานะ · ทั้งสองแบบคืนตะกร้าของเวอร์ชันนั้น</p></>}
         </>}</div><div className="draft-footer">แนบรูป → ร่างออเดอร์ (ลูกค้า · ตะกร้า · วันที่ · เช็คคิว) → ส่งบิลเข้า Alex</div>
       </section></div>
     </main>

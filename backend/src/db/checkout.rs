@@ -16,7 +16,7 @@ use crate::{
 use futures_util::TryStreamExt;
 use mongodb::bson::{self, DateTime, Document, doc, oid::ObjectId};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 struct Source {
     inquiry: Document,
@@ -26,6 +26,78 @@ struct Source {
     groups: Vec<Group>,
     missing: Vec<Value>,
     has_conflicts: bool,
+    closed: Option<&'static str>,
+}
+
+// What the version mapping below reads from each saved version.
+pub fn version_keys() -> Document {
+    doc! {"_id":1,"draft_version":1,"created_at":1,"cancelled_at":1}
+}
+
+// The saved version (id and number) a bill was made from. Bills record it; older bills belong to the
+// version that was active when they were sent, the newest one saved before them.
+fn bill_version(bill: &Document, versions: &[Document]) -> Option<(ObjectId, i64)> {
+    if let Ok(id) = bill.get_object_id("draft_id") {
+        return Some((id, bill.get_i64("draft_version").unwrap_or(0)));
+    }
+    let sent = bill.get_datetime("created_at").ok()?;
+    let version = versions
+        .iter()
+        .filter(|version| {
+            version
+                .get_datetime("created_at")
+                .is_ok_and(|created| created <= sent)
+        })
+        .max_by_key(|version| version.get_i64("draft_version").unwrap_or(0))?;
+    Some((
+        version.get_object_id("_id").ok()?,
+        version.get_i64("draft_version").ok()?,
+    ))
+}
+
+// The latest bill that reached Alex, or may have (everything but NOT_CREATED), for each saved version.
+pub async fn version_bills(
+    state: &AppState,
+    inquiry_id: ObjectId,
+    versions: &[Document],
+) -> Result<HashMap<ObjectId, Document>, AppError> {
+    let mut filter = state.scope();
+    filter.extend(doc! {"inquiry_id":inquiry_id,"status":{"$ne":"NOT_CREATED"}});
+    let bills: Vec<Document> = state
+        .collection("alex_submissions")
+        .find(filter)
+        .sort(doc! {"created_at":1})
+        .await?
+        .try_collect()
+        .await?;
+    Ok(bills
+        .into_iter()
+        .filter_map(|bill| Some((bill_version(&bill, versions)?.0, bill)))
+        .collect())
+}
+
+// A version that was sent to Alex or cancelled is closed: it stays as a record and can only be cloned.
+pub fn closed(version: &Document, bills: &HashMap<ObjectId, Document>) -> Option<&'static str> {
+    if version.contains_key("cancelled_at") {
+        Some("CANCELLED")
+    } else if version
+        .get_object_id("_id")
+        .is_ok_and(|id| bills.contains_key(&id))
+    {
+        Some("SENT")
+    } else {
+        None
+    }
+}
+
+fn queue_state(results: &[Value]) -> &'static str {
+    if results.iter().all(|value| value["state"] == "AVAILABLE") {
+        "AVAILABLE"
+    } else if results.iter().any(|value| value["state"] == "UNAVAILABLE") {
+        "UNAVAILABLE"
+    } else {
+        "UNKNOWN"
+    }
 }
 
 // One inquiry is one Alex order: cart lines plus the order-level dates, notes and discounts.
@@ -117,6 +189,8 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         .ok()
         .and_then(|r| r.get_array("conflicts").ok())
         .is_some_and(|c| !c.is_empty());
+    let versions = drafts::versions(state, &inquiry, Some(version_keys())).await?;
+    let closed = closed(&draft, &version_bills(state, id, &versions).await?);
     Ok(Source {
         inquiry,
         draft,
@@ -125,6 +199,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         groups,
         missing,
         has_conflicts,
+        closed,
     })
 }
 
@@ -187,6 +262,9 @@ fn choose(source: &Source, key: &str) -> Result<Group, AppError> {
         .find(|group| group.key == key)
         .cloned()
         .ok_or(AppError::BillNotReady)?;
+    if source.closed.is_some() {
+        return Err(AppError::DraftClosed);
+    }
     if source.has_conflicts || !source.missing.is_empty() {
         return Err(AppError::BillNotReady);
     }
@@ -208,9 +286,11 @@ fn safe_submission(mut record: Document) -> Result<Value, AppError> {
 
 pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     let inquiry = drafts::inquiry(state, id).await?;
+    // Only a send in progress holds the lock; an unclear Alex reply no longer blocks the next version.
     if let Ok(submission) = inquiry.get_object_id("alex_submission_id")
         && let Some(record) = recover(state, id, submission).await?
-        && ["CONFIRMED", "NOT_CREATED"].contains(&record.get_str("status").unwrap_or(""))
+        && ["CONFIRMED", "NOT_CREATED", "SUBMIT_UNKNOWN"]
+            .contains(&record.get_str("status").unwrap_or(""))
     {
         unlock(
             state,
@@ -229,10 +309,16 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
         .await?
         .try_collect()
         .await?;
+    let versions = drafts::versions(state, &inquiry, Some(version_keys())).await?;
     let submissions = submissions
         .into_iter()
-        .map(safe_submission)
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|record| {
+            let version = bill_version(&record, &versions).map(|(_, number)| number);
+            let mut value = safe_submission(record)?;
+            value["draft_version"] = json!(version);
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
     let source = match source(state, id).await {
         Ok(source) => source,
         Err(error) => {
@@ -244,7 +330,7 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
         }
     };
     Ok(
-        json!({"source_hash":source.source_hash,"draft_version":drafts::version(&source.inquiry),"groups":source.groups,"missing":source.missing,
+        json!({"source_hash":source.source_hash,"draft_version":drafts::version(&source.inquiry),"closed":source.closed,"groups":source.groups,"missing":source.missing,
         "has_conflicts":source.has_conflicts,"submissions":submissions,"customer":{"name":source.fields.customer_name,"phone":source.fields.customer_phone,"address":source.fields.customer_address},
         "notes":source.fields.notes,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
     )
@@ -304,13 +390,7 @@ pub async fn availability(
     if self::source(state, id).await?.source_hash != source.source_hash {
         return Err(AppError::ContextChanged);
     }
-    let status = if results.iter().all(|value| value["state"] == "AVAILABLE") {
-        "AVAILABLE"
-    } else if results.iter().any(|value| value["state"] == "UNAVAILABLE") {
-        "UNAVAILABLE"
-    } else {
-        "UNKNOWN"
-    };
+    let status = queue_state(&results);
     let now = DateTime::now();
     let mut record = state.scope();
     record.extend(doc! {"_id":ObjectId::new(),"inquiry_id":id,"draft_id":source.draft.get_object_id("_id").map_err(|_|AppError::Data)?,
@@ -367,14 +447,9 @@ pub async fn cart_availability(
     };
     let session = alex::login(state).await?;
     let results = check(state, &session, &group).await?;
-    let status = if results.iter().all(|value| value["state"] == "AVAILABLE") {
-        "AVAILABLE"
-    } else if results.iter().any(|value| value["state"] == "UNAVAILABLE") {
-        "UNAVAILABLE"
-    } else {
-        "UNKNOWN"
-    };
-    Ok(json!({"state":status,"items":results,"checked_at":DateTime::now(),"reserves_stock":false}))
+    Ok(
+        json!({"state":queue_state(&results),"items":results,"checked_at":DateTime::now(),"reserves_stock":false}),
+    )
 }
 
 fn baht(value: i64) -> String {
@@ -431,10 +506,9 @@ pub async fn review(
     let group = choose(&source, &input.group_key)?;
     validate_input(&input, &group)?;
     let session = alex::login(state).await?;
+    // A booked or unreadable queue does not stop the review; the admin confirms it before sending.
     let results = check(state, &session, &group).await?;
-    if results.iter().any(|result| result["state"] != "AVAILABLE") {
-        return Err(AppError::BillNotReady);
-    }
+    let queue = json!({"state":queue_state(&results),"items":results});
     let rental: i64 = group
         .lines
         .iter()
@@ -492,10 +566,11 @@ pub async fn review(
     let mut record = state.scope();
     record.extend(doc! {"_id":review_id,"inquiry_id":id,"source_hash":&source.source_hash,"group":bson::to_bson(&group).map_err(|_|AppError::Data)?,
         "input":bson::to_document(&input).map_err(|_|AppError::Data)?,"payload":bson::to_bson(&payload).map_err(|_|AppError::Data)?,"reservation_key":reservation_key,
+        "queue":bson::to_bson(&queue).map_err(|_|AppError::Data)?,
         "created_at":now,"updated_at":now,"expires_at":DateTime::from_millis(now.timestamp_millis()+300_000)});
     state.collection("bill_reviews").insert_one(record).await?;
     Ok(
-        json!({"review_id":review_id.to_hex(),"group":group,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
+        json!({"review_id":review_id.to_hex(),"group":group,"queue":queue,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
         "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
         "rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
@@ -590,7 +665,7 @@ async fn recover(
         .copied()
         .unwrap_or(now);
     let mut record = identity.clone();
-    record.extend(doc! {"reservation_key":review.get_str("reservation_key").map_err(|_|AppError::Data)?,"active":true,"status":"SUBMIT_UNKNOWN",
+    record.extend(doc! {"reservation_key":review.get_str("reservation_key").map_err(|_|AppError::Data)?,"active":false,"status":"SUBMIT_UNKNOWN",
         "group":review.get("group").cloned().ok_or(AppError::Data)?,"submitted_by":"ระบบกู้สถานะหลังรีสตาร์ต","created_at":started,"updated_at":now});
     match state
         .collection("alex_submissions")
@@ -664,23 +739,30 @@ pub async fn submit(
     {
         return Err(AppError::BillPending);
     }
-    let mut overlapping = state.scope();
-    overlapping.extend(doc! {"inquiry_id":id,"active":true,"group.branch_id":&group.branch_id,
-        "group.pickup_date":{"$lte":&group.return_date},"group.return_date":{"$gte":&group.pickup_date},
-        "group.lines.product_item_id":{"$in":group.lines.iter().map(|line|line.product_item_id.clone()).collect::<Vec<_>>()}});
-    if state
-        .collection("alex_submissions")
-        .find_one(overlapping)
-        .await?
-        .is_some()
+    // Each version is sent once; bills of other versions do not block it (the queue check covers stock).
+    // Checked under the lock so two tabs cannot both send the same version.
+    let draft_id = source
+        .draft
+        .get_object_id("_id")
+        .map_err(|_| AppError::Data)?;
+    let mut sent = state.scope();
+    sent.extend(doc! {"inquiry_id":id,"draft_id":draft_id,"status":{"$ne":"NOT_CREATED"}});
+    if source.closed.is_some()
+        || state
+            .collection("alex_submissions")
+            .find_one(sent)
+            .await?
+            .is_some()
     {
         unlock(state, id, review_id).await?;
-        return Err(AppError::BillPending);
+        return Err(AppError::DraftClosed);
     }
     let now = DateTime::now();
     let mut record = identity.clone();
+    // `active` marks a send in progress; it is cleared once Alex has answered.
     record.extend(doc! {"reservation_key":review.get_str("reservation_key").map_err(|_|AppError::Data)?,"active":true,
         "status":"SUBMITTING","group":review.get("group").cloned().ok_or(AppError::Data)?,"source_hash":&source.source_hash,
+        "draft_id":draft_id,"draft_version":source.draft.get_i64("draft_version").map_err(|_|AppError::Data)?,
         "payload":review.get("payload").cloned().ok_or(AppError::Data)?,"submitted_by":&actor.name,"submitted_by_id":&actor.id,"created_at":now,"updated_at":now});
     if let Err(error) = state
         .collection("alex_submissions")
@@ -697,17 +779,18 @@ pub async fn submit(
     let preflight = async {
         let session = alex::login(state).await?;
         let results = check(state, &session, &group).await?;
-        if results.iter().any(|value| value["state"] != "AVAILABLE") {
-            return Err(AppError::BillNotReady);
+        let queue = queue_state(&results);
+        if queue != "AVAILABLE" && !input.accept_queue {
+            return Err(AppError::QueueBlocked);
         }
         if self::source(state, id).await?.source_hash != source.source_hash {
             return Err(AppError::ContextChanged);
         }
-        Ok::<_, AppError>(session)
+        Ok::<_, AppError>((session, json!({"state":queue,"items":results})))
     }
     .await;
-    let session = match preflight {
-        Ok(session) => session,
+    let (session, queue) = match preflight {
+        Ok(checked) => checked,
         Err(error) => {
             let mut failed = identity.clone();
             failed.insert("status", "SUBMITTING");
@@ -722,11 +805,13 @@ pub async fn submit(
     let mut sending = identity.clone();
     sending.extend(doc! {"status":"SUBMITTING","active":true});
     let sent_at = DateTime::now();
+    // The queue as Alex reported it right before sending, and whether the admin accepted a booked one.
+    let queue = bson::to_bson(&queue).map_err(|_| AppError::Data)?;
     if state
         .collection("alex_submissions")
         .update_one(
             sending,
-            doc! {"$set":{"sent_at":sent_at,"updated_at":sent_at}},
+            doc! {"$set":{"sent_at":sent_at,"queue":queue,"queue_accepted":input.accept_queue,"updated_at":sent_at}},
         )
         .await?
         .matched_count
@@ -735,7 +820,7 @@ pub async fn submit(
         return Err(AppError::BillPending);
     }
     let outcome = alex::create_order(state, &session, &payload).await;
-    let mut updates = doc! {"status":"SUBMIT_UNKNOWN","updated_at":DateTime::now()};
+    let mut updates = doc! {"status":"SUBMIT_UNKNOWN","active":false,"updated_at":DateTime::now()};
     if let Ok((status, mut response)) = outcome {
         if let Some(order) = order_id(state, status, &response) {
             updates.insert("status", "CONFIRMED");
@@ -749,16 +834,14 @@ pub async fn submit(
             bson::to_bson(&response).map_err(|_| AppError::Data)?,
         );
     }
-    let confirmed = updates.get_str("status").ok() == Some("CONFIRMED");
     let mut finishing = identity.clone();
     finishing.insert("status", "SUBMITTING");
-    let updated = state
+    state
         .collection("alex_submissions")
         .update_one(finishing, doc! {"$set":updates})
         .await?;
-    if confirmed && updated.matched_count == 1 {
-        unlock(state, id, review_id).await?;
-    }
+    // Alex has answered, so the next version may be sent; an unclear answer is recorded, never retried.
+    unlock(state, id, review_id).await?;
     safe_submission(
         state
             .collection("alex_submissions")
@@ -806,7 +889,6 @@ pub async fn resolve(
             })
             .ok_or(AppError::BadRequest)?;
         updates.insert("status", "CONFIRMED");
-        updates.insert("active", true);
         updates.insert("alex_order_id", order);
     }
     filter.insert(

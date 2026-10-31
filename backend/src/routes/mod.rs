@@ -72,6 +72,14 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/inquiries/{id}/summary", post(drafts::save_summary))
         .route("/api/inquiries/{id}/prepare", post(drafts::prepare))
         .route("/api/inquiries/{id}/draft", post(drafts::revise))
+        .route(
+            "/api/inquiries/{id}/drafts/{draft}/copy",
+            post(drafts::copy),
+        )
+        .route(
+            "/api/inquiries/{id}/drafts/{draft}/cancel",
+            post(drafts::cancel),
+        )
         .route("/api/draft-requests/{id}", get(drafts::job))
         .route("/api/inquiries", get(admin::list))
         .route("/api/inquiries/{id}/context", get(admin::context))

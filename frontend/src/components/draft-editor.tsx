@@ -76,7 +76,9 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
   </dialog>, document.body);
 }
 
-export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onUnauthorized: () => void }) {
+export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void }) {
+  // A version that was sent to Alex or cancelled stays as it was; work continues on a clone.
+  const closed = draft?.state === "SENT" || draft?.state === "CANCELLED";
   const [fields, setFields] = useState<Fields>(() => orderLevel(initial));
   // The bill is built from the saved draft, so the invoice waits until the form is saved.
   const [baseline] = useState(() => JSON.stringify(orderLevel(initial)));
@@ -128,6 +130,12 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const tooMuch = !!cart.length && (rentalDiscount > rentalTotal || depositDiscount > depositTotal);
 
   return <div className="draft-form">
+    {closed && draft && <div className={`notice ${draft.state === "SENT" ? "success" : "warning"}`} role="status">
+      <strong>{draft.state === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชัน {draft.draft_version} ส่งเข้า Alex แล้ว{draft.bill?.alex_order_id && ` · เลขออเดอร์ ${draft.bill.alex_order_id}`}</> : `ร่างเวอร์ชัน ${draft.draft_version} ถูกยกเลิกแล้ว`}</strong>
+      <p>{draft.state === "SENT" ? "งานนี้ปิดแล้ว แก้ไขหรือส่งซ้ำไม่ได้" : "แก้ไขหรือส่งเข้า Alex ไม่ได้อีก"} — ถ้าต้องการใช้ข้อมูลนี้ต่อ ให้โคลนเป็นเวอร์ชันใหม่ (ตะกร้าของเวอร์ชันนี้จะกลับมาด้วย)</p>
+      <button type="button" className="button secondary" disabled={busy} onClick={onClone}><span aria-hidden="true">⧉</span> โคลนเป็นเวอร์ชันใหม่</button>
+    </div>}
+    <fieldset className="draft-lock" disabled={closed}>
     <section className="order-section section-customer">
       <h3 className="form-heading"><span aria-hidden="true">👤</span> ลูกค้า</h3>
       <div className="field-grid">{text("customer_name")}{text("customer_phone")}{text("customer_address")}</div>
@@ -167,6 +175,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <button type="button" className={`button ${dirty || !draft ? "secondary" : "primary"} full`} disabled={busy || dirty || !draft || !cart.length} onClick={() => setInvoice(true)}><span aria-hidden="true">🧾</span> สรุปออเดอร์และส่งเข้า Alex</button>
       <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอด เช็คคิว และยืนยันส่งออเดอร์เข้า Alex"}</p>
     </div>
+    </fieldset>
     {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}
   </div>;
 }

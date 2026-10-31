@@ -164,6 +164,15 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             )
             .await?;
     }
+    // `active` used to stay set on finished bills, which blocked another bill with the same items and dates.
+    // It now marks only a send in progress; clear it on bills Alex has already answered (idempotent).
+    state
+        .collection("alex_submissions")
+        .update_many(
+            doc! {"active":true,"status":{"$ne":"SUBMITTING"}},
+            doc! {"$set":{"active":false}},
+        )
+        .await?;
     state
         .collection("alex_submissions")
         .create_index(

@@ -1,9 +1,9 @@
 use crate::{
-    db::{events, media},
+    db::{checkout, events, media},
     error::AppError,
     models::{
         customer::Actor,
-        draft::{PrepareInput, SummaryInput},
+        draft::{CopyInput, CopyMode, DraftFields, PrepareInput, SummaryInput},
     },
     state::AppState,
 };
@@ -264,8 +264,23 @@ pub async fn enqueue(
     input: PrepareInput,
     manual: bool,
 ) -> Result<Document, AppError> {
+    enqueue_job(state, id, input, manual, None).await
+}
+
+// `copied_from` is set only by `copy`, never by the browser: the worker then restores that version's cart.
+async fn enqueue_job(
+    state: &AppState,
+    id: ObjectId,
+    input: PrepareInput,
+    manual: bool,
+    copied_from: Option<ObjectId>,
+) -> Result<Document, AppError> {
     input.validate()?;
-    let input_hash = hash(&json!({"manual":manual, "input":input}))?;
+    let mut hashed = json!({"manual":manual, "input":input});
+    if let Some(source) = copied_from {
+        hashed["copied_from"] = json!(source.to_hex());
+    }
+    let input_hash = hash(&hashed)?;
     let mut identity = state.scope();
     identity.extend(doc! {"inquiry_id":id, "request_id":&input.request_id});
     if let Some(existing) = state
@@ -317,6 +332,9 @@ pub async fn enqueue(
     "input":bson::to_document(&input).map_err(|_| AppError::Data)?, "manual":manual,
     "summary_revision":summary_revision(&inquiry),
     "status":"PENDING", "attempts":0_i32, "available_at":now, "created_at":now, "updated_at":now});
+    if let Some(source) = copied_from {
+        record.insert("copied_from", source);
+    }
     match state
         .collection("draft_requests")
         .insert_one(record.clone())
@@ -476,24 +494,63 @@ pub async fn commit(
     finish(state, job, "DONE", None).await
 }
 
-pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Value>, AppError> {
-    let snapshot = snapshot(state, inquiry).await?;
+// Every saved version of the inquiry, newest first; `keys` limits the fields read (None reads all).
+pub async fn versions(
+    state: &AppState,
+    inquiry: &Document,
+    keys: Option<Document>,
+) -> Result<Vec<Document>, AppError> {
     let ids = inquiry
         .get_array("draft_history")
         .cloned()
         .unwrap_or_default();
     let mut filter = state.scope();
     filter.insert("_id", doc! {"$in":ids});
-    let records: Vec<Document> = state
+    Ok(state
         .collection("order_drafts")
         .find(filter)
+        .projection(keys.unwrap_or_default())
         .sort(doc! {"draft_version":-1})
-        .limit(50)
         .await?
         .try_collect()
-        .await?;
+        .await?)
+}
+
+async fn saved_version(
+    state: &AppState,
+    inquiry: &Document,
+    id: ObjectId,
+) -> Result<Document, AppError> {
+    let listed = inquiry
+        .get_array("draft_history")
+        .is_ok_and(|ids| ids.contains(&bson::Bson::ObjectId(id)));
+    let mut filter = state.scope();
+    filter.extend(
+        doc! {"_id":id,"inquiry_id":inquiry.get_object_id("_id").map_err(|_| AppError::Data)?},
+    );
+    match state.collection("order_drafts").find_one(filter).await? {
+        Some(record) if listed => Ok(record),
+        _ => Err(AppError::NotFound),
+    }
+}
+
+pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Value>, AppError> {
+    let snapshot = snapshot(state, inquiry).await?;
+    let mut records = versions(state, inquiry, None).await?;
+    let id = inquiry.get_object_id("_id").map_err(|_| AppError::Data)?;
+    let bills = checkout::version_bills(state, id, &records).await?;
+    records.truncate(50);
     let mut result = Vec::new();
     for mut record in records {
+        // OPEN versions can still be edited and sent; SENT and CANCELLED ones are kept and only cloned.
+        let closed = checkout::closed(&record, &bills);
+        let bill = record
+            .get_object_id("_id")
+            .ok()
+            .and_then(|id| bills.get(&id))
+            .map(|bill| json!({"status":bill.get_str("status").ok(),"alex_order_id":bill.get_str("alex_order_id").ok(),
+                "submitted_by":bill.get_str("submitted_by").ok(),"created_at":bill.get_datetime("created_at").ok().map(|at| at.timestamp_millis())}));
+        record.remove("cancelled_by_id");
         let stale = record.get_str("context_hash").ok() != Some(&snapshot.hash)
             || snapshot.pending
             || !summary_matches(&record, inquiry);
@@ -512,9 +569,79 @@ pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Val
         let mut value = serde_json::to_value(record).map_err(|_| AppError::Data)?;
         value["stale"] = json!(stale);
         value["redacted"] = json!(redacted);
+        value["state"] = json!(closed.unwrap_or("OPEN"));
+        value["bill"] = json!(bill);
         result.push(value);
     }
     Ok(result)
+}
+
+// Cancelling is final: the version stays as a record that can only be cloned. A bill already in
+// Alex is not cancelled there.
+pub async fn cancel(
+    state: &AppState,
+    id: ObjectId,
+    draft_id: ObjectId,
+    actor: &Actor,
+) -> Result<Value, AppError> {
+    let inquiry = inquiry(state, id).await?;
+    saved_version(state, &inquiry, draft_id).await?;
+    let mut filter = state.scope();
+    filter.extend(doc! {"_id":draft_id,"inquiry_id":id,"cancelled_at":{"$exists":false}});
+    let now = DateTime::now();
+    let updated = state
+        .collection("order_drafts")
+        .update_one(
+            filter,
+            doc! {"$set":{"cancelled_at":now,"cancelled_by":&actor.name,"cancelled_by_id":&actor.id,"updated_at":now}},
+        )
+        .await?;
+    if updated.matched_count != 1 {
+        return Err(AppError::DraftClosed);
+    }
+    Ok(json!({"cancelled":true}))
+}
+
+pub async fn copy(
+    state: &AppState,
+    id: ObjectId,
+    draft_id: ObjectId,
+    input: CopyInput,
+) -> Result<Document, AppError> {
+    let inquiry = inquiry(state, id).await?;
+    let source = saved_version(state, &inquiry, draft_id).await?;
+    if references_withdrawn(&source, &snapshot(state, &inquiry).await?) {
+        return Err(AppError::ContextChanged);
+    }
+    if input.mode == CopyMode::Edit {
+        let versions = versions(state, &inquiry, Some(checkout::version_keys())).await?;
+        if checkout::closed(
+            &source,
+            &checkout::version_bills(state, id, &versions).await?,
+        )
+        .is_some()
+        {
+            return Err(AppError::DraftClosed);
+        }
+    }
+    let fields: DraftFields = bson::from_document(
+        source
+            .get_document("result")
+            .and_then(|result| result.get_document("fields"))
+            .map_err(|_| AppError::Data)?
+            .clone(),
+    )
+    .map_err(|_| AppError::Data)?;
+    let request = PrepareInput {
+        request_id: input.request_id,
+        expected_version: input.expected_version,
+        summary: source.get_str("admin_summary").unwrap_or("").to_string(),
+        image_event_ids: vec![],
+        fields: Some(fields),
+        confirmed_fields: vec![],
+        context_hash: Some(input.context_hash),
+    };
+    enqueue_job(state, id, request, true, Some(draft_id)).await
 }
 
 pub async fn visible_media(

@@ -6,15 +6,15 @@ import CustomerExtractButton from "./customer-extract-button";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
 type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number };
-type Submission = { _id: string; status: string; alex_order_id?: string; group: Group; submitted_by: string; created_at: string; verification?: string };
-type Data = { source_hash: string | null; draft_version?: number; groups: Group[]; missing: { field: string; code?: string }[]; has_conflicts: boolean; context_error?: string; submissions: Submission[]; customer: { name: string | null; phone: string | null; address: string | null }; notes: string | null; order_response_configured: boolean };
+type Submission = { _id: string; status: string; alex_order_id?: string; group: Group; submitted_by: string; created_at: string; verification?: string; draft_version?: number | null; queue_accepted?: boolean };
+type Data = { source_hash: string | null; draft_version?: number; closed?: "SENT" | "CANCELLED" | null; groups: Group[]; missing: { field: string; code?: string }[]; has_conflicts: boolean; context_error?: string; submissions: Submission[]; customer: { name: string | null; phone: string | null; address: string | null }; notes: string | null; order_response_configured: boolean };
 type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
-type Review = { review_id: string; group: Group; customer: { name: string; phone: string; address: string }; catalog_rental_satang: number; catalog_deposit_satang: number; rental_fee_satang: number; deposit_satang: number; shipping_fee_satang: number; rental_discount_satang: number; deposit_discount_satang: number; receiving_method: string; rental_payment_method: string; bail_payment_method: string; notes: string; expires_at: string };
+type Review = { review_id: string; group: Group; queue: Omit<Availability, "checked_at">; customer: { name: string; phone: string; address: string }; catalog_rental_satang: number; catalog_deposit_satang: number; rental_fee_satang: number; deposit_satang: number; shipping_fee_satang: number; rental_discount_satang: number; deposit_discount_satang: number; receiving_method: string; rental_payment_method: string; bail_payment_method: string; notes: string; expires_at: string };
 const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const nights = (pickup: string, returned: string) => Math.max(1, Math.round((Date.parse(returned) - Date.parse(pickup)) / 86_400_000));
 const badges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
 const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
-const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่ง / รอตรวจผล", SUBMIT_UNKNOWN: "ต้องตรวจผลใน Alex", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
+const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่งเข้า Alex", SUBMIT_UNKNOWN: "ส่งแล้ว · ยังไม่ได้เลขออเดอร์", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
 const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
 
 // The bill as an invoice: one order from the cart and the latest draft, checked and reviewed before it is sent to Alex.
@@ -27,7 +27,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const [birth, setBirth] = useState(""); const [notes, setNotes] = useState("");
   const [freePromotion, setFreePromotion] = useState(false); const [discountPromotion, setDiscountPromotion] = useState(false);
   const [availability, setAvailability] = useState<Availability | null>(null);
-  const [review, setReview] = useState<Review | null>(null); const [confirmed, setConfirmed] = useState(false);
+  const [review, setReview] = useState<Review | null>(null); const [confirmed, setConfirmed] = useState(false); const [acceptQueue, setAcceptQueue] = useState(false);
   const [busy, setBusy] = useState(false); const [extracting, setExtracting] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
   // Lines carry Alex color codes (P); show the shop's color names next to them.
@@ -35,18 +35,21 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const [resolveId, setResolveId] = useState(""); const [resolveOrder, setResolveOrder] = useState(""); const [resolveChecked, setResolveChecked] = useState(false);
   const working = disabled || busy || extracting || loading;
   const group = data?.groups.find(group => group.key === groupKey);
-  const pending = data?.submissions.some(submission => ["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status));
-  const ready = !!group && !!data?.source_hash && !data.has_conflicts;
+  // Only a send in progress blocks a new bill; bills of other versions do not, the queue check covers stock.
+  const pending = data?.submissions.some(submission => submission.status === "SUBMITTING");
+  const ready = !!group && !!data?.source_hash && !data.has_conflicts && !data.closed;
   // The form locks for these reasons; their notices sit at the top, so the one that applies is repeated by the button.
-  const locked = pending ? "บิลก่อนหน้ายังรอตรวจผลใน Alex — เลื่อนขึ้นไปกด “บันทึกผลที่ตรวจจาก Alex” ก่อน ระบบล็อกไว้กันบิลซ้ำ"
+  const locked = data?.closed ? `ร่างเวอร์ชันนี้${data.closed === "SENT" ? "ส่งเข้า Alex แล้ว" : "ถูกยกเลิกแล้ว"} — ถ้าจะส่งอีกครั้ง ให้โคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า`
+    : pending ? "มีบิลกำลังส่งเข้า Alex อยู่ รอสักครู่แล้วกดโหลดผลล่าสุด"
     : data?.has_conflicts ? "ร่างล่าสุดมีข้อมูลขัดกัน — ปิดหน้านี้ ตรวจร่าง ติ๊ก “ยืนยันข้อมูลที่กรอกครบในร่างนี้” แล้วกดบันทึกร่างเป็นเวอร์ชันใหม่"
     : disabled ? "รอให้งานที่ค้างอยู่เสร็จก่อน (AI กำลังอ่านสรุป/บันทึกร่าง หรือมีสรุปที่ยังไม่ได้บันทึก)" : "";
+  const queueBlocked = !!review && review.queue.state !== "AVAILABLE";
   const catalogRental = group?.lines.reduce((sum, line) => sum + line.rental_fee_satang * line.quantity, 0) ?? 0;
   const catalogDeposit = group?.lines.reduce((sum, line) => sum + line.deposit_satang * line.quantity, 0) ?? 0;
   const satang = (value: string) => Math.round(Number(value || 0) * 100);
   const endpoint = `/api/inquiries/${inquiryId}/checkout`;
 
-  function invalidate() { setReview(null); setConfirmed(false); }
+  function invalidate() { setReview(null); setConfirmed(false); setAcceptQueue(false); }
   function changeGroup(group: Group, commonNotes = data?.notes ?? "") {
     setGroupKey(group.key); setAvailability(null); invalidate();
     setShipping(group.quoted_shipping_fee_satang === null ? group.fulfillment_method === "store_pickup" ? "0" : "" : String(group.quoted_shipping_fee_satang / 100));
@@ -77,19 +80,24 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   async function prepare() {
     if (!ready || working) return;
     setBusy(true); setError(""); invalidate();
-    try { setReview(await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
-      source_hash: data!.source_hash, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address,
-      shipping_fee_satang: satang(shipping),
-      receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: birth || null, notes,
-      use_free_item_promotion: freePromotion, use_discount_promotion: discountPromotion,
-    }) })); }
+    try {
+      const value = await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
+        source_hash: data!.source_hash, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address,
+        shipping_fee_satang: satang(shipping),
+        receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: birth || null, notes,
+        use_free_item_promotion: freePromotion, use_discount_promotion: discountPromotion,
+      }) });
+      // The review checks the queue too; show it on the items.
+      setReview(value); setAvailability({ ...value.queue, checked_at: new Date().toISOString() });
+    }
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
   async function submit() {
-    if (!review || !confirmed || working) return;
+    if (!review || !confirmed || (queueBlocked && !acceptQueue) || working) return;
     setBusy(true); setError("");
-    try { await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: review.review_id, confirmed: true }) }); await refresh(); invalidate(); }
-    catch (cause) { fail(cause); } finally { setBusy(false); }
+    try { await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: review.review_id, confirmed: true, accept_queue: queueBlocked && acceptQueue }) }); await refresh(); invalidate(); }
+    // A queue that became booked after the review needs a fresh review before it can be accepted.
+    catch (cause) { fail(cause); if (cause instanceof ApiError && cause.code === "QUEUE_BLOCKED") { invalidate(); refresh().catch(() => {}); } } finally { setBusy(false); }
   }
   async function resolve(outcome: "created" | "not_created") {
     if (!resolveId || !resolveChecked || working) return;
@@ -110,8 +118,9 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     </header>
     {loading && <p role="status" className="muted">กำลังโหลดรายการและประวัติส่งบิล…</p>}
     {error && <div className="notice warning" role="alert">{error}<button type="button" className="text-button" disabled={working} onClick={() => refresh().catch(fail)}>โหลดผลล่าสุด</button></div>}
-    {data?.submissions.map(submission => <div key={submission._id} className={`notice ${submission.status === "CONFIRMED" ? "success" : submission.status === "NOT_CREATED" ? "info" : "warning"}`}><strong>{submission.status === "CONFIRMED" && <span aria-hidden="true">✅ </span>}{states[submission.status] ?? submission.status}</strong><p>{submission.group.lines.map(line => line.code).join(", ")} · {day(submission.group.pickup_date)} – {day(submission.group.return_date)}</p>{submission.alex_order_id && <p>เลขออเดอร์ Alex: <code>{submission.alex_order_id}</code></p>}
-      {["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status) && <><p>ตรวจผลใน Alex ก่อน ระบบกันการสร้างบิลใหม่ไว้เพื่อป้องกันบิลซ้ำ</p><button type="button" className="text-button" onClick={() => { setResolveId(submission._id); setResolveChecked(false); setResolveOrder(""); }}>บันทึกผลที่ตรวจจาก Alex</button>
+    {data?.closed && <div className={`notice ${data.closed === "SENT" ? "success" : "warning"}`}><strong>{data.closed === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชันนี้ส่งเข้า Alex แล้ว</> : "ร่างเวอร์ชันนี้ถูกยกเลิกแล้ว"}</strong><p>ส่งซ้ำไม่ได้ ถ้าต้องการส่งอีกครั้งให้โคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า</p></div>}
+    {data?.submissions.map(submission => <div key={submission._id} className={`notice ${submission.status === "CONFIRMED" ? "success" : submission.status === "SUBMITTING" ? "warning" : "info"}`}><strong>{submission.status === "CONFIRMED" && <span aria-hidden="true">✅ </span>}{submission.draft_version ? `ร่าง v${submission.draft_version} · ` : ""}{states[submission.status] ?? submission.status}</strong><p>{submission.group.lines.map(line => line.code).join(", ")} · {day(submission.group.pickup_date)} – {day(submission.group.return_date)}{submission.queue_accepted && " · ส่งทั้งที่ติดคิว"}</p>{submission.alex_order_id && <p>เลขออเดอร์ Alex: <code>{submission.alex_order_id}</code></p>}
+      {["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status) && <><p>{submission.status === "SUBMITTING" ? "กำลังรอ Alex ตอบกลับ ถ้าค้างนานให้ตรวจใน Alex แล้วบันทึกผล" : "ระบบอ่านเลขออเดอร์จากผลตอบกลับไม่ได้ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ไว้ได้ (ไม่ล็อกการส่งเวอร์ชันอื่น)"}</p><button type="button" className="text-button" onClick={() => { setResolveId(submission._id); setResolveChecked(false); setResolveOrder(""); }}>บันทึกผลที่ตรวจจาก Alex</button>
         {resolveId === submission._id && <div className="bill-resolve"><label>เลขออเดอร์ที่พบใน Alex<input value={resolveOrder} disabled={working} onChange={e => setResolveOrder(e.target.value)} /></label><label className="checkbox-row"><input type="checkbox" checked={resolveChecked} onChange={e => setResolveChecked(e.target.checked)} disabled={working} />ตรวจสถานะใน Alex ด้วยตัวเองแล้ว</label><button type="button" className="button secondary full" disabled={working || !resolveChecked || !resolveOrder.trim()} onClick={() => resolve("created")}>ยืนยันว่ามีออเดอร์นี้แล้ว</button><button type="button" className="text-button full" disabled={working || !resolveChecked || now - new Date(submission.created_at).getTime() < 120000} onClick={() => resolve("not_created")}>ตรวจแล้วว่าไม่ได้สร้างบิล</button><p className="muted small">กรณีไม่พบบิล ต้องรออย่างน้อย 2 นาทีแล้วตรวจ Alex ก่อนเปิดให้ส่งใหม่</p></div>}
       </>}
     </div>)}
@@ -172,9 +181,11 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     {review && <section className="invoice-confirm">
       <p><strong>พร้อมส่ง:</strong> วิธีมารับ {review.receiving_method} · ชำระค่าเช่า {review.rental_payment_method} · ค่าประกัน {review.bail_payment_method}</p>
       <p className="muted small">{expired ? "ใบตรวจหมดอายุแล้ว กรุณากดตรวจคิวและเตรียมบิลใหม่" : `ใบตรวจใช้ได้ถึง ${new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(review.expires_at))} น.`}</p>
-      {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ ระบบจะให้ตรวจผลใน Alex และบันทึกเลขออเดอร์ก่อนส่งรายการอื่น</p>}
+      {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ เวอร์ชันนี้จะขึ้นว่าส่งแล้วแต่ยังไม่มีเลขออเดอร์ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ภายหลังได้</p>}
+      {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul>
+        <label className="checkbox-row"><input type="checkbox" checked={acceptQueue} disabled={working} onChange={e => setAcceptQueue(e.target.checked)} />{review.queue.state === "UNAVAILABLE" ? "ทราบว่าติดคิว" : "ทราบว่ายังตรวจคิวไม่ได้"} ตกลงส่งออเดอร์เข้า Alex ต่อ</label></div>}
       <label className="checkbox-row"><input type="checkbox" checked={confirmed} disabled={working} onChange={e => setConfirmed(e.target.checked)} />ตรวจลูกค้า รายการ วันที่ ยอด และส่วนลดแล้ว ยืนยันสร้างออเดอร์จริงใน Alex</label>
-      <div className="invoice-actions"><button type="button" className="button secondary" disabled={working} onClick={invalidate}>แก้ไขข้อมูล</button><button type="button" className="button primary" disabled={working || !confirmed || !!pending || expired} onClick={submit}><span aria-hidden="true">🚀</span> {busy ? "กำลังส่งออเดอร์…" : "ยืนยันส่งออเดอร์เข้า Alex"}</button></div>
+      <div className="invoice-actions"><button type="button" className="button secondary" disabled={working} onClick={invalidate}>แก้ไขข้อมูล</button><button type="button" className="button primary" disabled={working || !confirmed || (queueBlocked && !acceptQueue) || !!pending || expired} onClick={submit}><span aria-hidden="true">🚀</span> {busy ? "กำลังส่งออเดอร์…" : "ยืนยันส่งออเดอร์เข้า Alex"}</button></div>
     </section>}
   </div>;
 }

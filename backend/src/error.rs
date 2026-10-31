@@ -81,6 +81,10 @@ pub enum AppError {
     BillNotReady,
     #[error("An Alex order exists or a submission requires manual verification")]
     BillPending,
+    #[error("This draft version was already sent to Alex or cancelled; clone it to continue")]
+    DraftClosed,
+    #[error("Some items are booked or the queue could not be checked; confirm to send anyway")]
+    QueueBlocked,
 }
 
 impl AppError {
@@ -116,6 +120,8 @@ impl AppError {
             Self::CatalogImagesUnavailable => "CATALOG_IMAGES_UNAVAILABLE",
             Self::BillNotReady => "BILL_NOT_READY",
             Self::BillPending => "BILL_PENDING",
+            Self::DraftClosed => "DRAFT_CLOSED",
+            Self::QueueBlocked => "QUEUE_BLOCKED",
             Self::Database(_) => "DATABASE_UNAVAILABLE",
             Self::Http(_) | Self::Io(_) | Self::Media(_) => "MEDIA_UNAVAILABLE",
             Self::Config(_) | Self::Data => "INTERNAL_ERROR",
@@ -146,7 +152,9 @@ impl IntoResponse for AppError {
             Self::AlexScope => StatusCode::FORBIDDEN,
             Self::ProductConflict => StatusCode::CONFLICT,
             Self::CatalogImagesUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::BillNotReady | Self::BillPending => StatusCode::CONFLICT,
+            Self::BillNotReady | Self::BillPending | Self::DraftClosed | Self::QueueBlocked => {
+                StatusCode::CONFLICT
+            }
             Self::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::AdminUnavailable | Self::HermesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::HermesFailed | Self::HermesToolsEnabled => StatusCode::BAD_GATEWAY,

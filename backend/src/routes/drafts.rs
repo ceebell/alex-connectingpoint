@@ -1,7 +1,7 @@
 use crate::{
     db::drafts,
     error::AppError,
-    models::draft::{PrepareInput, SummaryInput},
+    models::draft::{CopyInput, PrepareInput, SummaryInput},
     state::AppState,
 };
 use axum::{
@@ -86,6 +86,31 @@ pub async fn revise(
         Json(job_view(
             &drafts::enqueue(&state, id(&inquiry)?, input, true).await?,
         )?),
+    ))
+}
+
+pub async fn copy(
+    State(state): State<AppState>,
+    Path((inquiry, draft)): Path<(String, String)>,
+    input: Result<Json<CopyInput>, axum::extract::rejection::JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(job_view(
+            &drafts::copy(&state, id(&inquiry)?, id(&draft)?, input).await?,
+        )?),
+    ))
+}
+
+pub async fn cancel(
+    State(state): State<AppState>,
+    Path((inquiry, draft)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let actor = super::session::actor(&state, &headers);
+    Ok(Json(
+        drafts::cancel(&state, id(&inquiry)?, id(&draft)?, &actor).await?,
     ))
 }
 

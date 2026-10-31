@@ -206,6 +206,13 @@ async fn abandoned_submission_locks_recover_without_sending_and_keep_history() {
     let recovered = checkout::list(&state, id).await.unwrap();
     assert!(recovered["source_hash"].is_null());
     assert_eq!(recovered["submissions"][0]["status"], "SUBMIT_UNKNOWN");
+    // The recovered bill is recorded as unclear, and the lock no longer blocks other versions.
+    assert!(
+        !drafts::inquiry(&state, id)
+            .await
+            .unwrap()
+            .contains_key("alex_submission_id")
+    );
     // GET must be idempotent, and recovery must never invoke a write API.
     assert_eq!(
         checkout::list(&state, id).await.unwrap()["submissions"]
@@ -815,26 +822,19 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
             .get("token")
             .is_none()
     );
-    let another = request(
-        &state,
-        &format!("{base}/review"),
-        "POST",
-        review.clone(),
-        true,
-    )
-    .await
-    .1;
+    // A sent version is closed: it is not billed again (clone it instead).
+    assert_eq!(checkout::list(&state, id).await.unwrap()["closed"], "SENT");
     assert_eq!(
         request(
             &state,
-            &format!("{base}/submit"),
+            &format!("{base}/review"),
             "POST",
-            json!({"review_id":another["review_id"],"confirmed":true}),
+            review.clone(),
             true
         )
         .await
         .1["error"]["code"],
-        "BILL_PENDING"
+        "DRAFT_CLOSED"
     );
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
     // New dates make a new order for the same cart; an unclear Alex reply is never retried.
@@ -864,9 +864,15 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         StatusCode::UNPROCESSABLE_ENTITY
     );
     review["receiving_method"] = json!("มารับเอง");
-    let preview = request(&state, &format!("{base}/review"), "POST", review, true)
-        .await
-        .1;
+    let preview = request(
+        &state,
+        &format!("{base}/review"),
+        "POST",
+        review.clone(),
+        true,
+    )
+    .await
+    .1;
     catalog.mode.store(23, Ordering::SeqCst);
     let submit = json!({"review_id":preview["review_id"],"confirmed":true});
     let unknown = request(
@@ -886,6 +892,14 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         "SUBMIT_UNKNOWN"
     );
     assert_eq!(mock.orders.load(Ordering::SeqCst), 2);
+    // An unclear Alex reply no longer locks the inquiry; it marks only its own version as sent.
+    assert!(
+        !drafts::inquiry(&state, id)
+            .await
+            .unwrap()
+            .contains_key("alex_submission_id")
+    );
+    assert_eq!(checkout::list(&state, id).await.unwrap()["closed"], "SENT");
     let resolve = json!({"submission_id":unknown["_id"]["$oid"],"outcome":"not_created","verified_in_alex":true});
     assert_eq!(
         request(&state, &format!("{base}/resolve"), "POST", resolve, true)
@@ -901,10 +915,163 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         "CONFIRMED"
     );
     assert_eq!(mock.orders.load(Ordering::SeqCst), 2);
+    // Each version shows whether it was sent: v1 never was, v2 and v3 were.
+    let drafts_path = format!("/api/inquiries/{id}/drafts");
+    let listed = request(&state, &drafts_path, "GET", Value::Null, true)
+        .await
+        .1;
+    let states = |listed: &Value| {
+        listed["drafts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|draft| draft["state"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(states(&listed), ["SENT", "SENT", "OPEN"]);
+    assert_eq!(listed["drafts"][0]["bill"]["alex_order_id"], "alex-bill-2");
+    let version_id = |listed: &Value, number: i64| {
+        listed["drafts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|draft| draft["draft_version"] == number)
+            .unwrap()["_id"]["$oid"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (v1, v2) = (version_id(&listed, 1), version_id(&listed, 2));
+    let copy = |draft: &str, mode: &str, version: i64, hash: &Value| {
+        (
+            format!("/api/inquiries/{id}/drafts/{draft}/copy"),
+            json!({"request_id":format!("{mode}-{draft}"),"expected_version":version,"context_hash":hash,"mode":mode}),
+        )
+    };
+    // Edit picks up only a version that was never sent; clone duplicates any version.
+    let (path, body) = copy(&v2, "edit", 3, &listed["context_hash"]);
+    assert_eq!(
+        request(&state, &path, "POST", body, true).await.1["error"]["code"],
+        "DRAFT_CLOSED"
+    );
+    // Cloning v2 brings back the cart it was billed with, even after the cart was emptied.
+    let line = request(&state, &cart_path, "GET", Value::Null, true)
+        .await
+        .1["items"][0]
+        .clone();
+    request(
+        &state,
+        &format!("{cart_path}/item"),
+        "POST",
+        json!({"item_id":line["_id"]["$oid"],"expected_revision":line["revision"],"quantity":null}),
+        true,
+    )
+    .await;
+    assert!(
+        request(&state, &cart_path, "GET", Value::Null, true)
+            .await
+            .1["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let (path, body) = copy(&v2, "clone", 3, &listed["context_hash"]);
+    assert_eq!(
+        request(&state, &path, "POST", body, true).await.0,
+        StatusCode::ACCEPTED
+    );
+    let job = drafts::claim(&state).await.unwrap().unwrap();
+    draft_worker::process(&state, &job).await.unwrap();
+    let listed = request(&state, &drafts_path, "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(states(&listed), ["OPEN", "SENT", "SENT", "OPEN"]);
+    assert_eq!(
+        listed["drafts"][0]["result"]["fields"]["rental"]["pickup_date"],
+        "2026-11-04"
+    );
+    assert!(
+        listed["drafts"][0]["result"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let restored = request(&state, &cart_path, "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(restored["items"][0]["product_item_id"], "item-1");
+    // A booked queue is shown on the review; it is sent only when the admin accepts it.
+    catalog.mode.store(20, Ordering::SeqCst);
+    let data = checkout::list(&state, id).await.unwrap();
+    assert!(data["closed"].is_null());
+    review["source_hash"] = data["source_hash"].clone();
+    review["group_key"] = data["groups"][0]["key"].clone();
+    review["receiving_method"] = json!("Flash");
+    review["shipping_fee_satang"] = json!(4000);
+    let preview = request(
+        &state,
+        &format!("{base}/review"),
+        "POST",
+        review.clone(),
+        true,
+    )
+    .await
+    .1;
+    assert_eq!(preview["queue"]["state"], "UNAVAILABLE");
+    let blocked = request(
+        &state,
+        &format!("{base}/submit"),
+        "POST",
+        json!({"review_id":preview["review_id"],"confirmed":true}),
+        true,
+    )
+    .await;
+    assert_eq!(blocked.0, StatusCode::CONFLICT);
+    assert_eq!(blocked.1["error"]["code"], "QUEUE_BLOCKED");
+    assert_eq!(mock.orders.load(Ordering::SeqCst), 2);
+    let preview = request(&state, &format!("{base}/review"), "POST", review, true)
+        .await
+        .1;
+    let accepted = request(
+        &state,
+        &format!("{base}/submit"),
+        "POST",
+        json!({"review_id":preview["review_id"],"confirmed":true,"accept_queue":true}),
+        true,
+    )
+    .await
+    .1;
+    assert_eq!(accepted["status"], "CONFIRMED");
+    assert_eq!(accepted["queue_accepted"], true);
+    assert_eq!(accepted["queue"]["state"], "UNAVAILABLE");
+    assert_eq!(accepted["draft_version"], 4);
+    assert_eq!(mock.orders.load(Ordering::SeqCst), 3);
+    // Cancelling is final and works on any version; a cancelled version is no longer edited.
+    let cancel = format!("/api/inquiries/{id}/drafts/{v1}/cancel");
+    assert_eq!(
+        request(&state, &cancel, "POST", Value::Null, true).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(&state, &cancel, "POST", Value::Null, true).await.1["error"]["code"],
+        "DRAFT_CLOSED"
+    );
+    let listed = request(&state, &drafts_path, "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(states(&listed), ["SENT", "SENT", "SENT", "CANCELLED"]);
+    assert!(listed["drafts"][3].get("cancelled_by_id").is_none());
+    let (path, body) = copy(&v1, "edit", 4, &listed["context_hash"]);
+    assert_eq!(
+        request(&state, &path, "POST", body, true).await.1["error"]["code"],
+        "DRAFT_CLOSED"
+    );
     text_event(&state, "after-bill", "ขอแก้ข้อมูลภายหลัง", 3).await;
     let stale = checkout::list(&state, id).await.unwrap();
     assert!(stale["source_hash"].is_null());
-    assert_eq!(stale["submissions"].as_array().unwrap().len(), 2);
+    // Two sent bills, the queue-blocked attempt that never left, and the accepted resend.
+    assert_eq!(stale["submissions"].as_array().unwrap().len(), 4);
+    assert_eq!(stale["submissions"][0]["draft_version"], 4);
     state.db.drop().await.unwrap();
     server.abort();
 }

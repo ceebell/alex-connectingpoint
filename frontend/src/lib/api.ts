@@ -4,7 +4,9 @@ export class ApiError extends Error {
 
 const errors: Record<string, string> = {
   BILL_NOT_READY: "บิลยังไม่พร้อม ตรวจข้อมูลลูกค้า วันเช่า รายการสินค้า และผลเช็คคิวล่าสุด",
-  BILL_PENDING: "มีบิลหรือคำขอส่งไป Alex ที่ต้องตรวจผลก่อน กรุณาตรวจรายการบิลด้านบน",
+  BILL_PENDING: "มีบิลกำลังส่งเข้า Alex อยู่ รอสักครู่แล้วกดโหลดผลล่าสุด",
+  DRAFT_CLOSED: "เวอร์ชันนี้ส่งเข้า Alex แล้วหรือถูกยกเลิก แก้หรือส่งซ้ำไม่ได้ กดโคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า",
+  QUEUE_BLOCKED: "Alex แจ้งว่าสินค้าติดคิวหรือตรวจคิวไม่ได้ กรุณาเตรียมบิลใหม่ แล้วติ๊กยืนยันส่งทั้งที่ติดคิว",
   ALEX_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่าบัญชี Alex กรุณาติดต่อผู้ดูแลระบบ",
   ALEX_FAILED: "อ่านแค็ตตาล็อก Alex ไม่สำเร็จ กรุณาลองใหม่หรือตรวจบัญชีกับผู้ดูแลระบบ",
   ALEX_SCOPE_DENIED: "บัญชี Alex ไม่มีสิทธิ์ในร้านหรือสาขาที่เลือก",
@@ -85,7 +87,10 @@ export type CartItem = { _id: string; product_item_id: string; branch_id: string
 export type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
-export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[]; date_options?: DateOption[] } };
+// OPEN versions can be edited and sent; SENT (a bill reached Alex or may have) and CANCELLED ones are only cloned.
+export type VersionState = "OPEN" | "SENT" | "CANCELLED";
+export type VersionBill = { status: string; alex_order_id: string | null; submitted_by: string | null; created_at: number | null };
+export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[]; date_options?: DateOption[] }; state?: VersionState; bill?: VersionBill | null; cancelled_at?: string; cancelled_by?: string; copied_from?: string; cart?: { product_item_id: string; candidate: Candidate; quantity: number }[] };
 // Pickup/return pairs the AI read from images; the admin picks one for the order.
 export type DateOption = { pickup_date: string | null; return_date: string | null; label: string };
 export type Job = { id: string; status: string; error_code: string | null };

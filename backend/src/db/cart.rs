@@ -4,6 +4,7 @@ use crate::{
     error::AppError,
     models::{
         cart::{AddInput, UpdateInput},
+        checkout::Group,
         customer::Actor,
         product::{Candidate, valid_id, valid_quantity},
     },
@@ -36,6 +37,78 @@ pub fn candidate(record: &Document) -> Result<Candidate, AppError> {
             .clone(),
     )
     .map_err(|_| AppError::Data)
+}
+
+// The cart as saved with a draft version, so that version can be picked up or cloned later.
+pub fn snapshot(records: &[Document]) -> Vec<Document> {
+    records
+        .iter()
+        .map(|record| {
+            let mut line = Document::new();
+            for key in ["product_item_id", "branch_id", "candidate", "quantity"] {
+                if let Some(value) = record.get(key) {
+                    line.insert(key, value.clone());
+                }
+            }
+            line
+        })
+        .collect()
+}
+
+// Versions saved before carts were kept with them: a sent one still has its products in the bill.
+pub fn from_bill(group: &Group) -> Result<Vec<Document>, AppError> {
+    group
+        .lines
+        .iter()
+        .map(|line| {
+            let candidate = Candidate {
+                product_item_id: line.product_item_id.clone(),
+                code: line.code.clone(),
+                name: line.name.clone(),
+                color: line.color.clone(),
+                size: line.size.clone(),
+                rental_fee_satang: Some(line.rental_fee_satang),
+                deposit_satang: Some(line.deposit_satang),
+                image_url: line.image_url.clone(),
+                score: None,
+            };
+            Ok(
+                doc! {"product_item_id":&line.product_item_id,"branch_id":&group.branch_id,
+                "candidate":bson::to_document(&candidate).map_err(|_| AppError::Data)?,"quantity":line.quantity},
+            )
+        })
+        .collect()
+}
+
+// Puts a saved version's cart back. Prices are checked against Alex again when the bill is prepared.
+pub async fn replace(
+    state: &AppState,
+    inquiry_id: ObjectId,
+    lines: &[Document],
+    added_by: &str,
+) -> Result<(), AppError> {
+    let mut filter = state.scope();
+    filter.insert("inquiry_id", inquiry_id);
+    let collection = state.collection("cart_items");
+    collection.delete_many(filter).await?;
+    let now = DateTime::now();
+    let records: Vec<Document> = lines
+        .iter()
+        .take(MAX_LINES)
+        .map(|line| {
+            let mut record = state.scope();
+            record.extend(line.clone());
+            record.extend(
+                doc! {"_id":ObjectId::new(),"inquiry_id":inquiry_id,"revision":1_i64,
+                "added_by":added_by,"created_at":now,"updated_at":now},
+            );
+            record
+        })
+        .collect();
+    if !records.is_empty() {
+        collection.insert_many(records).await?;
+    }
+    Ok(())
 }
 
 pub async fn list(state: &AppState, inquiry_id: ObjectId) -> Result<Value, AppError> {

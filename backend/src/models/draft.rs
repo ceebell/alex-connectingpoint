@@ -159,6 +159,23 @@ pub struct PrepareInput {
     pub context_hash: Option<String>,
 }
 
+// Edit picks up a version that was never sent; clone duplicates any version. Both save it as a new version.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopyInput {
+    pub request_id: String,
+    pub expected_version: i64,
+    pub context_hash: String,
+    pub mode: CopyMode,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyMode {
+    Edit,
+    Clone,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryInput {
@@ -415,6 +432,18 @@ pub fn valid_date(date: &str) -> bool {
     (1900..=2199).contains(&year) && day >= 1 && day <= days
 }
 
+// Models often collapse runs of spaces or drop emoji variation selectors when quoting bill text
+// such as "ค่าเช่า  600  บาท", so quotes are compared with those differences removed.
+fn quote_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !matches!(c, '\u{fe0e}' | '\u{fe0f}' | '\u{200b}'..='\u{200d}'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn validate_evidence(
     result: &DraftResult,
     sources: &BTreeMap<String, String>,
@@ -447,16 +476,21 @@ pub fn validate_evidence(
     {
         return Err(AppError::Validation("Invalid date options"));
     }
+    let texts: BTreeMap<_, _> = sources
+        .iter()
+        .map(|(key, text)| (key, quote_text(text)))
+        .collect();
     let mut covered = BTreeSet::new();
     for item in &result.evidence {
         let key = format!("{}:{}", item.source_type, item.source_ref);
-        let Some(source) = sources.get(&key) else {
+        let Some(source) = texts.get(&key) else {
             return Err(AppError::Validation("Unknown evidence source"));
         };
+        let quote = quote_text(&item.quote);
         if !values.contains_key(&item.field)
-            || item.quote.is_empty()
+            || quote.is_empty()
             || item.quote.len() > 4000
-            || (!images.contains(&key) && !source.contains(&item.quote))
+            || (!images.contains(&key) && !source.contains(&quote))
         {
             return Err(AppError::Validation(
                 "Evidence must quote a supplied source",
@@ -531,5 +565,36 @@ mod tests {
         assert!(validate_evidence(&result, &sources, &BTreeSet::new()).is_ok());
         result.evidence[0].source_ref = "another-inquiry".into();
         assert!(validate_evidence(&result, &sources, &BTreeSet::new()).is_err());
+    }
+
+    #[test]
+    fn evidence_quotes_ignore_collapsed_spaces_and_emoji_selectors() {
+        let sources = BTreeMap::from([(
+            "admin_summary:s1".into(),
+            "ค่าเช่า  600  บาท\n⚡\u{fe0f} จัดส่งชุด    : flash ฟรี".into(),
+        )]);
+        let mut fields = DraftFields::default();
+        fields.amounts.rental_fee_satang = Some(60_000);
+        let evidence = |quote: &str| Evidence {
+            field: "amounts.rental_fee_satang".into(),
+            source_type: "admin_summary".into(),
+            source_ref: "s1".into(),
+            quote: quote.into(),
+        };
+        let mut result = DraftResult {
+            fields,
+            evidence: vec![evidence("ค่าเช่า 600 บาท")],
+            conflicts: vec![],
+            questions: vec![],
+            date_options: vec![],
+        };
+        let images = BTreeSet::new();
+        assert!(validate_evidence(&result, &sources, &images).is_ok());
+        result.evidence = vec![evidence("⚡ จัดส่งชุด : flash ฟรี")];
+        assert!(validate_evidence(&result, &sources, &images).is_ok());
+        for quote in ["ค่าเช่า 700 บาท", "   ", "\u{fe0f}"] {
+            result.evidence = vec![evidence(quote)];
+            assert!(validate_evidence(&result, &sources, &images).is_err());
+        }
     }
 }

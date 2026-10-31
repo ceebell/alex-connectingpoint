@@ -1,7 +1,10 @@
 use crate::{
-    db::drafts,
+    db::{cart, checkout, drafts},
     error::AppError,
-    models::draft::{DraftResult, Evidence, PrepareInput, valid_date, validate_evidence},
+    models::{
+        checkout::Group,
+        draft::{DraftResult, Evidence, PrepareInput, valid_date, validate_evidence},
+    },
     state::AppState,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -74,6 +77,41 @@ fn lift_item_dates(value: &mut Value) {
     }
 }
 
+// The cart a copied version had: a sent version's bill lines (what Alex received), the current cart
+// for the unsent latest version, or else the cart saved with it. None keeps the current cart.
+async fn copied_cart(
+    state: &AppState,
+    inquiry: &Document,
+    source: ObjectId,
+) -> Result<Option<Vec<Document>>, AppError> {
+    let id = inquiry.get_object_id("_id").map_err(|_| AppError::Data)?;
+    let versions = drafts::versions(state, inquiry, Some(checkout::version_keys())).await?;
+    if let Some(bill) = checkout::version_bills(state, id, &versions)
+        .await?
+        .get(&source)
+    {
+        let group: Group = bson::from_bson(bill.get("group").cloned().ok_or(AppError::Data)?)
+            .map_err(|_| AppError::Data)?;
+        return cart::from_bill(&group).map(Some);
+    }
+    if inquiry.get_object_id("active_draft_id").ok() == Some(source) {
+        return Ok(None);
+    }
+    let mut filter = state.scope();
+    filter.extend(doc! {"_id":source,"inquiry_id":id});
+    let draft = state
+        .collection("order_drafts")
+        .find_one(filter)
+        .await?
+        .ok_or(AppError::Data)?;
+    Ok(draft.get_array("cart").ok().map(|lines| {
+        lines
+            .iter()
+            .filter_map(|line| line.as_document().cloned())
+            .collect()
+    }))
+}
+
 pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     let job_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let inquiry_id = job
@@ -96,6 +134,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             .clone(),
     )
     .map_err(|_| AppError::Data)?;
+    let copied = job.get_object_id("copied_from").ok();
     let inquiry = drafts::lock(state, job, input.expected_version).await?;
     if job.get_i64("summary_revision").unwrap_or(0) != drafts::summary_revision(&inquiry) {
         return Err(AppError::ContextChanged);
@@ -241,11 +280,13 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             for key in fields.iter().filter_map(|v| v.as_str()) {
                 if prior_values.get(key) == values.get(key) {
                     confirmed.insert(key.to_string());
-                } else if !(input.fields.is_some()
-                    && input
-                        .confirmed_fields
-                        .iter()
-                        .any(|confirmed| confirmed == key))
+                // A copy is the admin choosing another saved version, so its different values are not conflicts.
+                } else if copied.is_none()
+                    && !(input.fields.is_some()
+                        && input
+                            .confirmed_fields
+                            .iter()
+                            .any(|confirmed| confirmed == key))
                 {
                     result.conflicts.push(format!("ข้อมูลที่เคยยืนยันถูกเปลี่ยน: {key}"));
                 }
@@ -277,6 +318,13 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     {
         return Err(AppError::DraftConflict);
     }
+    // Each version keeps the cart it was saved with; a copy first puts its source version's cart back.
+    if let Some(source) = copied
+        && let Some(lines) = copied_cart(state, &inquiry, source).await?
+    {
+        cart::replace(state, inquiry_id, &lines, "คัดลอกจากร่างเวอร์ชันก่อน").await?;
+    }
+    let cart = cart::snapshot(&cart::items(state, inquiry_id).await?);
     let missing = result.fields.missing_fields();
     let workflow = if !result.conflicts.is_empty() {
         "NEEDS_REVIEW"
@@ -295,8 +343,11 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         "input_scope":"admin_inputs_only","catalog_lookup":catalog_lookup,
         "summary_revision":drafts::summary_revision(&inquiry),
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
-        "created_at":now,"updated_at":now},
+        "cart":cart,"created_at":now,"updated_at":now},
     );
+    if let Some(source) = copied {
+        draft.insert("copied_from", source);
+    }
     drafts::commit(state, job, input.expected_version, draft).await?;
     if let Some(analysis) = analysis
         && let Ok(updated) = analysis.get_datetime("updated_at")
@@ -450,6 +501,8 @@ pub async fn run(state: AppState, mut stop: watch::Receiver<bool>) {
                     let status = if matches!(error, AppError::ContextChanged) {
                         "STALE"
                     } else {
+                        // The reason is static text such as "Evidence must quote a supplied source".
+                        tracing::warn!(code = error.code(), reason = %error, "draft request failed");
                         "FAILED"
                     };
                     if drafts::finish(&state, &job, status, Some(error.code()))

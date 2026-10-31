@@ -79,6 +79,9 @@ pub struct ReviewInput {
 pub struct SubmitInput {
     pub review_id: String,
     pub confirmed: bool,
+    // The admin saw that some items are booked (or the queue could not be read) and sends anyway.
+    #[serde(default)]
+    pub accept_queue: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
