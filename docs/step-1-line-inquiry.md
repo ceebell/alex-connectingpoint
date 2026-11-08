@@ -16,7 +16,7 @@ Backend นี้ทำข้อ 4 ของ `alex-line-hermes-mcp-workflow.md`:
 
 ตรวจ `GET http://127.0.0.1:8080/api/health` ได้ `{"status":"ok"}` ไฟล์ `.env` ถูกโหลดจาก root ผ่าน dotenvy ไม่ต้องส่ง credentials ในคำสั่ง
 
-`LINE_DESTINATION_ID` คือ bot user ID ที่อยู่ใน webhook `destination` ไม่ใช่ channel ID ชื่อร้าน/ช่องทางใช้ค่าที่ server ตั้งไว้เท่านั้น หนึ่ง deployment รองรับหนึ่งร้านและหนึ่ง LINE channel หากต้องแยกหลายร้านให้ใช้ deployment และ credentials แยกกัน
+`LINE_DESTINATION_ID` คือ bot user ID ที่อยู่ใน webhook `destination` ตรวจค่าได้จาก `userId` ของ [Get bot info](https://developers.line.biz/en/reference/messaging-api/#get-bot-info) ไม่ใช่ channel ID, ID ของลูกค้า หรือ `Your user ID` ของผู้พัฒนาใน LINE Developers ร้านเดียวรับแชทจากลูกค้าหลายคนได้โดยไม่ต้องเพิ่ม ID ลูกค้าใน `.env` ระบบแยกบทสนทนาตาม `source.userId` ของผู้ส่ง ส่วน `ADMIN_LINE_USER_IDS` ใช้กำหนดสิทธิ์แอดมินเข้าหลังบ้านเท่านั้น ชื่อร้าน/ช่องทางใช้ค่าที่ server ตั้งไว้เท่านั้น หนึ่ง deployment รองรับหนึ่งร้านและหนึ่ง LINE channel หากต้องแยกหลายร้านให้ใช้ deployment และ credentials แยกกัน
 
 `runall.bat` ตรวจ config ก่อนเปิดบริการ เริ่ม MongoDB ในเครื่องตามพอร์ตของ `MONGODB_URI` และเปิด backend โดยใช้ `PORT` จาก `.env` หากยังไม่มี `frontend/package.json` จะข้าม frontend โดยไม่ต้องติดตั้ง Node.js/npm เมื่อเพิ่ม frontend แล้วจะเริ่มให้พร้อม proxy ไปยังพอร์ต backend ที่ตั้งไว้
 

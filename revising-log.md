@@ -4,6 +4,17 @@
 
 <!-- entries -->
 
+## 2026-11-09 00:44 — ตั้งค่า LINE OA ร้าน Arisa ให้รับแชทจากลูกค้าหลายคน
+- **คำอธิบาย:** ใช้ข้อมูลจาก `prompts/arisa.md` ตั้งค่า OA `Arisa.Rental` (`@186pdmsc`) โดยตรวจ token กับ LINE Get bot info จริง ผู้ใช้ยืนยันว่าต้องการรับลูกค้าหลายคนภายในร้านเดียว โค้ดเดิมแยกบทสนทนาตาม `source.userId` อยู่แล้ว ไม่ต้องตั้ง ID ลูกค้าใน env
+- **โฟลเดอร์ root**
+  - `.env` — แก้: อัปเดต `LINE_CHANNEL_ACCESS_TOKEN` จากไฟล์ต้นทาง และ `LINE_DESTINATION_ID` จาก bot `userId` ที่ LINE ตอบกลับ; ตรวจว่า channel ID/secret ตรงกับต้นทางแล้ว คง shop ID และค่าอื่นเดิม เพิ่มคำอธิบายว่า destination คือ ID บอต ไม่ใช่ ID ลูกค้าหรือผู้พัฒนา; ไฟล์นี้ไม่เข้า Git
+  - `.env.example` — แก้: อธิบายการรับลูกค้าหลายคน และวิธีเลือก bot destination ให้ถูกต้อง
+  - `.gitignore` — แก้: กัน `prompts/arisa.md` และ `prompts/image-2.png` ที่มี credentials จริงออกจาก Git
+- **โฟลเดอร์ `docs/`**
+  - `step-1-line-inquiry.md` — แก้: อธิบาย bot destination, การแยกบทสนทนาของลูกค้าหลายคน และแยกความหมายจากสิทธิ์แอดมิน `ADMIN_LINE_USER_IDS`
+- **ผลตรวจสอบ:** LINE Get bot info ตอบสำเร็จและยืนยันชื่อ OA; ตรวจ credentials ตรงกับต้นทาง, ไม่มี env key ซ้ำ, ไม่มี credentials Arisa ในไฟล์ config/docs ที่เข้า Git; `runall.bat -Check`, `git diff --check` และการตรวจ ignore ผ่าน ไม่ได้แก้ source จึงไม่ต้อง build release หรือรันชุดทดสอบ backend/frontend และยังไม่ได้ทดสอบ webhook/แชทจริง
+- **การนำไปใช้:** local ตั้ง `DEV_BACKEND_MODE=remote` จึงต้องอัปเดต `LINE_CHANNEL_ACCESS_TOKEN` และ `LINE_DESTINATION_ID` ใน `.env` ของ Ubuntu ด้วย แล้วรัน `sudo bash ./docker-deploy.sh --full-stack` จาก `~/alex-connectingpoint`; งานนี้ยังไม่ได้แก้ server หรือ deploy
+
 ## 2026-10-31 01:04 — เตรียมร่างจากสรุปบิลที่มีช่องว่างซ้อนไม่ติด VALIDATION_ERROR อีก
 - **คำอธิบาย:** สรุปบิลครบ (ชื่อ/ที่อยู่/เบอร์, รายการชุด, ค่าเช่า 600, ค่าประกัน 200, วันรับ–คืน) และมีรูปแนบ แต่ยังได้ "ข้อมูลไม่ผ่านการตรวจสอบ ตรวจวันที่ จำนวน เงิน หรือหลักฐาน แล้วลองใหม่" สาเหตุที่น่าจะเป็นที่สุด: backend ตรวจว่า quote ใน evidence ของ AI ต้องเป็น substring ที่ตรงตัวอักษรกับสรุป แต่บิลมีช่องว่างซ้อน (`ค่าเช่า  600  บาท`, `จัดส่งชุด    :`, `ลูกค้ารับชุด :     16,17`) และ emoji ที่มี variation selector (`⚡️`) พอ AI ยุบเหลือเว้นวรรคเดียว ทั้งร่างจะถูกปฏิเสธ อีกทั้ง worker ไม่ log เหตุผล จึงรู้แค่ code
 - **โฟลเดอร์ `backend/src/`**
