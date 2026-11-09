@@ -66,6 +66,8 @@ export default function AdminWorkspace() {
   const [mobilePanel, setMobilePanel] = useState<"inquiries" | "chat" | "draft">("inquiries");
   const [messages, setMessages] = useState<LineEvent[]>([]);
   const messagesRef = useRef<LineEvent[]>([]);
+  const readPending = useRef(new Set<string>());
+  const lastReadMessage = useRef("");
   const [oaStatus, setOaStatus] = useState<OaStatus>({ state: "NOT_CONFIGURED" });
   const [nextMessage, setNextMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -272,6 +274,30 @@ export default function AdminWorkspace() {
     };
   }, [selected, session]);
 
+  useEffect(() => {
+    if (!selected || !session || loading || document.hidden) return;
+    const mobile = window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)");
+    if (mobile.matches && mobilePanel !== "chat") return;
+    const seen = [...messages].reverse().find(message => !message.withdrawn && message.sender_role !== "admin" && message.direction !== "outbound" && ["message", "postback"].includes(message.payload?.type ?? ""));
+    if (!seen) return;
+    const key = `${selected}:${seen._id}`;
+    if (lastReadMessage.current === key || readPending.current.has(key)) return;
+    let cancelled = false;
+    readPending.current.add(key);
+    api<{ unread: boolean; line_read_status: string }>(`/api/inquiries/${selected}/read`, { method: "POST", body: JSON.stringify({ message_id: seen._id }) }).then(result => {
+      lastReadMessage.current = key;
+      if (cancelled) return;
+      setInquiries(previous => previous.map(inquiry => inquiry._id === selected && inquiry.last_incoming_message_id === seen._id ? { ...inquiry, unread: result.unread } : inquiry));
+      if (result.line_read_status === "TOKEN_UNAVAILABLE" && seen.payload?.type === "message") setError("อ่านใน Alex แล้ว แต่ข้อความนี้ไม่มีข้อมูลสำหรับส่งสถานะอ่านแล้วไป LINE");
+    }).catch(cause => {
+      if (!cancelled) {
+        if (cause instanceof ApiError && cause.status === 401) setSession(null);
+        else setError(errorText(cause));
+      }
+    }).finally(() => { readPending.current.delete(key); });
+    return () => { cancelled = true; };
+  }, [selected, session, messages, mobilePanel, loading]);
+
   async function login(event: FormEvent) {
     event.preventDefault(); setLoginBusy(true); setLoginError("");
     try {
@@ -413,7 +439,11 @@ export default function AdminWorkspace() {
     <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">โหลดข้อมูลล่าสุด</span></button></div></header>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
       <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
-        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
+        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
+          <div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div>
+          <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title="ยังไม่ได้อ่านใน Alex"><span className="sr-only">ยังไม่ได้อ่านใน Alex</span></span>}</div>
+          {(inquiry.order_id || (inquiry.draft_version ?? 0) > 0) && <div className="section-caption">{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div>}
+        </button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>

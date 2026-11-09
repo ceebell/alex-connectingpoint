@@ -51,6 +51,17 @@ pub async fn redact_withdrawn(state: &AppState, records: &mut [Document]) -> Res
     Ok(())
 }
 
+pub fn hide_read_tokens(records: &mut [Document]) {
+    for record in records {
+        if let Ok(payload) = record.get_document_mut("payload") {
+            payload.remove("markAsReadToken");
+            if let Ok(message) = payload.get_document_mut("message") {
+                message.remove("markAsReadToken");
+            }
+        }
+    }
+}
+
 pub async fn claim(state: &AppState) -> Result<Option<Document>, AppError> {
     let now = DateTime::now();
     let mut filter = state.scope();

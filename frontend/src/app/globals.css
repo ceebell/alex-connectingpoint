@@ -2,6 +2,7 @@
 @import "../components/order-cart.css";
 @import "../components/rental-summary.css";
 @import "../components/invoice.css";
+@import "../components/inquiry-list.css";
 @theme {
   --font-sans: var(--font-mitr), sans-serif;
   --color-primary: #3b82f6;

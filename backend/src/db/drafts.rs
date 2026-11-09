@@ -138,8 +138,11 @@ pub async fn snapshot(state: &AppState, inquiry: &Document) -> Result<Snapshot, 
         }));
     }
     let content = Value::Array(content);
+    // Preserve existing context hashes while keeping LINE read tokens out of AI inputs.
+    let context_hash = hash(&content)?;
+    events::hide_read_tokens(&mut records);
     Ok(Snapshot {
-        hash: hash(&content)?,
+        hash: context_hash,
         events: records,
         pending,
     })

@@ -144,6 +144,7 @@ pub async fn list(
             );
         }
     }
+    crate::db::inbox::decorate(&state, &mut inquiries).await?;
     Ok(Json(inquiries))
 }
 
@@ -154,6 +155,7 @@ pub async fn events(
     let mut events = page(&state, "line_events", query).await?;
     // Suppress unsent content immediately, even while the purge worker is waiting.
     crate::db::events::redact_withdrawn(&state, &mut events).await?;
+    crate::db::events::hide_read_tokens(&mut events);
     Ok(Json(events))
 }
 
@@ -196,6 +198,7 @@ pub async fn context(
         }
         visible.push(message);
     }
+    crate::db::events::hide_read_tokens(&mut visible);
     Ok(Json(
         serde_json::json!({"inquiry":inquiry, "batches":inquiries::batches(visible, state.config.burst_ms), "next":next}),
     ))

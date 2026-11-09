@@ -3,6 +3,7 @@ mod cart;
 mod checkout;
 mod customers;
 mod drafts;
+mod inbox;
 mod mcp;
 mod oa_sync;
 mod products;
@@ -83,6 +84,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/draft-requests/{id}", get(drafts::job))
         .route("/api/inquiries", get(admin::list))
         .route("/api/inquiries/{id}/context", get(admin::context))
+        .route("/api/inquiries/{id}/read", post(inbox::mark_read))
         .route("/api/conversations/{id}/inquiries", post(admin::create))
         .route("/api/line/events", get(admin::events))
         .route("/api/line/users", get(users::list))

@@ -3,6 +3,7 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  LINE_READ_FAILED: "ส่งสถานะอ่านแล้วไป LINE ไม่สำเร็จ ระบบจะลองอีกครั้งเมื่อโหลดแชท",
   BILL_NOT_READY: "บิลยังไม่พร้อม ตรวจข้อมูลลูกค้า วันเช่า รายการสินค้า และผลเช็คคิวล่าสุด",
   BILL_PENDING: "มีบิลกำลังส่งเข้า Alex อยู่ รอสักครู่แล้วกดโหลดผลล่าสุด",
   DRAFT_CLOSED: "เวอร์ชันนี้ส่งเข้า Alex แล้วหรือถูกยกเลิก แก้หรือส่งซ้ำไม่ได้ กดโคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า",
@@ -62,7 +63,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return normalize(value) as T;
 }
 
-export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; last_activity_at?: string; draft_version?: number; order_id?: string; customer?: Customer };
+export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; last_activity_at?: string; last_message_preview?: string; last_incoming_message_id?: string; unread?: boolean; draft_version?: number; order_id?: string; customer?: Customer };
 export type Customer = { display_name?: string | null; picture_url?: string | null };
 export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string }; postback?: { data: string } } };
 // delivery_provider holds one of RECEIVING_METHODS when fulfillment is delivery.

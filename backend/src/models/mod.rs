@@ -2,6 +2,7 @@ pub mod cart;
 pub mod checkout;
 pub mod customer;
 pub mod draft;
+pub mod inbox;
 pub mod line;
 pub mod oa_sync;
 pub mod outbound;

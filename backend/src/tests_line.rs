@@ -15,6 +15,23 @@ struct MockLine {
     accepted: Arc<Mutex<HashSet<String>>>,
     failed_once: Arc<Mutex<HashSet<String>>>,
     profiles: Arc<Mutex<Vec<String>>>,
+    reads: Arc<Mutex<Vec<String>>>,
+}
+
+async fn mark_read(
+    AxumState(mock): AxumState<MockLine>,
+    headers: HeaderMap,
+    AxumJson(body): AxumJson<Value>,
+) -> Response {
+    if headers["authorization"] != "Bearer test-only-token" {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let token = body["markAsReadToken"].as_str().unwrap().to_string();
+    mock.reads.lock().await.push(token.clone());
+    if token == "fail-read-once" && mock.failed_once.lock().await.insert(token) {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    AxumJson(json!({})).into_response()
 }
 
 async fn profile(
@@ -90,6 +107,7 @@ async fn mock_line() -> (String, MockLine) {
         .route("/oauth2/v2.1/token", post(token))
         .route("/oauth2/v2.1/verify", post(verify))
         .route("/v2/bot/message/push", post(push))
+        .route("/v2/bot/chat/markAsRead", post(mark_read))
         .route("/v2/bot/profile/{user}", axum::routing::get(profile))
         .with_state(mock.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -644,5 +662,246 @@ async fn mongo_stickers_and_images_are_sent_with_line_limits() {
         })
         .collect();
     assert_eq!(kinds, vec!["text", "sticker", "image"]);
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn inbox_previews_unread_and_line_read_receipts_are_scoped_and_race_safe() {
+    let (base, mock) = mock_line().await;
+    let mut cfg = line_config(&base);
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    for (name, at, token) in [
+        ("read-a", 1000, "read-token-a"),
+        ("read-b", 2000, "fail-read-once"),
+    ] {
+        let mut incoming = event(name, "Uread", at);
+        incoming.message.as_mut().unwrap()["markAsReadToken"] = json!(token);
+        incoming.message.as_mut().unwrap()["text"] = json!(format!("Preview {name}"));
+        events::persist(&state, &incoming).await.unwrap();
+    }
+    drain(&state).await;
+    let records = all(&state, "line_events").await;
+    let a = records
+        .iter()
+        .find(|m| m.get_str("event_id").unwrap() == "read-a")
+        .unwrap()
+        .get_object_id("_id")
+        .unwrap();
+    let b = records
+        .iter()
+        .find(|m| m.get_str("event_id").unwrap() == "read-b")
+        .unwrap()
+        .get_object_id("_id")
+        .unwrap();
+    let id = all(&state, "inquiries").await[0]
+        .get_object_id("_id")
+        .unwrap();
+    let path = format!("/api/inquiries/{id}/read");
+    let (_, inbox) = request(&state, "/api/inquiries", "GET", Value::Null, true).await;
+    assert_eq!(inbox[0]["last_message_preview"], "Preview read-b");
+    assert_eq!(inbox[0]["unread"], true);
+    assert_eq!(
+        request(
+            &state,
+            &path,
+            "POST",
+            json!({"message_id":a.to_hex()}),
+            false
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, read) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"message_id":a.to_hex()}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read["unread"], true); // The newer message was not visible in the request snapshot.
+    assert_eq!(read["line_read_status"], "SYNCED");
+    let (status, failure) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"message_id":b.to_hex()}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(failure["error"]["code"], "LINE_READ_FAILED");
+    assert_eq!(
+        request(&state, "/api/inquiries", "GET", Value::Null, true)
+            .await
+            .1[0]["unread"],
+        true
+    );
+    let (_, read) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"message_id":b.to_hex()}),
+        true,
+    )
+    .await;
+    assert_eq!(read["unread"], false);
+    assert_eq!(read["line_read_status"], "SYNCED");
+    let (_, read) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"message_id":b.to_hex()}),
+        true,
+    )
+    .await;
+    assert_eq!(read["line_read_status"], "ALREADY_READ");
+    assert_eq!(
+        *mock.reads.lock().await,
+        vec!["read-token-a", "fail-read-once", "fail-read-once"]
+    );
+    assert!(mock.pushes.lock().await.is_empty());
+    for uri in [
+        format!("/api/inquiries/{id}/context"),
+        "/api/line/events".to_string(),
+        "/api/line/users/Uread/messages".to_string(),
+        format!("/api/inquiries/{id}/drafts"),
+    ] {
+        let (status, body) = request(&state, &uri, "GET", Value::Null, true).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!body.to_string().contains("markAsReadToken"));
+        assert!(!body.to_string().contains("read-token-a"));
+    }
+    let mut c = event("read-c", "Uread", 2000); // Same millisecond; the event ID resolves the boundary.
+    c.message.as_mut().unwrap()["id"] = json!("different-c");
+    c.message.as_mut().unwrap()["markAsReadToken"] = json!("read-token-c");
+    events::persist(&state, &c).await.unwrap();
+    drain(&state).await;
+    assert_eq!(
+        request(&state, "/api/inquiries", "GET", Value::Null, true)
+            .await
+            .1[0]["unread"],
+        true
+    );
+    assert_eq!(
+        request(
+            &state,
+            &path,
+            "POST",
+            json!({"message_id":b.to_hex()}),
+            true
+        )
+        .await
+        .1["unread"],
+        true
+    );
+    let c_id = all(&state, "line_events")
+        .await
+        .into_iter()
+        .find(|m| m.get_str("event_id").unwrap() == "read-c")
+        .unwrap()
+        .get_object_id("_id")
+        .unwrap();
+    assert_eq!(
+        request(
+            &state,
+            &path,
+            "POST",
+            json!({"message_id":c_id.to_hex()}),
+            true
+        )
+        .await
+        .1["unread"],
+        false
+    );
+    events::persist(&state, &event("old-late", "Uread", 1500))
+        .await
+        .unwrap();
+    drain(&state).await;
+    assert_eq!(
+        request(&state, "/api/inquiries", "GET", Value::Null, true)
+            .await
+            .1[0]["unread"],
+        false
+    );
+    events::persist(&state, &event("legacy", "Uread", 3000))
+        .await
+        .unwrap();
+    drain(&state).await;
+    let legacy = all(&state, "line_events")
+        .await
+        .into_iter()
+        .find(|m| m.get_str("event_id").unwrap() == "legacy")
+        .unwrap()
+        .get_object_id("_id")
+        .unwrap();
+    let (_, read) = request(
+        &state,
+        &path,
+        "POST",
+        json!({"message_id":legacy.to_hex()}),
+        true,
+    )
+    .await;
+    assert_eq!(read["unread"], false);
+    assert_eq!(read["line_read_status"], "TOKEN_UNAVAILABLE");
+    // Suppress withdrawn content before its worker has purged the original event.
+    media::tombstone(&state, "1003000").await.unwrap();
+    let (_, inbox) = request(&state, "/api/inquiries", "GET", Value::Null, true).await;
+    assert_ne!(
+        inbox[0]["last_incoming_message_id"]["$oid"],
+        legacy.to_hex()
+    );
+    assert_eq!(
+        request(
+            &state,
+            &path,
+            "POST",
+            json!({"message_id":legacy.to_hex()}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let mut other = state.clone();
+    let mut cfg = (*state.config).clone();
+    cfg.shop_id = "other-shop".into();
+    other.config = Arc::new(cfg);
+    assert_eq!(
+        request(
+            &other,
+            &path,
+            "POST",
+            json!({"message_id":a.to_hex()}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    for bad in [json!({}), json!({"message_id":"bad"})] {
+        assert_eq!(
+            request(&state, &path, "POST", bad, true).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/inquiries/{}/read", ObjectId::new()),
+            "POST",
+            json!({"message_id":a.to_hex()}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
     state.db.drop().await.unwrap();
 }

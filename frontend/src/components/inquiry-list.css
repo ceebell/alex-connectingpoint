@@ -1,0 +1,28 @@
+.customer-row .customer-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.inquiry-card .inquiry-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+  text-align: left;
+}
+
+.inquiry-unread-dot {
+  display: block;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--color-success);
+}

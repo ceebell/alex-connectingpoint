@@ -4,6 +4,7 @@ pub mod checkout;
 pub mod customers;
 pub mod drafts;
 pub mod events;
+pub mod inbox;
 pub mod indexes;
 pub mod inquiries;
 pub mod media;

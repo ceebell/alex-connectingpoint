@@ -4,6 +4,27 @@
 
 <!-- entries -->
 
+## 2026-11-09 15:44 — เพิ่มข้อความตัวอย่างและจุดเขียวอ่านแชท พร้อมส่งอ่านแล้วไป LINE
+- **คำอธิบาย:** ผู้ใช้ขอให้การ์ดลูกค้าแสดงข้อความแทนรหัสเรื่อง ลบป้ายรับเรื่อง และมีจุดเขียวด้านขวา โดยยืนยันให้สถานะอิงการอ่านใน Alex เป็นหลักและส่งอ่านแล้วไป LINE ไม่ต้องซิงก์การเปิดอ่านจาก OA Manager กลับมา ใช้แนวทาง skill `ui-ux-pro-max` ตรวจหน้าจอและข้อความสำหรับ screen reader
+- **โฟลเดอร์ `backend/src/`**
+  - `db/inbox.rs` — เพิ่ม: ดึงข้อความล่าสุดของแต่ละเรื่องแบบ batch จากข้อความขาเข้า/ขาออก แสดงข้อความจริงหรือประเภทสื่อ จำกัดความยาว ระบุคำตอบแอดมินด้วยคุณ และตัดข้อความที่ unsend ตั้งแต่ tombstone ก่อน worker ลบเนื้อหา; คำนวณ unread เทียบจุดอ่านร่วมของบทสนทนา และส่ง `POST /v2/bot/chat/markAsRead` ด้วย token ที่เก็บฝั่ง server
+  - `models/inbox.rs`, `routes/inbox.rs` — เพิ่ม: API `POST /api/inquiries/{id}/read` รับเฉพาะ ID ข้อความที่โหลดเห็นแล้ว ตรวจรูปแบบและสิทธิ์แยกร้าน/ช่องทาง ไม่ข้ามไปอ่านข้อความใหม่ที่เข้าทีหลัง และคืนสถานะ LINE/ข้อความที่ยังไม่อ่าน
+  - `db/mod.rs`, `models/mod.rs`, `routes/mod.rs` — แก้: ลงทะเบียนโมดูลและ route ภายใต้ admin session/token และการตรวจ X-Admin-Request เดิม
+  - `routes/admin.rs`, `routes/users.rs`, `db/events.rs`, `db/drafts.rs` — แก้: เพิ่ม preview/unread ในรายการและซ่อน read token จาก API/ข้อมูลที่ส่งต่อ AI โดยคง context hash เดิม เพื่อไม่ทำให้ร่างค้างเปลี่ยนสถานะเพียงเพราะซ่อน token
+  - `tests_line.rs` — แก้: เพิ่ม LINE mock และ integration test ครอบคลุมสถานะอ่าน ข้อความที่เข้าระหว่างอ่าน ขอบเขต timestamp เดียวกัน การ retry/idempotency ความล้มเหลวของ LINE ข้อความเก่าไม่มี token การซ่อน token และ unsend รวมถึง tenant/auth/input validation; unit test ใน `db/inbox.rs` ตรวจประเภทสื่อ ข้อความขาออก และความยาวภาษาไทย
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx` — แก้: แสดงข้อความล่าสุดสองบรรทัดแทนรหัสเรื่อง เอาป้ายรับเรื่องออก เพิ่มจุดเขียวด้านขวาพร้อมข้อความสำหรับ screen reader ค้นจากข้อความตัวอย่างได้ และส่งอ่านแล้วเฉพาะแชทที่แสดงอยู่ ไม่ทำเครื่องหมายขณะหน้าเว็บซ่อนหรือแถบแชทมือถือปิด
+  - `components/inquiry-list.css`, `app/globals.css` — เพิ่ม/แก้: รูปแบบข้อความตัวอย่างตัดบรรทัดและจุดเขียวด้วย semantic success color รองรับจอแคบ
+  - `lib/api.ts` — แก้: เพิ่มข้อมูล preview/unread/ข้อความขาเข้าล่าสุด และคำอธิบายกรณีส่งสถานะอ่านไป LINE ไม่สำเร็จ
+- **โฟลเดอร์ `docs/`**
+  - `step-1-line-inquiry.md` — แก้: อธิบาย API อ่าน เงื่อนไข Chat ของ LINE ความหมายสถานะ กรณีไม่มี token และขอบเขตการอ่านที่อิง Alex ตามที่ผู้ใช้ยืนยัน
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — แก้: Linux/amd64 release `rel-20261109084235-567eed1a6d1d` พร้อม checksum/metadata
+  - `frontend-linux/` — แก้: Linux standalone release `front-20261109083832-8838dd8c765c` พร้อม static/runtime/checksum
+- **ผลตรวจสอบ:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test -- --include-ignored` ผ่านครบ 49 กรณี; frontend lint ผ่านและ lint/build ใน local Docker ผ่าน; ตรวจ backend ELF/checksum และ frontend 2,108 checksum กับ metadata local Linux/amd64 ผ่าน ไม่มี `.env` ใน release
+- **ทดสอบหน้าจอ:** ใช้ไฟล์ Linux release จริงกับ WebKit ผ่าน 6 ขนาดจอ รวม iPhone 15 Pro Max แนวตั้ง/แนวนอน ตรวจ preview และป้ายที่เอาออก จุดเขียวหายเมื่อเปิดแชท ข้อความใหม่ยังมีจุดเขียวขณะอยู่ในแถบออเดอร์ และไม่ล้างสรุป/ข้อความที่พิมพ์ไว้ ตัวตรวจและภาพอยู่ใน `data/mobile-responsive-check/` ที่ถูก ignore ใช้เฉพาะ API จำลอง ไม่เปิด dev app/SSH tunnel หรือส่งสถานะอ่านให้ลูกค้าจริงระหว่างทดสอบ
+- **ตรวจ LINE จริงแบบอ่านอย่างเดียว:** OA Arisa เปิด Chat และ markAsReadMode=manual ข้อความล่าสุดที่ตรวจ 91 ข้อความมี read token ครบ โดยไม่แสดงค่า token และไม่แก้ config/OA browser connector ยังต้อง deploy บน Ubuntu เพื่อทดสอบการอ่านกับ LINE จริง
+
 ## 2026-11-09 15:25 — แก้รายชื่อลูกค้าไม่อัปเดตอัตโนมัติและตรวจพอร์ต Caddy
 - **คำอธิบาย:** ผู้ใช้พบข้อมูลไม่ตรงกับ OA Manager และยืนยันว่าจะตอบจากหน้าหลังบ้านเป็นหลัก พบว่ารายชื่อโหลดเฉพาะตอนเข้าหน้า/กดรีเฟรช เรียงตามเวลาเปิดเรื่อง และการ์ดไม่ได้แสดงเวลาข้อความล่าสุด จึงทำให้แชทที่รับข้อความแล้วดูเก่าหรือไม่ปรากฏจนกว่าจะโหลดหน้าใหม่
 - **โฟลเดอร์ `backend/src/`**

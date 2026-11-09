@@ -56,6 +56,7 @@ pub async fn messages(
     let mut records = users::messages(&state, &user_id, cursor(query.after)?).await?;
     let next = truncate_page(&mut records, 200);
     events::redact_withdrawn(&state, &mut records).await?;
+    events::hide_read_tokens(&mut records);
     Ok(Json(
         serde_json::json!({"line_user_id":user_id, "messages":records, "next":next}),
     ))
