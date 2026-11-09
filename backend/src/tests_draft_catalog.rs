@@ -375,7 +375,7 @@ async fn poster_titles_are_searched_as_alex_categories_by_code() {
                     .any(|question| question
                         .as_str()
                         .unwrap()
-                        .contains("ไม่พบ Lyn Dress ในประเภท Haatiya"))
+                        .contains("ไม่พบ Lyn Dress ในแบรนด์ Haatiya"))
             );
         } else {
             // An inactive or unknown category is never used; the title is searched as a name.
@@ -388,7 +388,7 @@ async fn poster_titles_are_searched_as_alex_categories_by_code() {
                     .any(|question| question
                         .as_str()
                         .unwrap()
-                        .contains("ไม่พบประเภท Unknown line"))
+                        .contains("ไม่พบแบรนด์ Unknown line"))
             );
         }
         state.db.drop().await.unwrap();

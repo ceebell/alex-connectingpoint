@@ -4,6 +4,25 @@
 
 <!-- entries -->
 
+## 2026-11-09 10:25 — ใช้ชื่อแบรนด์แทนประเภทสินค้า และเตรียม release สำหรับรันบน server
+- **คำอธิบาย:** ผู้ใช้ยืนยันว่า `category` ของ Alex หมายถึงชื่อแบรนด์ จึงปรับข้อความหน้าจอและคำสั่ง AI ให้เข้าใจตรงกัน พร้อมยืนยันแนวทางต่อไปให้ส่งผ่าน Git และรันแอปบน Ubuntu เท่านั้น
+- **โฟลเดอร์ root**
+  - `AGENTS.md` — แก้: บันทึกว่า Windows ใช้แก้โค้ด ตรวจสอบ และ build Linux release; เปิด dev stack หรือ SSH tunnel เฉพาะเมื่อผู้ใช้ขอโดยตรง
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/order-cart.tsx` — แก้: ตัวกรอง ตัวเลือกทั้งหมด ป้ายรายการที่ลูกค้าขอ และคำแนะนำค้นหาใช้คำว่าแบรนด์
+  - `lib/api.ts` — แก้: ชื่อฟิลด์ `category` บนหน้าจอและคำอธิบายรายการรหัสใช้ความหมายแบรนด์
+- **โฟลเดอร์ `backend/src/`**
+  - `order_draft_prompt.txt` — แก้: ระบุว่า `category` คือชื่อแบรนด์ เช่น Haatiya, nina, Vappen แยกจากชนิดเสื้อผ้าและชื่อชุด ให้ AI เรียกแบรนด์ในคำถามภาษาไทย และจับคู่กับ category code ของ Alex ตามเดิม
+  - `draft_catalog.rs` — แก้: ข้อความแจ้งไม่พบแบรนด์และผลค้นหาทั้งแบรนด์ รวมถึงคำอธิบายการจับคู่
+  - `models/draft.rs` — แก้: อธิบายความหมายของฟิลด์แบรนด์
+  - `tests_draft_catalog.rs` — แก้: ข้อความที่คาดหวังในการทดสอบค้นหาสินค้าตามแบรนด์
+- **โฟลเดอร์ `docs/`**
+  - `step-3-products.md` — แก้: อธิบายแบรนด์ ชื่อชุด และการใช้ category code ใน API
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — แก้: Linux backend release `rel-20261109032225-7b53bc402a54` พร้อม checksum และ metadata
+  - `frontend-linux/` — แก้: Linux standalone release `front-20261109032435-4296b6fafb6b` พร้อม static files, runtime dependencies, checksum และ metadata
+- **ผลตรวจสอบ:** `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test -- --include-ignored` ผ่าน 46/46 ด้วย MongoDB ชั่วคราวที่ปิดแล้ว; `npm run lint` และ `npm run build` ผ่าน; `build-all.bat` ผ่านบน local Docker หลังเริ่ม engine ใหม่ ตรวจ ELF/sha256/prompt ของ backend และ checksum frontend 2,108 ไฟล์รวมป้ายแบรนด์ผ่าน ไม่พบ `.env` ใน release และไม่พบ credentials ที่ตั้งค่าไว้ใน source/docs ที่แก้; `git diff --check` ผ่าน ไม่มีการเปิด dev frontend/backend หรือ SSH tunnel ยังไม่ได้ทดสอบ AI กับ Hermes จริงหรือ deploy release นี้บน server
+
 ## 2026-11-09 09:42 — แก้ rungit รับข้อความ commit ที่พิมพ์พร้อมเครื่องหมายคำพูด
 - **คำอธิบาย:** ผู้ใช้รัน `rungit.bat` แล้วพิมพ์ข้อความ commit พร้อมเครื่องหมายคำพูดในช่องถาม ทำให้ `git commit -m` ได้ argument ผิดและล้มด้วย empty pathspec; อีกจุดเตือนว่าไม่มี `revising-log.md` ทั้งที่ไฟล์อยู่ใน staged changes
 - **โฟลเดอร์ root**

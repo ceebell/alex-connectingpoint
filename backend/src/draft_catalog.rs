@@ -30,7 +30,7 @@ fn evidence(result: &mut DraftResult, field: &str, reference: &str, value: Value
 }
 
 fn identity_matches(item: &DraftItem, candidate: &Candidate) -> bool {
-    // A category-only search is already narrowed to that product line by Alex.
+    // A category-only search is already narrowed to that brand by Alex.
     if item.product_code.is_none() && item.product_name.is_none() {
         return item.category.is_some();
     }
@@ -211,7 +211,7 @@ pub async fn enrich(
     let mut colors: Option<Vec<CodeName>> = None;
     for index in 0..result.fields.items.len() {
         let mut item = result.fields.items[index].clone();
-        // A poster title is an Alex category: resolve its code first, then search inside it.
+        // A poster title names a brand: resolve its Alex category code before searching.
         let category = if let Some(name) = item.category.clone() {
             if categories.is_none() {
                 categories = Some(
@@ -229,7 +229,7 @@ pub async fn enrich(
                 // An unknown category name may still be a product name, so search it as text.
                 question(
                     result,
-                    format!("ไม่พบประเภท {name} ใน Alex จึงค้นด้วยชื่อแทน กรุณาตรวจประเภทในส่วนค้นหาชุด"),
+                    format!("ไม่พบแบรนด์ {name} ใน Alex จึงค้นด้วยชื่อแทน กรุณาตรวจแบรนด์ในส่วนค้นหาชุด"),
                 );
                 item.product_name = item.product_name.or(Some(name));
                 item.category = None;
@@ -304,7 +304,7 @@ pub async fn enrich(
                     continue;
                 }
             };
-        // A bill line names a category and a search word ("Vappen / Lyn Dress - Yellow"). When the
+        // A bill line names a brand and a search word ("Vappen / Lyn Dress - Yellow"). When the
         // word finds nothing in that category, its items are offered for selection, never auto-filled.
         let mut whole_category = None;
         if let (Some(category), Some(wanted)) = (&category, input.query.clone())
@@ -379,7 +379,7 @@ pub async fn enrich(
             question(
                 result,
                 format!(
-                    "ไม่พบ {wanted} ในประเภท {category} จึงแสดงสินค้าในประเภทนี้ กรุณาเลือกสินค้ารายการ {} แล้วเพิ่มลงตะกร้า",
+                    "ไม่พบ {wanted} ในแบรนด์ {category} จึงแสดงสินค้าในแบรนด์นี้ กรุณาเลือกสินค้ารายการ {} แล้วเพิ่มลงตะกร้า",
                     index + 1
                 ),
             );

@@ -116,6 +116,7 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 
 ## 8. Docker / Deploy
 
+- **แนวทางการรันล่าสุด:** รันแอปบน Ubuntu server เท่านั้น เครื่อง Windows ใช้แก้โค้ด ตรวจสอบ และ build Linux release เพื่อส่งผ่าน Git ไม่เปิด dev stack หรือ SSH tunnel บน Windows เว้นแต่ผู้ใช้ขอโดยตรง
 - **นโยบายผู้ใช้ล่าสุด:** compile/build โปรแกรมบน local เท่านั้น Ubuntu ใช้ precompiled Linux release และ Dockerfile runtime ที่ COPY binary/standalone เข้า image ห้าม compile Rust หรือ npm build บน server
 - **ขั้นตอน deploy มาตรฐาน (ทุกครั้งที่แก้โค้ด):**
   1. Windows (local): build release เฉพาะส่วนที่แก้ แล้วส่งขึ้น Git
