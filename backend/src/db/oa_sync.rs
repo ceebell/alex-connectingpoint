@@ -139,6 +139,12 @@ pub async fn ingest(state: &AppState, batch: OaBatch) -> Result<Value, AppError>
             if existing.get_str("content_hash").ok() != Some(&hash) {
                 return Err(AppError::OaMessageConflict);
             }
+            super::inquiries::record_activity(
+                state,
+                inquiry,
+                DateTime::from_millis(message.sent_at_ms),
+            )
+            .await?;
             continue;
         }
         let now = DateTime::now();
@@ -163,6 +169,12 @@ pub async fn ingest(state: &AppState, batch: OaBatch) -> Result<Value, AppError>
             }
             Err(error) => return Err(error.into()),
         }
+        super::inquiries::record_activity(
+            state,
+            inquiry,
+            DateTime::from_millis(message.sent_at_ms),
+        )
+        .await?;
     }
     Ok(json!({"inserted":inserted,"duplicates":batch.messages.len()-inserted}))
 }

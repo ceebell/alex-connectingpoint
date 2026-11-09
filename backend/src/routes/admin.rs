@@ -70,6 +70,7 @@ fn object_id(value: &str) -> Result<ObjectId, AppError> {
 pub struct ListQuery {
     pub status: Option<String>,
     pub before: Option<String>,
+    pub before_at: Option<String>,
 }
 
 async fn page(
@@ -99,7 +100,13 @@ pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<Document>>, AppError> {
-    let mut inquiries = page(&state, "inquiries", query).await?;
+    let before = query.before.as_deref().map(object_id).transpose()?;
+    let before_at = query
+        .before_at
+        .as_deref()
+        .map(|at| at.parse::<i64>().map_err(|_| AppError::BadRequest))
+        .transpose()?;
+    let mut inquiries = inquiries::list(&state, query.status.as_deref(), before, before_at).await?;
     let ids: Vec<String> = inquiries
         .iter()
         .filter_map(|i| i.get_str("line_user_id").ok().map(String::from))
@@ -210,7 +217,7 @@ pub async fn create(
     let now = DateTime::now();
     inquiry.extend(doc! {"_id":ObjectId::new(), "conversation_id":conversation,
         "line_user_id":conversation_doc.get_str("line_user_id").ok(), "status":"RECEIVED", "mode":"ADMIN_ASSIST",
-        "created_at":now, "updated_at":now});
+        "created_at":now, "updated_at":now,"last_activity_at":now});
     state
         .collection("inquiries")
         .insert_one(inquiry.clone())

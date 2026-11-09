@@ -294,6 +294,13 @@ async fn mongo_end_to_end_inquiry_queue() {
     drain(&state).await;
     assert_eq!(all(&state, "inquiries").await.len(), 1);
     let inquiries = all(&state, "inquiries").await;
+    assert_eq!(
+        inquiries[0]
+            .get_datetime("last_activity_at")
+            .unwrap()
+            .timestamp_millis(),
+        4000
+    );
     let inquiry_id = inquiries[0].get_object_id("_id").unwrap();
     let path = format!("/api/inquiries/{inquiry_id}/context");
     let (status, context) = request(&state, &path, "GET", Value::Null, true).await;
@@ -726,5 +733,165 @@ async fn mongo_user_registry_and_chat_history() {
     let reconnected = AppState::connect((*state.config).clone()).await.unwrap();
     assert_eq!(all(&reconnected, "line_users").await.len(), 103);
     assert!(state.config.mongodb_db.starts_with("step1_test_"));
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn inbox_activity_backfill_order_and_snapshot_pagination_are_scoped() {
+    let mut cfg = config();
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let a = ObjectId::new();
+    let b = ObjectId::new();
+    let c = ObjectId::new();
+    for id in [a, b, c] {
+        let mut record = state.scope();
+        record.extend(
+            doc! {"_id":id,"status":if id == c {"CLOSED"} else {"RECEIVED"},
+            "created_at":DateTime::from_millis(2000),"updated_at":DateTime::from_millis(2000)},
+        );
+        state
+            .collection("inquiries")
+            .insert_one(record)
+            .await
+            .unwrap();
+    }
+    let foreign = ObjectId::new();
+    state
+        .collection("inquiries")
+        .insert_one(doc! {"_id":foreign,"shop_id":"another-shop",
+        "channel_id":"another-channel","status":"RECEIVED","created_at":DateTime::from_millis(1000),
+        "updated_at":DateTime::from_millis(1000)})
+        .await
+        .unwrap();
+    for (collection, inquiry, at, withdrawn) in [
+        ("line_events", a, 3000, false),
+        ("oa_messages", a, 5000, false),
+        ("outbound_messages", b, 4000, false),
+        ("line_events", a, 9000, true),
+    ] {
+        let mut record = state.scope();
+        record.extend(doc! {"_id":ObjectId::new(),"inquiry_id":inquiry,"event_id":format!("{collection}-{at}"),
+            "event_at":DateTime::from_millis(at),"status":"DONE","withdrawn":withdrawn,
+            "created_at":DateTime::from_millis(at),"updated_at":DateTime::from_millis(at)});
+        state
+            .collection(collection)
+            .insert_one(record)
+            .await
+            .unwrap();
+    }
+    crate::db::indexes::ensure(&state).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (status, listed) = request(&state, "/api/inquiries", "GET", Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed.as_array().unwrap().len(), 3);
+    for (index, id) in [a, b, c].iter().enumerate() {
+        assert_eq!(listed[index]["_id"]["$oid"], id.to_hex());
+    }
+    let record = state
+        .collection("inquiries")
+        .find_one(doc! {"_id":a})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record
+            .get_datetime("last_activity_at")
+            .unwrap()
+            .timestamp_millis(),
+        5000
+    );
+    assert!(
+        !state
+            .collection("inquiries")
+            .find_one(doc! {"_id":foreign})
+            .await
+            .unwrap()
+            .unwrap()
+            .contains_key("last_activity_at")
+    );
+    let filtered = request(
+        &state,
+        "/api/inquiries?status=CLOSED",
+        "GET",
+        Value::Null,
+        true,
+    )
+    .await
+    .1;
+    assert_eq!(filtered.as_array().unwrap().len(), 1);
+    assert_eq!(filtered[0]["_id"]["$oid"], c.to_hex());
+    // A moving cursor must not pull newer conversations into an already-paged boundary.
+    let d = ObjectId::new();
+    let mut record = state.scope();
+    record.extend(
+        doc! {"_id":d,"status":"RECEIVED","created_at":DateTime::from_millis(6000),
+        "updated_at":DateTime::from_millis(6000),"last_activity_at":DateTime::from_millis(6000)},
+    );
+    state
+        .collection("inquiries")
+        .insert_one(record)
+        .await
+        .unwrap();
+    inquiries::record_activity(&state, a, DateTime::from_millis(7000))
+        .await
+        .unwrap();
+    inquiries::record_activity(&state, a, DateTime::from_millis(1000))
+        .await
+        .unwrap();
+    let (_, page) = request(
+        &state,
+        &format!("/api/inquiries?before={a}&before_at=5000"),
+        "GET",
+        Value::Null,
+        true,
+    )
+    .await;
+    assert_eq!(page.as_array().unwrap().len(), 2);
+    assert_eq!(page[0]["_id"]["$oid"], b.to_hex());
+    assert_eq!(page[1]["_id"]["$oid"], c.to_hex());
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/inquiries?before={foreign}"),
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    for query in [
+        "before_at=5000".to_string(),
+        format!("before={a}&before_at=invalid"),
+    ] {
+        let (status, body) = request(
+            &state,
+            &format!("/api/inquiries?{query}"),
+            "GET",
+            Value::Null,
+            true,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    }
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let record = state
+        .collection("inquiries")
+        .find_one(doc! {"_id":a})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record
+            .get_datetime("last_activity_at")
+            .unwrap()
+            .timestamp_millis(),
+        7000
+    );
     state.db.drop().await.unwrap();
 }

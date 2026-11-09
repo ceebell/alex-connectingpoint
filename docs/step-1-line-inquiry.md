@@ -60,7 +60,7 @@ worker claim ด้วย atomic update และ lease 120 วินาที �
 | --- | --- |
 | `GET /api/line/users` | ทะเบียนผู้ใช้ล่าสุด 100 รายการ ตอบ `{users, next}`; อ่านต่อด้วย `?before=<next>` |
 | `GET /api/line/users/{line_user_id}/messages` | ประวัติข้อความและ postback ของผู้ใช้ สูงสุด 200 รายการ ตอบ `{line_user_id, messages, next}` เรียง `event_at`, `event_id`; อ่านต่อด้วย `?after=<next>` |
-| `GET /api/inquiries` | รายการ inquiry ล่าสุด 100 รายการ; filter `?status=RECEIVED`, cursor `?before=<ObjectId>` |
+| `GET /api/inquiries` | รายการ inquiry 100 รายการ เรียงตาม `last_activity_at` ของข้อความขาเข้า/ขาออกล่าสุด แล้วตาม `_id`; filter `?status=RECEIVED`; อ่านต่อด้วย `?before=<ObjectId>&before_at=<last_activity_at epoch milliseconds>` เพื่อคงจุดแบ่งหน้าแม้ลูกค้าส่งข้อความเพิ่ม (ยังรับ `before` เดี่ยวโดยใช้เวลาปัจจุบันของรายการนั้น) |
 | `GET /api/inquiries/{id}/context` | ข้อความเรียงตาม `event_at`, `event_id` และแบ่ง burst ตาม `LINE_BURST_WINDOW_MS` สูงสุด 200 ข้อความต่อหน้า; ใช้ `?after=<next>` อ่านต่อ |
 | `POST /api/conversations/{id}/inquiries` | เปิด inquiry ใหม่ของบทสนทนาเดิม |
 | `GET /api/line/events` | รายการเหตุการณ์ล่าสุด 100 รายการ; filter `?status=NEEDS_ADMIN` หรือ `FAILED`; cursor `?before=<ObjectId>` |
@@ -70,6 +70,8 @@ worker claim ด้วย atomic update และ lease 120 วินาที �
 | `GET /api/media/{id}` | อ่านรูปตามสิทธิ์; รูปหมดอายุหรือถูก unsend จะได้ 404 |
 
 ID และวันเวลาจาก BSON ใน JSON ใช้ Extended JSON เช่น `{"$oid":"..."}` และ `{"$date":"..."}`
+
+หน้าหลังบ้านตรวจรายชื่อลูกค้าและแชทที่เปิดอยู่ทุก 10 วินาทีขณะหน้านั้นแสดงอยู่ และตรวจทันทีเมื่อกลับมาที่หน้าเว็บ เวลาในการ์ดคือเวลาข้อความล่าสุด ไม่ใช่เวลาที่แก้ร่าง รายการที่โหลดเพิ่มและข้อความที่แอดมินพิมพ์ค้างไว้ยังอยู่เมื่อข้อมูลอัปเดต Backend เติม `last_activity_at` ของรายการเดิมจากข้อความที่บันทึกไว้เมื่อเริ่มระบบ ข้อความที่ตอบผ่านหน้าหลังบ้านจะถูกรวมด้วย; ข้อความแอดมินที่ตอบจาก OA Manager ต้องใช้ตัวเชื่อม OA เพิ่มเติม
 
 ตัวอย่างอ่าน inquiry โดยรับ token จาก environment ของเครื่องมือแอดมิน:
 

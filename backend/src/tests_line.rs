@@ -317,6 +317,8 @@ async fn mongo_replies_are_pushed_once_recorded_and_join_the_context() {
     assert_eq!(sent["message"]["delivery_status"], "SENT");
     assert_eq!(sent["message"]["line_message_id"], "sent-1");
     assert_eq!(sent["message"]["sender_name"], "internal-api");
+    let (_, inbox) = request(&state, "/api/inquiries", "GET", json!(null), true).await;
+    assert_eq!(inbox[0]["last_activity_at"], sent["message"]["event_at"]);
     assert_eq!(
         sent["message"]["payload"]["message"]["text"],
         "ได้ค่ะ ชุดว่างวันที่ 15"

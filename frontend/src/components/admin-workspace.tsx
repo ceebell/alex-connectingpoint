@@ -29,6 +29,11 @@ function clampDraftWidth(workspace: HTMLElement | null, width: number) {
 function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
   return [...new Map([...previous, ...incoming].map(message => [message._id, message])).values()].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime() || (a.event_id ?? a._id).localeCompare(b.event_id ?? b._id));
 }
+const inquiryActivity = (inquiry: Inquiry) => new Date(inquiry.last_activity_at ?? inquiry.created_at).getTime();
+function mergeInquiries(previous: Inquiry[], incoming: Inquiry[]) {
+  return [...new Map([...previous, ...incoming].map(inquiry => [inquiry._id, inquiry])).values()]
+    .sort((a, b) => inquiryActivity(b) - inquiryActivity(a) || b._id.localeCompare(a._id));
+}
 const time = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 const versionStates: Record<VersionState, [string, string]> = { OPEN: ["ยังไม่ส่ง", "open"], SENT: ["ส่งเข้า Alex แล้ว", "sent"], CANCELLED: ["ยกเลิกแล้ว", "cancelled"] };
 const statusLabels: Record<string, string> = { RECEIVED: "รับเรื่องแล้ว", READY_FOR_REVIEW: "รอตรวจร่าง", NEEDS_INFORMATION: "รอข้อมูลเพิ่ม", NEEDS_REVIEW: "มีข้อมูลขัดกัน", CLOSED: "ปิดเรื่อง", PENDING: "รอประมวลผล", PROCESSING: "AI กำลังเตรียมร่าง", DONE: "เสร็จแล้ว", STALE: "บริบทเปลี่ยนแล้ว", FAILED: "เตรียมร่างไม่สำเร็จ" };
@@ -157,10 +162,31 @@ export default function AdminWorkspace() {
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
-    api<Inquiry[]>("/api/inquiries").then(items => {
-      if (!cancelled) setInquiries(items);
-    }).catch(cause => { if (!cancelled) { if (cause instanceof ApiError && cause.status === 401) setSession(null); else setError(errorText(cause)); } });
-    return () => { cancelled = true; };
+    let loading = false;
+    async function load() {
+      if (cancelled || loading || document.hidden) return;
+      loading = true;
+      try {
+        const items = await api<Inquiry[]>("/api/inquiries");
+        if (!cancelled) setInquiries(previous => mergeInquiries(previous, items));
+      } catch (cause) {
+        if (!cancelled) {
+          if (cause instanceof ApiError && cause.status === 401) setSession(null);
+          else setError(errorText(cause));
+        }
+      } finally { loading = false; }
+    }
+    const resume = () => { void load(); };
+    resume();
+    const timer = setInterval(resume, 10000);
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
   }, [session, refresh]);
 
   useEffect(() => {
@@ -202,7 +228,7 @@ export default function AdminWorkspace() {
     let cancelled = false;
     let polling = false;
     async function poll() {
-      if (polling) return;
+      if (cancelled || polling || document.hidden) return;
       polling = true;
       try {
         const status = await api<OaStatus>("/api/line/oa-sync/status");
@@ -234,8 +260,16 @@ export default function AdminWorkspace() {
         }
       } finally { polling = false; }
     }
-    const timer = setInterval(poll, 10000); void poll();
-    return () => { cancelled = true; clearInterval(timer); };
+    const resume = () => { void poll(); };
+    const timer = setInterval(resume, 10000); resume();
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
   }, [selected, session]);
 
   async function login(event: FormEvent) {
@@ -355,7 +389,8 @@ export default function AdminWorkspace() {
   async function moreInquiries() {
     if (!inquiries.length) return;
     setBusy(true);
-    try { const more = await api<Inquiry[]>(`/api/inquiries?before=${inquiries[inquiries.length - 1]._id}`); setInquiries(previous => [...previous, ...more]); }
+    const before = inquiries[inquiries.length - 1];
+    try { const more = await api<Inquiry[]>(`/api/inquiries?before=${before._id}&before_at=${inquiryActivity(before)}`); setInquiries(previous => mergeInquiries(previous, more)); }
     catch (cause) { setError(errorText(cause)); } finally { setBusy(false); }
   }
 
@@ -378,7 +413,7 @@ export default function AdminWorkspace() {
     <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">โหลดข้อมูลล่าสุด</span></button></div></header>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
       <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
-        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
+        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>

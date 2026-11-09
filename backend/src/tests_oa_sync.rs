@@ -90,6 +90,13 @@ async fn oa_sync_uses_webhook_anchors_deduplicates_and_preserves_context_paginat
     );
     assert_eq!(all(&state, "oa_messages").await.len(), 1);
     assert_eq!(all(&state, "line_events").await.len(), 2);
+    assert_eq!(
+        all(&state, "inquiries").await[0]
+            .get_datetime("last_activity_at")
+            .unwrap()
+            .timestamp_millis(),
+        3000
+    );
     let mut conflict = body.clone();
     conflict["messages"][0]["text"] = json!("changed");
     assert_eq!(
@@ -142,6 +149,13 @@ async fn oa_sync_uses_webhook_anchors_deduplicates_and_preserves_context_paginat
         .unwrap();
     let boundary:OaBatch=serde_json::from_value(json!({"bot_id":"test-destination","chat_id":"oa-chat","anchor_message_ids":["1001000"],"messages":[{"id":"boundary","text":"Boundary reply","sent_at_ms":199500}]})).unwrap();
     oa_sync::ingest(&state, boundary).await.unwrap();
+    assert_eq!(
+        all(&state, "inquiries").await[0]
+            .get_datetime("last_activity_at")
+            .unwrap()
+            .timestamp_millis(),
+        199500
+    );
     let (_, page) = request(&state, &route, "GET", Value::Null, true).await;
     let items: Vec<&Value> = page["batches"]
         .as_array()

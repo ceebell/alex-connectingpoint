@@ -46,7 +46,8 @@ pub async fn link(
     let mut initial = state.scope();
     initial.extend(doc! {"_id":default_id, "conversation_id":conversation_id,
     "line_user_id":event.source.as_ref().and_then(|s| s.user_id.as_deref()),
-    "status":"RECEIVED", "mode":"ADMIN_ASSIST", "created_at":now, "updated_at":now});
+    "status":"RECEIVED", "mode":"ADMIN_ASSIST", "created_at":now, "updated_at":now,
+    "last_activity_at":DateTime::from_millis(event.timestamp)});
     let mut default_filter = state.scope();
     default_filter.insert("_id", default_id);
     match state
@@ -74,6 +75,118 @@ pub async fn link(
         None
     };
     Ok(Some((conversation_id, inquiry)))
+}
+
+pub async fn record_activity(
+    state: &AppState,
+    inquiry: ObjectId,
+    at: DateTime,
+) -> Result<(), AppError> {
+    let mut filter = state.scope();
+    filter.insert("_id", inquiry);
+    state
+        .collection("inquiries")
+        .update_one(
+            filter,
+            doc! {"$max":{"last_activity_at":at,"updated_at":DateTime::now()}},
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn list(
+    state: &AppState,
+    status: Option<&str>,
+    before: Option<ObjectId>,
+    before_at: Option<i64>,
+) -> Result<Vec<Document>, AppError> {
+    if before.is_none() && before_at.is_some() {
+        return Err(AppError::BadRequest);
+    }
+    let mut filter = state.scope();
+    if let Some(status) = status {
+        filter.insert("status", status);
+    }
+    if let Some(id) = before {
+        let mut cursor = state.scope();
+        cursor.insert("_id", id);
+        let cursor = state
+            .collection("inquiries")
+            .find_one(cursor)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let at = match before_at {
+            Some(at) => DateTime::from_millis(at),
+            None => *cursor
+                .get_datetime("last_activity_at")
+                .or_else(|_| cursor.get_datetime("created_at"))
+                .map_err(|_| AppError::Data)?,
+        };
+        filter.insert(
+            "$or",
+            vec![
+                doc! {"last_activity_at":{"$lt":at}},
+                doc! {"last_activity_at":at,"_id":{"$lt":id}},
+            ],
+        );
+    }
+    Ok(state
+        .collection("inquiries")
+        .find(filter)
+        .sort(doc! {"last_activity_at":-1,"_id":-1})
+        .limit(100)
+        .projection(doc! {"lease_token":0})
+        .await?
+        .try_collect()
+        .await?)
+}
+
+// Repair older inbox cards once, using message timestamps rather than draft edit times.
+pub async fn backfill_activity(state: &AppState) -> Result<(), AppError> {
+    let mut filter = state.scope();
+    filter.insert("last_activity_at", doc! {"$exists":false});
+    let records: Vec<Document> = state
+        .collection("inquiries")
+        .find(filter.clone())
+        .projection(doc! {"_id":1})
+        .await?
+        .try_collect()
+        .await?;
+    let ids: Vec<ObjectId> = records
+        .iter()
+        .map(|record| record.get_object_id("_id").map_err(|_| AppError::Data))
+        .collect::<Result<_, _>>()?;
+    for chunk in ids.chunks(500) {
+        for collection in super::oa_sync::MESSAGE_COLLECTIONS {
+            let mut messages = state.scope();
+            messages.extend(doc! {"inquiry_id":{"$in":chunk.to_vec()},"status":"DONE",
+            "withdrawn":{"$ne":true},"event_at":{"$type":"date"}});
+            let mut latest = state
+                .collection(collection)
+                .aggregate(vec![
+                    doc! {"$match":messages},
+                    doc! {"$group":{"_id":"$inquiry_id","at":{"$max":"$event_at"}}},
+                ])
+                .await?;
+            while let Some(record) = latest.try_next().await? {
+                record_activity(
+                    state,
+                    record.get_object_id("_id").map_err(|_| AppError::Data)?,
+                    *record.get_datetime("at").map_err(|_| AppError::Data)?,
+                )
+                .await?;
+            }
+        }
+    }
+    // This filter preserves activity recorded concurrently during the repair.
+    state
+        .collection("inquiries")
+        .update_many(
+            filter,
+            vec![doc! {"$set":{"last_activity_at":"$created_at"}}],
+        )
+        .await?;
+    Ok(())
 }
 
 pub async fn schedule(
@@ -109,7 +222,12 @@ pub async fn schedule(
         }
         Err(error) => return Err(error.into()),
     }
-    Ok(())
+    record_activity(
+        state,
+        inquiry,
+        *event.get_datetime("event_at").map_err(|_| AppError::Data)?,
+    )
+    .await
 }
 
 pub fn batches(events: Vec<Document>, burst_ms: i64) -> Vec<Vec<Document>> {

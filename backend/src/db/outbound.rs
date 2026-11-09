@@ -144,6 +144,14 @@ pub async fn send(
                 return Err(AppError::RecordConflict);
             }
             if existing.get_str("status").ok() == Some("DONE") {
+                super::inquiries::record_activity(
+                    state,
+                    inquiry_id,
+                    *existing
+                        .get_datetime("event_at")
+                        .map_err(|_| AppError::Data)?,
+                )
+                .await?;
                 return Ok(existing);
             }
             // Retry a failed send, or one abandoned by a crashed request.
@@ -198,12 +206,14 @@ pub async fn send(
         .ok_or(AppError::Data)?;
     match result {
         Ok(_) => {
-            let mut filter = state.scope();
-            filter.insert("_id", inquiry_id);
-            state
-                .collection("inquiries")
-                .update_one(filter, doc! {"$set":{"updated_at":now}})
-                .await?;
+            super::inquiries::record_activity(
+                state,
+                inquiry_id,
+                *record
+                    .get_datetime("event_at")
+                    .map_err(|_| AppError::Data)?,
+            )
+            .await?;
             Ok(record)
         }
         Err(code) => Err(AppError::LineSend(code)),

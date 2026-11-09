@@ -144,6 +144,11 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             false,
         ),
         (
+            "inquiries",
+            doc! {"shop_id":1,"channel_id":1,"last_activity_at":-1,"_id":-1},
+            false,
+        ),
+        (
             "analysis_jobs",
             doc! {"shop_id":1, "channel_id":1, "inquiry_id":1},
             true,
@@ -187,5 +192,5 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
                 .build(),
         )
         .await?;
-    Ok(())
+    super::inquiries::backfill_activity(state).await
 }
