@@ -4,6 +4,30 @@
 
 <!-- entries -->
 
+## 2026-11-09 09:42 — แก้ rungit รับข้อความ commit ที่พิมพ์พร้อมเครื่องหมายคำพูด
+- **คำอธิบาย:** ผู้ใช้รัน `rungit.bat` แล้วพิมพ์ข้อความ commit พร้อมเครื่องหมายคำพูดในช่องถาม ทำให้ `git commit -m` ได้ argument ผิดและล้มด้วย empty pathspec; อีกจุดเตือนว่าไม่มี `revising-log.md` ทั้งที่ไฟล์อยู่ใน staged changes
+- **โฟลเดอร์ root**
+  - `rungit.bat` — แก้: ย้ายการตัดเครื่องหมายคำพูดและตรวจข้อความว่างไปหลังรับข้อความทั้งจาก argument และช่องถาม; เปลี่ยนการตรวจ log เป็น `git diff --cached --quiet -- revising-log.md` โดยตรง และหยุดเมื่อ Git diff ล้มเหลว คงไฟล์เป็น ASCII/CRLF
+- **ผลตรวจสอบ:** จำลองบั๊กจากสคริปต์เดิมได้ แล้วทดสอบสคริปต์ใหม่ใน Git repositories ชั่วคราวด้วย native Git interceptor ซึ่งดัก commit/push ไม่ให้ทำงานจริง ผ่าน 8 กรณี: ช่องถามแบบมี/ไม่มีคำพูด, argument แบบมีคำพูด, ข้อความมี `&`/วงเล็บ, เตือนเมื่อไม่มี log, ปฏิเสธข้อความว่างก่อน stage, ไม่มี changes ให้ push อย่างเดียว และ Git diff ล้มเหลวให้หยุด; ตรวจ ASCII/CRLF และ `git diff --check` ผ่าน คง staged changes เดิมของผู้ใช้ ไม่ได้ commit/push repository จริง ไม่ต้อง build release เพราะแก้เฉพาะสคริปต์
+- **LINE Login:** ตรวจ backend และ public API ยังตอบ `line=false` แต่ `.env` และ stack บน Ubuntu มีค่า LINE Login ครบ ผู้ใช้ชี้แจงว่ายังไม่ได้ deploy เพราะติด rungit; การกู้ config บน server ทำโดยตรง จึงสามารถรัน `sudo bash ./docker-deploy.sh --full-stack` เพื่อโหลดค่าได้โดยไม่ต้องรอ Git
+
+## 2026-11-09 09:33 — กู้ค่า LINE Login หลัง config บน server ถูกแทนที่
+- **คำอธิบาย:** ผู้ใช้แจ้งว่าปุ่มเข้าสู่ระบบด้วย LINE หาย ตรวจพบว่า `.env` ปัจจุบันไม่มีค่า LINE Login และรายชื่อแอดมิน การกู้ MongoDB รอบก่อนยังไม่ได้คืนส่วนนี้; API ทั้ง backend และ public domain ตอบ `line=false` จึงทำให้ frontend ซ่อนปุ่มตาม config
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `.env` — แก้: กู้ `LINE_LOGIN_CHANNEL_ID`, `LINE_LOGIN_CHANNEL_SECRET`, `LINE_LOGIN_REDIRECT_URI`, `ADMIN_LINE_USER_IDS` จาก `.env.recovered-20261109-011843`; ตรวจว่าค่าตรงกับไฟล์สำรองเดิมทุกชุด มีแอดมินที่ได้รับอนุญาต 1 ราย และ callback คือ `https://hermes.salepie.online/api/admin/line/callback` คงค่า LINE OA Arisa, MongoDB และค่าอื่นทั้งหมดไว้ รวมถึง `ADMIN_COOKIE_SECURE=true`
+  - `.env.before-line-login-20261109-093157` — เพิ่ม: สำรอง config ก่อนกู้ LINE Login
+  - ไฟล์ที่เขียนใช้ permission `600` และตรวจว่าไม่เข้า Git; ไม่มี secret/token หรือ ID แอดมินในผลคำสั่งและบันทึก
+- **ผลตรวจสอบ:** ตรวจค่าในไฟล์หลังเขียน, รูปแบบ LINE user ID ของแอดมิน, callback URI และ `bash -n` ผ่าน; runtime ยังตอบ `line=false` จึงยังต้องให้ผู้ใช้รัน `sudo bash ./docker-deploy.sh --full-stack` บน Ubuntu เพื่อโหลดค่าใหม่ เนื่องจาก SSH ของ agent ต้องใช้รหัส sudo และไม่สามารถ deploy แบบ noninteractive ได้ ยังไม่ได้ทดสอบ OAuth callback ด้วยบัญชีจริง ไม่ได้แก้ source จึงไม่ต้อง build release หรือรันชุดทดสอบ backend/frontend
+
+## 2026-11-09 01:19 — กู้ค่า MongoDB และชื่อ deployment เดิมจากไฟล์สำรองบน Ubuntu
+- **คำอธิบาย:** ผู้ใช้ยืนยันว่าต้องการกู้ `.env` บน Ubuntu (`ssh Hermes`) เพราะจำรหัส MongoDB ไม่ได้ พบว่าไฟล์ปัจจุบันยังอยู่แต่ถูกแทนด้วย config local ที่ไม่มีค่า MongoDB และพบไฟล์สำรอง 3 ไฟล์ซึ่งมี Mongo username/password ตรงกันทั้งหมด
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `.env` — แก้: กู้ `MONGO_USER`, `MONGO_PASSWORD`, `APP_NAME`, `STACK`, `MONGODB_DB`, `LINE_HTTP_PORT` จาก `.env.before-alex-reference-20261026-135154`; คืน stack `alex-line` และ database `alex_line` ให้ตรงระบบเดิม คงค่าปัจจุบันของ LINE Arisa และค่าอื่นทั้งหมด
+  - `.env.before-recovery-20261109-011843` — เพิ่ม: สำรอง config ปัจจุบันก่อนแก้
+  - `.env.recovered-20261109-011843` — เพิ่ม: เก็บ config เก่าฉบับเต็มที่กู้จากไฟล์สำรอง แยกจากไฟล์ที่ใช้งานปัจจุบัน
+  - ไฟล์ที่เขียนทั้งหมดใช้ permission `600` และตรวจว่าไม่เข้า Git; ไม่มีรหัสผ่าน/token ในบันทึกหรือผลคำสั่ง
+- **ผลตรวจสอบ:** อ่าน `.env` กลับมาตรวจว่าค่าที่กู้ตรงกับสำรองและค่า LINE Arisa ตรงกับไฟล์ก่อนแก้; ตรวจรูปแบบ Mongo credentials ตาม deploy script ผ่าน; backend เดิมที่ `127.0.0.1:18080/api/health` ตอบ `ok` ไม่ได้ทดสอบ login MongoDB ด้วยรหัสที่กู้ และยังไม่ได้ restart/deploy เพราะ Docker ต้องใช้ sudo password ไม่ได้แก้ source จึงไม่ต้อง build หรือรันชุดทดสอบ backend/frontend
+
 ## 2026-11-09 00:44 — ตั้งค่า LINE OA ร้าน Arisa ให้รับแชทจากลูกค้าหลายคน
 - **คำอธิบาย:** ใช้ข้อมูลจาก `prompts/arisa.md` ตั้งค่า OA `Arisa.Rental` (`@186pdmsc`) โดยตรวจ token กับ LINE Get bot info จริง ผู้ใช้ยืนยันว่าต้องการรับลูกค้าหลายคนภายในร้านเดียว โค้ดเดิมแยกบทสนทนาตาม `source.userId` อยู่แล้ว ไม่ต้องตั้ง ID ลูกค้าใน env
 - **โฟลเดอร์ root**

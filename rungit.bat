@@ -19,12 +19,12 @@ call :preflight
 if errorlevel 1 exit /b 1
 
 set MSG=%*
-if defined MSG set "MSG=%MSG:"=%"
 if defined MSG goto :have_msg
 set /p "MSG=Commit message: "
-if not defined MSG goto :no_msg
 
 :have_msg
+if defined MSG set "MSG=%MSG:"=%"
+if not defined MSG goto :no_msg
 echo.
 echo --- changes ---
 git status --short
@@ -34,10 +34,12 @@ git add -A
 if errorlevel 1 goto :fail
 
 git diff --cached --quiet
+if errorlevel 2 goto :fail
 if not errorlevel 1 goto :nothing_to_commit
 
-git diff --cached --name-only | findstr /i /x /l "revising-log.md" >nul
-if errorlevel 1 echo [WARN] revising-log.md is not part of this commit - did you log the change?
+git diff --cached --quiet -- revising-log.md
+if errorlevel 2 goto :fail
+if not errorlevel 1 echo [WARN] revising-log.md is not part of this commit - did you log the change?
 
 git commit -m "%MSG%"
 if errorlevel 1 goto :fail
