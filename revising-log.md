@@ -4,6 +4,17 @@
 
 <!-- entries -->
 
+## 2026-11-09 21:24 — เอาสถานะใต้การ์ดแชทออกครบและตรวจ release ก่อน deploy
+- **คำอธิบาย:** ผู้ใช้ขอข้อความตัวอย่างแทนรหัสเรื่อง ไม่แสดงสถานะใต้การ์ด และจุดเขียวอ่านแชท โดยยืนยันในงานนี้ให้อิงการอ่านใน Alex เป็นหลักและส่งอ่านแล้วไป LINE พบว่าโค้ดเดิมรองรับ preview/unread/markAsRead แล้ว แต่ยังเหลือบรรทัดร่างและอนุมัติร่างใต้การ์ด จึงนำออกให้ครบตามคำขอ
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `admin-workspace.tsx` — แก้: ลบบรรทัดร่าง v และป้ายอนุมัติร่างแล้วใต้การ์ดรายชื่อลูกค้า คงข้อความล่าสุดสองบรรทัดและจุดเขียวด้านขวา
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build บน local Docker Desktop เป็น `front-20261109142241-4f7c4ec354ff` พร้อม runtime/static/checksum/metadata สำหรับ Ubuntu โดยไม่ compile บน server
+- **ผลตรวจสอบ:** `cargo fmt --check`, `cargo clippy -- -D warnings` และ `cargo test -- --include-ignored` ผ่านครบ 49 กรณีเมื่อใช้ MongoDB ทดสอบแยกบน local และหยุด container หลังทดสอบ; frontend lint/build ผ่านใน local Linux build; ตรวจ checksum frontend 2,108 ไฟล์และ metadata Linux/amd64 ผ่าน ไม่มีไฟล์ .env ใน release
+- **ทดสอบหน้าจอ:** WebKit ผ่าน 6 ขนาดจอด้วย compiled release ใหม่และ API จำลอง ตรวจทั้งรายการมีร่างและมี order ว่าไม่มีบรรทัดสถานะใต้การ์ด รวมถึง preview จุดเขียว การส่งอ่านแล้วเมื่อเปิดแชท และการคงจุดเขียวเมื่อมีข้อความใหม่แต่แชทมือถือยังปิดอยู่ โดยไม่ส่งสถานะอ่านไปหาลูกค้าจริง
+- **ตรวจ Ubuntu แบบอ่านอย่างเดียว:** Git บน server อยู่ที่ `095dc586` และ checksum release เดิมตรงกับ local แต่ backend ที่กำลังรันยังไม่คืน preview/unread ทั้ง 50 รายการ จึงต้อง deploy runtime ใหม่; backend release ที่พร้อมใช้คือ `rel-20261109135848-567eed1a6d1d` ไม่มีการแก้ backend ในงานนี้
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน `rungit.bat` เพื่อส่ง source/release ใหม่ แล้วบน Ubuntu รัน `cd ~/alex-connectingpoint && bash ./deploy-all.sh main`; agent ยังไม่ได้ commit/push/deploy เนื่องจากไม่ได้รับคำสั่ง Git และ `sudo -n` บน server ต้องใช้รหัสผ่าน
+
 ## 2026-11-09 15:44 — เพิ่มข้อความตัวอย่างและจุดเขียวอ่านแชท พร้อมส่งอ่านแล้วไป LINE
 - **คำอธิบาย:** ผู้ใช้ขอให้การ์ดลูกค้าแสดงข้อความแทนรหัสเรื่อง ลบป้ายรับเรื่อง และมีจุดเขียวด้านขวา โดยยืนยันให้สถานะอิงการอ่านใน Alex เป็นหลักและส่งอ่านแล้วไป LINE ไม่ต้องซิงก์การเปิดอ่านจาก OA Manager กลับมา ใช้แนวทาง skill `ui-ux-pro-max` ตรวจหน้าจอและข้อความสำหรับ screen reader
 - **โฟลเดอร์ `backend/src/`**

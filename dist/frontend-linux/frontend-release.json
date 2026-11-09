@@ -1,7 +1,7 @@
 {
-    "tag":  "front-20261109135901-8838dd8c765c",
-    "content_sha256":  "8838dd8c765c7b4f58fa3662500410bb6052abb09ff80d293e3a2937dc54e11e",
-    "built_at":  "2026-11-09T13:59:01.7105212Z",
+    "tag":  "front-20261109142241-4f7c4ec354ff",
+    "content_sha256":  "4f7c4ec354ff792ca42adca45c7380b60ac66ba31c0ce25b17e62f2faca4d167",
+    "built_at":  "2026-11-09T14:22:41.1107758Z",
     "backend_url":  "http://backend:8080",
     "build_location":  "local",
     "platform":  "linux/amd64"
