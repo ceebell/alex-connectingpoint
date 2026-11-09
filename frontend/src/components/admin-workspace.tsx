@@ -58,6 +58,7 @@ export default function AdminWorkspace() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<"inquiries" | "chat" | "draft">("inquiries");
   const [messages, setMessages] = useState<LineEvent[]>([]);
   const messagesRef = useRef<LineEvent[]>([]);
   const [oaStatus, setOaStatus] = useState<OaStatus>({ state: "NOT_CONFIGURED" });
@@ -77,6 +78,7 @@ export default function AdminWorkspace() {
   const [approveChecked, setApproveChecked] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const appRef = useRef<HTMLDivElement>(null);
   const [draftWidth, setDraftWidth] = useState<number | null>(storedDraftWidth);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -88,7 +90,38 @@ export default function AdminWorkspace() {
   const canApprove = !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => {
-    const fit = () => { if (window.innerWidth > 850) setDraftWidth(width => width === null ? null : clampDraftWidth(workspaceRef.current, width)); };
+    const app = appRef.current;
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    if (!app || !viewport) return;
+    const mobile = window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)");
+    let frame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        // Safari exposes the space above the keyboard through VisualViewport.
+        if (mobile.matches && viewport.scale === 1) root.style.setProperty("--app-height", `${viewport.height}px`);
+        else root.style.removeProperty("--app-height");
+        const editing = document.activeElement?.matches("input, textarea, select");
+        app.dataset.keyboardOpen = String(mobile.matches && viewport.scale === 1 && editing && viewport.height < window.innerHeight - 120);
+      });
+    };
+    update();
+    viewport.addEventListener("resize", update);
+    mobile.addEventListener("change", update);
+    app.addEventListener("focusin", update);
+    app.addEventListener("focusout", update);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      viewport.removeEventListener("resize", update);
+      mobile.removeEventListener("change", update);
+      app.removeEventListener("focusin", update);
+      app.removeEventListener("focusout", update);
+      root.style.removeProperty("--app-height");
+    };
+  }, [session, checking]);
+  useEffect(() => {
+    const fit = () => { if (window.innerWidth > 850 && !window.matchMedia("(max-width: 1024px) and (max-height: 600px)").matches) setDraftWidth(width => width === null ? null : clampDraftWidth(workspaceRef.current, width)); };
     window.addEventListener("resize", fit); return () => window.removeEventListener("resize", fit);
   }, []);
 
@@ -214,6 +247,7 @@ export default function AdminWorkspace() {
   }
 
   function selectInquiry(id: string) {
+    setMobilePanel("chat");
     // Re-selecting the open inquiry must not reset it: the load effect only reruns when the ID changes.
     if (id === selected) return;
     summaryDirty.current = false; setSummaryEdited(false); setSavedSummary(null); setSummaryConflict(false);
@@ -339,23 +373,23 @@ export default function AdminWorkspace() {
     {!loginOptions.line && !loginOptions.password && <p className="notice warning">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ กรุณาติดต่อผู้ดูแลระบบ</p>}
   </form></main>;
 
-  return <div className="app-shell">
+  return <div className="app-shell" ref={appRef}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">a<span>•</span></div><div><strong>alex</strong><small>connecting point</small></div></div><span className="nav-heading">พื้นที่ทำงาน</span><Link className="nav-item active" href="/" aria-current="page"><span aria-hidden="true">▤</span> แชทและ inquiry <span className="nav-count">{inquiries.length}</span></Link><div className="sidebar-note"><span className="online-dot" /> รับเรื่องจาก LINE OA<p>อ่านแชท เตรียมร่าง<br />แล้วตรวจสอบก่อนส่งต่อ</p></div><div className="sidebar-account"><div className="avatar">{session.username.charAt(0).toUpperCase()}</div><div><strong>{session.username}</strong><small>{session.login === "line" ? "เข้าด้วย LINE" : "ผู้ดูแลหลังบ้าน"}</small></div><button title="ออกจากระบบ" aria-label="ออกจากระบบ" className="icon-button" onClick={logout}>↪</button></div></aside>
-    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span> โหลดข้อมูลล่าสุด</button></div></header>
+    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">โหลดข้อมูลล่าสุด</span></button></div></header>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
-      <div className="workspace" ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
+      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
         {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}><div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.updated_at)}</time></div><div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div><strong>{inquiry.customer?.display_name || `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}`}</strong><p className="user-ref">{inquiry.customer?.display_name ? `เรื่อง #${inquiry._id.slice(-6).toUpperCase()}` : inquiry.line_user_id ?? "ยังไม่มีรหัสผู้ใช้"}</p></div></div><div className="section-caption"><span className="pill">{statusLabels[inquiry.status] ?? inquiry.status}</span>{inquiry.order_id ? <span className="pill success">อนุมัติร่างแล้ว</span> : (inquiry.draft_version ?? 0) > 0 && <span className="small muted">ร่าง v{inquiry.draft_version}</span>}</div></button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
-      <section className="chat-panel"><div className="panel-heading"><div><h2>{current ? current.customer?.display_name || `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2><span className="small muted">{current ? `${current.customer?.display_name ? `เรื่อง #${current._id.slice(-6).toUpperCase()} · ` : ""}ลูกค้าและแอดมิน · เวลาไทย` : "เลือก inquiry เพื่ออ่านรายละเอียด"}</span></div>{current && <span className="line-badge">LINE OA</span>}</div>
+      <section id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel"><div className="panel-heading"><div><h2>{current ? current.customer?.display_name || `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2><span className="small muted">{current ? `${current.customer?.display_name ? `เรื่อง #${current._id.slice(-6).toUpperCase()} · ` : ""}ลูกค้าและแอดมิน · เวลาไทย` : "เลือก inquiry เพื่ออ่านรายละเอียด"}</span></div>{current && <span className="line-badge">LINE OA</span>}</div>
         <div className="chat-stream" aria-busy={loading}>
           {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <><div className="chat-notice">ลูกค้าอยู่ด้านซ้าย · แอดมินอยู่ด้านขวา{oaStatus.state !== "NOT_CONFIGURED" && <><br /><span>{oaStates[oaStatus.state] ?? "กำลังตรวจตัวเชื่อม OA"}</span></>}</div>{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div>
         {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
         <div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
-      <section className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+      <section id="mobile-draft" aria-label="เตรียมออเดอร์" className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>
           {job && ["PENDING", "PROCESSING"].includes(job.status) && <div className="notice info" role="status">{job.status === "PROCESSING" ? "กำลังอ่านรูปหรือสรุปและค้นหาสินค้าใน Alex…" : "รับงานแล้ว กำลังรอประมวลผล…"} คุณกลับมาเปิดเรื่องนี้ใหม่เพื่อตรวจผลได้</div>}
           {tab === "summary" && <>
@@ -397,6 +431,20 @@ export default function AdminWorkspace() {
           })}<p className="muted small">แก้ไข: หยิบเวอร์ชันที่ยังไม่ส่งขึ้นมาเป็นร่างล่าสุด · โคลน: คัดลอกเป็นเวอร์ชันใหม่ได้ทุกสถานะ · ทั้งสองแบบคืนตะกร้าของเวอร์ชันนั้น</p></>}
         </>}</div><div className="draft-footer">แนบรูป → ร่างออเดอร์ (ลูกค้า · ตะกร้า · วันที่ · เช็คคิว) → ส่งบิลเข้า Alex</div>
       </section></div>
+      <nav className="mobile-workspace-nav" aria-label="พื้นที่ทำงานบนมือถือ">
+        <button type="button" aria-controls="mobile-inquiries" aria-pressed={mobilePanel === "inquiries"} onClick={() => setMobilePanel("inquiries")}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m3 10v-2a6 6 0 0 0-3-5" /></svg>
+          <span>ลูกค้า <small>{inquiries.length}</small></span>
+        </button>
+        <button type="button" aria-controls="mobile-chat" aria-pressed={mobilePanel === "chat"} disabled={!selected} onClick={() => setMobilePanel("chat")}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /><path d="M7 10h10M7 14h6" /></svg>
+          <span>แชท</span>
+        </button>
+        <button type="button" aria-controls="mobile-draft" aria-pressed={mobilePanel === "draft"} disabled={!selected} onClick={() => setMobilePanel("draft")}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg>
+          <span>ออเดอร์</span>
+        </button>
+      </nav>
     </main>
   </div>;
 }

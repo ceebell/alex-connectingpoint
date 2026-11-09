@@ -1,0 +1,396 @@
+.mobile-workspace-nav {
+  display: none;
+}
+
+/* Use one panel at a time on phones, including a phone turned sideways. */
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
+  .app-shell {
+    height: var(--app-height, 100dvh);
+    min-height: 0;
+    width: 100%;
+  }
+
+  .app-shell .sidebar,
+  .app-shell .panel-resizer {
+    display: none;
+  }
+
+  .app-shell .main-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  }
+
+  .app-shell .page-header {
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .page-header > div:first-child {
+    min-width: 0;
+  }
+
+  .app-shell .page-header h1 {
+    font-size: 20px;
+    line-height: 1.5;
+  }
+
+  .page-header .eyebrow,
+  .page-header p.muted,
+  .page-header .refresh-label {
+    display: none;
+  }
+
+  .app-shell .header-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-shrink: 0;
+    gap: 8px;
+  }
+
+  .app-shell .header-actions > .button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px;
+    font-size: 20px;
+  }
+
+  .app-shell .mobile-logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .app-shell .page-notice {
+    align-items: flex-start;
+    flex-shrink: 0;
+    max-height: 25dvh;
+    margin-bottom: 8px;
+    overflow-y: auto;
+  }
+
+  .app-shell .workspace {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    border-radius: 12px;
+  }
+
+  .workspace > .inquiry-panel,
+  .workspace > .chat-panel,
+  .workspace > .draft-panel {
+    display: none;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    border: 0;
+  }
+
+  .workspace[data-mobile-panel="inquiries"] > .inquiry-panel,
+  .workspace[data-mobile-panel="chat"] > .chat-panel,
+  .workspace[data-mobile-panel="draft"] > .draft-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace .panel-heading {
+    min-height: 64px;
+    flex-shrink: 0;
+    padding: 12px;
+  }
+
+  .panel-heading > div,
+  .field-grid > *,
+  .section-caption > *,
+  .reply-row textarea {
+    min-width: 0;
+  }
+
+  .panel-heading h2 {
+    font-size: 16px;
+    overflow-wrap: anywhere;
+  }
+
+  .panel-heading .line-badge,
+  .panel-heading .version-badge {
+    flex-shrink: 0;
+  }
+
+  .workspace .search-box {
+    flex-shrink: 0;
+    margin: 10px;
+  }
+
+  .workspace .inquiry-list {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    padding: 0 8px 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .workspace .inquiry-card {
+    width: 100%;
+    min-width: 0;
+    margin-bottom: 8px;
+    padding: 12px;
+  }
+
+  .inquiry-card .customer-row strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .workspace .inquiry-list .empty {
+    min-height: 220px;
+  }
+
+  .workspace .inquiry-list .empty p {
+    display: block;
+  }
+
+  .workspace .chat-stream,
+  .workspace .draft-content {
+    flex: 1;
+    min-height: 0;
+    padding: 16px 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: 20px;
+  }
+
+  .workspace .chat-footer,
+  .workspace .draft-footer {
+    display: none;
+  }
+
+  .workspace .message-bubble {
+    font-size: 16px;
+  }
+
+  .workspace .reply-box {
+    flex-shrink: 0;
+    max-height: 65%;
+    padding: 10px;
+    overflow-y: auto;
+  }
+
+  .reply-row {
+    gap: 8px;
+  }
+
+  .reply-row textarea {
+    min-height: 48px;
+  }
+
+  .app-shell .tabs {
+    gap: 0;
+    padding: 0 4px;
+    overflow-x: auto;
+  }
+
+  .app-shell .tabs button {
+    min-height: 48px;
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .app-shell button,
+  .app-shell a.button,
+  .login-page .button,
+  .invoice-dialog button {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .app-shell .tool-button,
+  .app-shell .icon-button,
+  .app-shell .summary-image-delete {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+
+  .app-shell summary,
+  .invoice-dialog summary {
+    min-height: 44px;
+    padding-block: 10px;
+  }
+
+  /* A 16px control font avoids Safari zooming the form when it receives focus. */
+  .app-shell input:not([type="checkbox"]):not([type="radio"]),
+  .app-shell select,
+  .app-shell textarea,
+  .login-page input,
+  .invoice-dialog input:not([type="checkbox"]):not([type="radio"]),
+  .invoice-dialog select,
+  .invoice-dialog textarea {
+    min-width: 0;
+    min-height: 44px;
+    max-width: 100%;
+    font-size: 16px;
+    scroll-margin-block: 24px;
+  }
+
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .field-grid .span-2 {
+    grid-column: 1 / -1;
+  }
+
+  .draft-content .section-caption {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .draft-content .order-section {
+    padding-inline: 12px;
+  }
+
+  .summary-images .section-caption {
+    flex-wrap: wrap;
+  }
+
+  .summary-image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .summary-image label > span,
+  .checkbox-row {
+    min-height: 44px;
+  }
+
+  .draft-content .match-card {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .candidate-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .history-actions,
+  .invoice-actions {
+    gap: 8px;
+  }
+
+  .history-actions .text-button {
+    margin-left: 0;
+  }
+
+  .mobile-workspace-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  }
+
+  .mobile-workspace-nav button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 56px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: white;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .mobile-workspace-nav button[aria-pressed="true"] {
+    border-color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 10%, white);
+    color: var(--color-primary-ink);
+  }
+
+  .mobile-workspace-nav svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .mobile-workspace-nav small {
+    font-size: 12px;
+  }
+
+  .login-page {
+    min-height: 100dvh;
+    gap: 24px;
+    padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  }
+
+  .login-page .login-card {
+    min-width: 0;
+    max-width: 420px;
+    padding: 24px;
+  }
+
+  .invoice-dialog {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: var(--app-height, 100dvh);
+    max-height: var(--app-height, 100dvh);
+    margin: 0;
+    border-radius: 0;
+    translate: none;
+  }
+
+  .invoice-dialog-bar {
+    min-height: 60px;
+    justify-content: flex-end;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right));
+    cursor: auto;
+    touch-action: auto;
+  }
+
+  .invoice-dialog-grip {
+    display: none;
+  }
+
+  .invoice-dialog-body {
+    padding-inline: max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .app-shell[data-keyboard-open="true"] .page-header {
+    display: none;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 1024px) and (max-height: 600px) {
+  .field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .login-page .login-intro {
+    display: none;
+  }
+}

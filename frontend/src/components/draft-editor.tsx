@@ -45,6 +45,7 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
   const ref = useRef<HTMLDialogElement>(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   function startDrag(event: PointerEvent<HTMLDivElement>) {
+    if (window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)").matches) return;
     const box = ref.current?.getBoundingClientRect();
     if (!box || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     event.preventDefault();
