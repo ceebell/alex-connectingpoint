@@ -170,12 +170,20 @@ pub async fn profiles(
     let records: Vec<Document> = state
         .collection("line_users")
         .find(filter)
-        .projection(doc! {"line_user_id":1,"display_name":1,"picture_url":1,"profile_checked_at":1})
+        .projection(doc! {"line_user_id":1,"display_name":1,"oa_display_name":1,"picture_url":1,"profile_checked_at":1})
         .await?
         .try_collect()
         .await?;
     Ok(records
         .into_iter()
-        .filter_map(|r| Some((r.get_str("line_user_id").ok()?.to_string(), r)))
+        .filter_map(|mut r| {
+            if state.config.oa_connector_enabled
+                && let Ok(name) = r.get_str("oa_display_name")
+            {
+                let name = name.to_string();
+                r.insert("display_name", name);
+            }
+            Some((r.get_str("line_user_id").ok()?.to_string(), r))
+        })
         .collect())
 }

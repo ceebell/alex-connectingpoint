@@ -52,6 +52,36 @@ export function makeBatches(messages, botId, chatId) {
   });
 }
 
+// Accept explicit OA read fields only; missing/unknown state must never become false.
+// Field contracts are deliberately checked at runtime and exposed as types in /schema.
+export function decodeChat(chat) {
+  if (!chat || typeof chat !== "object") throw new SchemaError();
+  const chatId = id(chat.chatId ?? chat.id);
+  const custom = chat.nickname ?? chat.user?.nickname;
+  if (custom !== undefined && custom !== null && typeof custom !== "string") throw new SchemaError();
+  const name = custom?.trim() || chat.displayName || chat.user?.displayName;
+  if (typeof name !== "string" || !name.trim() || [...name].length > 100) throw new SchemaError();
+  let unread;
+  if (typeof chat.unread === "boolean") unread = chat.unread;
+  else if (Number.isSafeInteger(chat.unreadCount) && chat.unreadCount >= 0) unread = chat.unreadCount > 0;
+  else throw new SchemaError();
+  return { chat_id: chatId, display_name: name.trim(), unread };
+}
+
+export function incomingAnchors(records, botId, userId) {
+  const incoming = records.flatMap(record => {
+    if (!record || typeof record !== "object") throw new SchemaError();
+    const message = record.message ?? record;
+    const sender = record.sender ?? record.source ?? message.sender;
+    const actor = String(record.senderType ?? record.fromType ?? sender?.type ?? "").toLowerCase();
+    const senderId = sender?.id ?? sender?.userId ?? sender?.mid ?? record.fromMid;
+    if (["operator", "admin", "bot", "official_account"].includes(actor) || senderId === botId) return [];
+    if (!["user", "customer"].includes(actor) && !(userId && senderId === userId)) throw new SchemaError();
+    return [{ id: id(message.id ?? message.messageId ?? record.id), at: timestamp(record.timestamp ?? record.createdTime ?? record.createdAt ?? message.timestamp) }];
+  }).sort((a,b) => a.at-b.at || a.id.localeCompare(b.id));
+  return incoming.slice(-20).map(message => message.id);
+}
+
 // Return field names and types only. Diagnostics must not contain message text,
 // account identifiers, session cookies, QR payloads or credential values.
 export function shape(value, depth = 0) {

@@ -52,6 +52,32 @@ function makeBatches(messages, botId2, chatId) {
     return { bot_id: botId2, chat_id: chatId, anchor_message_ids: [anchor.id], messages: [{ id: message.id, text: message.text, sent_at_ms: message.at }] };
   });
 }
+function decodeChat(chat) {
+  if (!chat || typeof chat !== "object") throw new SchemaError();
+  const chatId = id(chat.chatId ?? chat.id);
+  const custom = chat.nickname ?? chat.user?.nickname;
+  if (custom !== void 0 && custom !== null && typeof custom !== "string") throw new SchemaError();
+  const name = custom?.trim() || chat.displayName || chat.user?.displayName;
+  if (typeof name !== "string" || !name.trim() || [...name].length > 100) throw new SchemaError();
+  let unread;
+  if (typeof chat.unread === "boolean") unread = chat.unread;
+  else if (Number.isSafeInteger(chat.unreadCount) && chat.unreadCount >= 0) unread = chat.unreadCount > 0;
+  else throw new SchemaError();
+  return { chat_id: chatId, display_name: name.trim(), unread };
+}
+function incomingAnchors(records, botId2, userId) {
+  const incoming = records.flatMap((record) => {
+    if (!record || typeof record !== "object") throw new SchemaError();
+    const message = record.message ?? record;
+    const sender = record.sender ?? record.source ?? message.sender;
+    const actor = String(record.senderType ?? record.fromType ?? sender?.type ?? "").toLowerCase();
+    const senderId = sender?.id ?? sender?.userId ?? sender?.mid ?? record.fromMid;
+    if (["operator", "admin", "bot", "official_account"].includes(actor) || senderId === botId2) return [];
+    if (!["user", "customer"].includes(actor) && !(userId && senderId === userId)) throw new SchemaError();
+    return [{ id: id(message.id ?? message.messageId ?? record.id), at: timestamp(record.timestamp ?? record.createdTime ?? record.createdAt ?? message.timestamp) }];
+  }).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  return incoming.slice(-20).map((message) => message.id);
+}
 function shape(value, depth = 0) {
   if (depth > 4) return typeof value;
   if (Array.isArray(value)) return { array: value.slice(0, 1).map((v) => shape(v, depth + 1)) };
@@ -171,6 +197,14 @@ context.on("page", (next) => {
 });
 var state = { state: "NEEDS_LOGIN", synced: 0, pending: 0, last_checked_at: null };
 var diagnostic = {};
+context.on("response", async (response) => {
+  const url = new URL(response.url());
+  if (url.hostname !== "chat.line.biz" || !/^\/api\/v1\/bots\/[^/]+\/(chats|messages)(\/|$)/.test(url.pathname)) return;
+  try {
+    diagnostic[`ui/${url.pathname.includes("/messages") ? "messages" : "chats"}`] = shape(await response.json());
+  } catch {
+  }
+});
 var stopping = false;
 var accepted = /* @__PURE__ */ new Set();
 var open = async () => {
@@ -218,19 +252,48 @@ async function post(path, body) {
   if (!r.ok) throw new SchemaError("BACKEND_UNAVAILABLE");
   return value;
 }
+async function refreshRequests() {
+  const r = await fetch(new URL("/api/connectors/line-oa/refresh", backend), {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(1e4)
+  });
+  if (!r.ok) throw new SchemaError("BACKEND_UNAVAILABLE");
+  const value = await r.json();
+  if (!Array.isArray(value.requests) || value.requests.some((value2) => typeof value2 !== "string" || !/^[a-f0-9]{24}$/.test(value2))) throw new SchemaError("BACKEND_UNAVAILABLE");
+  return value.requests;
+}
 async function cycle() {
   state.pending = 0;
+  let refreshState = "DONE";
+  let inboxComplete = false;
   try {
+    const started = Date.now();
     const csrf = await lineGet("/api/v1/csrfToken");
     if (typeof csrf.token !== "string" || csrf.token.length > 4096) throw new SchemaError();
     const bots = listPage(await lineGet("/api/v1/bots?noFilter=true&limit=100", csrf.token)).items;
     if (bots.some((bot) => typeof bot.botId !== "string")) throw new SchemaError();
     if (!bots.some((bot) => bot.botId === botId)) throw new SchemaError("NEEDS_LOGIN");
     const chats = await pages(`/api/v1/bots/${botId}/chats?folderType=ALL&tagIds=&limit=100`, csrf.token);
+    const threads = [];
+    const snapshots = [];
     let ingested = 0;
     for (const chat of chats) {
-      const chatId = id(chat.chatId ?? chat.id);
+      const metadata = decodeChat(chat);
+      const chatId = metadata.chat_id;
       const raw = await pages(`/api/v1/bots/${botId}/messages/${chatId}?limit=100`, csrf.token);
+      const anchors = incomingAnchors(raw, botId, chat.userId ?? chat.user?.userId);
+      if (anchors.length) snapshots.push({ ...metadata, anchor_message_ids: anchors });
+      threads.push({ chat, chatId, raw });
+    }
+    let linked = 0;
+    for (let offset = 0; offset < snapshots.length; offset += 100) {
+      const result = await post("/api/connectors/line-oa/inbox", { bot_id: botId, started_at_ms: started, chats: snapshots.slice(offset, offset + 100) });
+      if (!result) throw new SchemaError("BACKEND_UNAVAILABLE");
+      linked += result.updated;
+    }
+    refreshState = linked < snapshots.length || snapshots.length < chats.length ? "UNLINKED" : "DONE";
+    inboxComplete = true;
+    for (const { chat, chatId, raw } of threads) {
       const messages = decodeMessages(raw, botId, chat.userId ?? chat.user?.userId);
       for (const batch of makeBatches(messages, botId, chatId)) {
         if (!batch) {
@@ -252,19 +315,38 @@ async function cycle() {
     state.last_checked_at = (/* @__PURE__ */ new Date()).toISOString();
   } catch (error) {
     state.state = error instanceof SchemaError ? error.code === "UNSUPPORTED_PAGINATION" ? "UNSUPPORTED_SCHEMA" : error.code : "LINE_UNAVAILABLE";
+    if (!inboxComplete) refreshState = state.state;
   }
   try {
     await post("/api/connectors/line-oa/status", { state: state.state, synced: state.synced, pending: state.pending });
   } catch {
-    state.state = "BACKEND_UNAVAILABLE";
+    if (["READY", "SYNCING"].includes(state.state)) state.state = "BACKEND_UNAVAILABLE";
   }
+  return refreshState;
 }
 var server = await controlServer({ getPage: () => page, username: process.env.ADMIN_USERNAME ?? "admin", password, status: () => state, diagnostics: () => diagnostic, onOpen: open, port: Number(process.env.OA_CONTROL_PORT ?? 8082) });
 console.log("OA connector control is ready; login may be required.");
+var lastCycle = 0;
 var loop = async () => {
   if (stopping) return;
-  await cycle();
-  if (!stopping) setTimeout(loop, pollMs);
+  let requests = [];
+  try {
+    requests = await refreshRequests();
+  } catch {
+  }
+  if (requests.length || Date.now() - lastCycle >= pollMs) {
+    const result = await cycle();
+    lastCycle = Date.now();
+    for (const request of requests) {
+      if (result === "BACKEND_UNAVAILABLE") continue;
+      try {
+        await post(`/api/connectors/line-oa/refresh/${request}`, { state: result });
+      } catch {
+        state.state = "BACKEND_UNAVAILABLE";
+      }
+    }
+  }
+  if (!stopping) setTimeout(loop, 1e3);
 };
 void loop();
 async function stop() {

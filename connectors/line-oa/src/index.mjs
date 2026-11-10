@@ -1,6 +1,6 @@
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
-import { id, listPage, decodeMessages, makeBatches, shape, SchemaError } from "./adapter.mjs";
+import { id, listPage, decodeMessages, makeBatches, decodeChat, incomingAnchors, shape, SchemaError } from "./adapter.mjs";
 import { controlServer } from "./control.mjs";
 
 const required = name => { const value = process.env[name]; if (!value?.trim()) throw new Error(`Missing ${name}`); return value; };
@@ -25,6 +25,13 @@ let page = context.pages()[0] ?? await context.newPage();
 context.on("page", next => { page = next; next.on("close", () => { page = context.pages().find(p => !p.isClosed()) ?? page; }); });
 const state = { state: "NEEDS_LOGIN", synced: 0, pending: 0, last_checked_at: null };
 let diagnostic = {};
+// Observe shapes from the real OA UI as well as the adapter requests. Never expose values.
+context.on("response", async response => {
+  const url = new URL(response.url());
+  if (url.hostname !== "chat.line.biz" || !/^\/api\/v1\/bots\/[^/]+\/(chats|messages)(\/|$)/.test(url.pathname)) return;
+  try { diagnostic[`ui/${url.pathname.includes("/messages") ? "messages" : "chats"}`] = shape(await response.json()); }
+  catch { /* Non-JSON responses are reported by the request status checks. */ }
+});
 let stopping = false;
 const accepted = new Set();
 const open = async () => { state.state = "NEEDS_LOGIN"; await page.goto("https://chat.line.biz/", { waitUntil: "domcontentloaded", timeout: 30000 }); };
@@ -65,19 +72,49 @@ async function post(path, body) {
   return value;
 }
 
+async function refreshRequests() {
+  const r = await fetch(new URL("/api/connectors/line-oa/refresh", backend), {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000)
+  });
+  if (!r.ok) throw new SchemaError("BACKEND_UNAVAILABLE");
+  const value = await r.json();
+  if (!Array.isArray(value.requests) || value.requests.some(value => typeof value !== "string" || !/^[a-f0-9]{24}$/.test(value))) throw new SchemaError("BACKEND_UNAVAILABLE");
+  return value.requests;
+}
+
 async function cycle() {
   state.pending = 0;
+  let refreshState = "DONE";
+  let inboxComplete = false;
   try {
+    const started = Date.now();
     const csrf = await lineGet("/api/v1/csrfToken");
     if (typeof csrf.token !== "string" || csrf.token.length > 4096) throw new SchemaError();
     const bots = listPage(await lineGet("/api/v1/bots?noFilter=true&limit=100", csrf.token)).items;
     if (bots.some(bot => typeof bot.botId !== "string")) throw new SchemaError();
     if (!bots.some(bot => bot.botId === botId)) throw new SchemaError("NEEDS_LOGIN");
     const chats = await pages(`/api/v1/bots/${botId}/chats?folderType=ALL&tagIds=&limit=100`, csrf.token);
+    const threads = [];
+    const snapshots = [];
     let ingested = 0;
     for (const chat of chats) {
-      const chatId = id(chat.chatId ?? chat.id);
+      const metadata = decodeChat(chat);
+      const chatId = metadata.chat_id;
       const raw = await pages(`/api/v1/bots/${botId}/messages/${chatId}?limit=100`, csrf.token);
+      const anchors = incomingAnchors(raw, botId, chat.userId ?? chat.user?.userId);
+      if (anchors.length) snapshots.push({ ...metadata, anchor_message_ids: anchors });
+      threads.push({ chat, chatId, raw });
+    }
+    let linked = 0;
+    for (let offset = 0; offset < snapshots.length; offset += 100) {
+      const result = await post("/api/connectors/line-oa/inbox", { bot_id: botId, started_at_ms: started, chats: snapshots.slice(offset, offset+100) });
+      if (!result) throw new SchemaError("BACKEND_UNAVAILABLE");
+      linked += result.updated;
+    }
+    refreshState = linked < snapshots.length || snapshots.length < chats.length ? "UNLINKED" : "DONE";
+    inboxComplete = true;
+    // Inbox snapshots are independent of the optional outbound-message importer.
+    for (const {chat, chatId, raw} of threads) {
       const messages = decodeMessages(raw, botId, chat.userId ?? chat.user?.userId);
       for (const batch of makeBatches(messages, botId, chatId)) {
         if (!batch) { state.pending++; continue; }
@@ -90,14 +127,33 @@ async function cycle() {
     }
     state.state = state.pending ? "UNLINKED" : ingested || accepted.size ? "SYNCING" : "READY";
     state.last_checked_at = new Date().toISOString();
-  } catch (error) { state.state = error instanceof SchemaError ? (error.code === "UNSUPPORTED_PAGINATION" ? "UNSUPPORTED_SCHEMA" : error.code) : "LINE_UNAVAILABLE"; }
+  } catch (error) {
+    state.state = error instanceof SchemaError ? (error.code === "UNSUPPORTED_PAGINATION" ? "UNSUPPORTED_SCHEMA" : error.code) : "LINE_UNAVAILABLE";
+    if (!inboxComplete) refreshState = state.state;
+  }
   try { await post("/api/connectors/line-oa/status", { state: state.state, synced: state.synced, pending: state.pending }); }
-  catch { state.state = "BACKEND_UNAVAILABLE"; }
+  catch { if (["READY", "SYNCING"].includes(state.state)) state.state = "BACKEND_UNAVAILABLE"; }
+  return refreshState;
 }
 
 const server = await controlServer({ getPage: () => page, username: process.env.ADMIN_USERNAME ?? "admin", password, status: () => state, diagnostics: () => diagnostic, onOpen: open, port: Number(process.env.OA_CONTROL_PORT ?? 8082) });
 console.log("OA connector control is ready; login may be required.");
-const loop = async () => { if (stopping) return; await cycle(); if (!stopping) setTimeout(loop, pollMs); };
+let lastCycle = 0;
+const loop = async () => {
+  if (stopping) return;
+  let requests = [];
+  try { requests = await refreshRequests(); } catch { /* The periodic OA check still supplies diagnostics when backend is disabled. */ }
+  if (requests.length || Date.now() - lastCycle >= pollMs) {
+    const result = await cycle();
+    lastCycle = Date.now();
+    for (const request of requests) {
+      if (result === "BACKEND_UNAVAILABLE") continue;
+      try { await post(`/api/connectors/line-oa/refresh/${request}`, { state: result }); }
+      catch { state.state = "BACKEND_UNAVAILABLE"; }
+    }
+  }
+  if (!stopping) setTimeout(loop, 1000);
+};
 void loop();
 async function stop() { if (stopping) return; stopping = true; state.state = "STOPPED"; server.close(); await context.close(); process.exit(0); }
 process.on("SIGTERM", stop); process.on("SIGINT", stop);

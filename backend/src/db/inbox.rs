@@ -104,7 +104,7 @@ pub async fn decorate(state: &AppState, inquiries: &mut [Document]) -> Result<()
     let records: Vec<Document> = state
         .collection("conversations")
         .find(filter)
-        .projection(doc! {"last_read_event_at":1,"last_read_event_id":1})
+        .projection(doc! {"last_read_event_at":1,"last_read_event_id":1,"oa_unread":1,"oa_through_event_at":1,"oa_through_event_id":1})
         .await?
         .try_collect()
         .await?;
@@ -121,13 +121,29 @@ pub async fn decorate(state: &AppState, inquiries: &mut [Document]) -> Result<()
             .get_object_id("conversation_id")
             .ok()
             .and_then(|c| reads.get(&c));
-        let unread = incoming
+        let mut unread = incoming
             .get(&id)
             .is_some_and(|m| read.is_none_or(|r| key(m) > read_key(r)));
+        let mut source = "alex";
+        if state.config.oa_connector_enabled
+            && let Some(read) = read
+            && let Ok(oa_unread) = read.get_bool("oa_unread")
+            && let Ok(through) = read.get_datetime("oa_through_event_at")
+        {
+            let boundary = (
+                through.timestamp_millis(),
+                read.get_str("oa_through_event_id").unwrap_or(""),
+            );
+            if incoming.get(&id).is_none_or(|m| key(m) <= boundary) {
+                unread = oa_unread;
+                source = "line_oa";
+            }
+        }
         if let Some(message_id) = incoming.get(&id).and_then(|m| m.get_object_id("_id").ok()) {
             inquiry.insert("last_incoming_message_id", message_id);
         }
         inquiry.insert("unread", unread);
+        inquiry.insert("unread_source", source);
     }
     Ok(())
 }
@@ -137,6 +153,7 @@ pub async fn mark_read(
     inquiry_id: ObjectId,
     message_id: ObjectId,
 ) -> Result<&'static str, AppError> {
+    let started = DateTime::now();
     let inquiry = super::drafts::inquiry(state, inquiry_id).await?;
     let conversation_id = inquiry
         .get_object_id("conversation_id")
@@ -160,7 +177,10 @@ pub async fn mark_read(
         .find_one(conversation_filter.clone())
         .await?
         .ok_or(AppError::NotFound)?;
-    if key(&message) <= read_key(&conversation) {
+    if key(&message) <= read_key(&conversation)
+        && !(state.config.oa_connector_enabled
+            && conversation.get_bool("oa_unread").unwrap_or(false))
+    {
         return Ok("ALREADY_READ");
     }
     let token = message
@@ -204,6 +224,24 @@ pub async fn mark_read(
     state.collection("conversations").update_one(conversation_filter, doc! {"$set":{
         "last_read_event_at":at,"last_read_event_id":event_id,"last_read_at":DateTime::now(),"updated_at":DateTime::now()
     }}).await?;
+    if line_status == "SYNCED" && state.config.oa_connector_enabled {
+        let mut filter = state.scope();
+        filter.extend(doc! {"_id":conversation_id,"$and":[
+            {"$or":[{"oa_observed_at":{"$exists":false}},{"oa_observed_at":{"$lte":started}}]},
+            {"$or":[{"oa_through_event_at":{"$exists":false}},{"oa_through_event_at":{"$lt":at}},
+                {"oa_through_event_at":at,"oa_through_event_id":{"$lte":event_id}}]}
+        ]});
+        state
+            .collection("conversations")
+            .update_one(
+                filter,
+                doc! {"$set":{
+                    "oa_unread":false,"oa_local_read_at":DateTime::now(),"oa_through_event_at":at,
+                    "oa_through_event_id":event_id,"updated_at":DateTime::now()
+                }},
+            )
+            .await?;
+    }
     Ok(line_status)
 }
 

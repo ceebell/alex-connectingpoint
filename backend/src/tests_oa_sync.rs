@@ -46,6 +46,11 @@ async fn disabled_oa_connector_is_hidden_and_rejected_before_database_access() {
     let batch = json!({"bot_id":"test-destination","chat_id":"chat","anchor_message_ids":["known"],"messages":[{"id":"msg","text":"fixture","sent_at_ms":1000}]});
     for (path, body) in [
         ("/api/connectors/line-oa/messages", batch),
+        ("/api/connectors/line-oa/inbox", json!({})),
+        (
+            "/api/connectors/line-oa/refresh/000000000000000000000000",
+            json!({"state":"DONE"}),
+        ),
         (
             "/api/connectors/line-oa/status",
             json!({"state":"SYNCING","synced":0,"pending":0}),
@@ -60,6 +65,24 @@ async fn disabled_oa_connector_is_hidden_and_rejected_before_database_access() {
         request(&state, "/api/line/oa-sync/status", "GET", Value::Null, true).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"state":"NOT_CONFIGURED"}));
+    assert_eq!(
+        request(&state, "/api/line/oa-sync/refresh", "POST", json!({}), true)
+            .await
+            .1,
+        json!({"state":"NOT_CONFIGURED"})
+    );
+    assert_eq!(
+        request(
+            &state,
+            "/api/connectors/line-oa/refresh",
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]

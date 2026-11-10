@@ -4,6 +4,11 @@ use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     for (collection, keys, unique) in [
         (
+            "oa_sync_requests",
+            doc! {"shop_id":1,"channel_id":1,"state":1,"created_at":1},
+            false,
+        ),
+        (
             "bill_reviews",
             doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
             false,
@@ -169,6 +174,19 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             )
             .await?;
     }
+    state
+        .collection("oa_sync_requests")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"created_at":1})
+                .options(
+                    IndexOptions::builder()
+                        .expire_after(std::time::Duration::from_secs(86400))
+                        .build(),
+                )
+                .build(),
+        )
+        .await?;
     // `active` used to stay set on finished bills, which blocked another bill with the same items and dates.
     // It now marks only a send in progress; clear it on bills Alex has already answered (idempotent).
     state

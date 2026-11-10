@@ -1,0 +1,86 @@
+/* Fill the desktop viewport; each workspace panel owns its scrolling. */
+@media (min-width: 1025px), (min-width: 768px) and (min-height: 601px) {
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell .sidebar {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .app-shell .main-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .app-shell .page-header {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 18px 24px;
+  }
+
+  .app-shell .page-header > div:first-child {
+    min-width: 0;
+  }
+
+  .app-shell .page-notice {
+    flex-shrink: 0;
+    max-height: 25dvh;
+    margin: 0 24px 12px;
+    overflow-y: auto;
+  }
+
+  .app-shell .workspace {
+    flex: 1;
+    grid-template-rows: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+  }
+
+  .app-shell .workspace > section {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .app-shell .workspace .inquiry-list,
+  .app-shell .workspace .chat-stream,
+  .app-shell .workspace .draft-content {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .app-shell .workspace .panel-heading,
+  .app-shell .workspace .search-box,
+  .app-shell .workspace .reply-box,
+  .app-shell .workspace .chat-footer,
+  .app-shell .workspace .draft-footer {
+    flex-shrink: 0;
+  }
+
+  .app-shell .workspace .reply-box {
+    max-height: 45%;
+    overflow-y: auto;
+  }
+}
+
+/* Keep the existing two-column tablet layout within the same viewport. */
+@media (min-width: 768px) and (max-width: 850px) and (min-height: 601px) {
+  .app-shell .workspace {
+    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}

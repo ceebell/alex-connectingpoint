@@ -138,6 +138,220 @@ async fn lazy_state(cfg: Config) -> AppState {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn oa_inbox_refresh_tracks_names_and_read_flags_without_losing_new_messages() {
+    let (base, mock) = mock_line().await;
+    let mut cfg = line_config(&base);
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    cfg.burst_ms = 0;
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let mut first = event("oa-inbox-first", "Uoa-inbox", 1000);
+    first.message.as_mut().unwrap()["markAsReadToken"] = json!("oa-inbox-token");
+    events::persist(&state, &first).await.unwrap();
+    drain(&state).await;
+    let inquiry = all(&state, "inquiries").await.remove(0);
+    let inquiry_id = inquiry.get_object_id("_id").unwrap();
+    let incoming = all(&state, "line_events")
+        .await
+        .remove(0)
+        .get_object_id("_id")
+        .unwrap();
+    let snapshot = |name: &str, unread: bool, anchors: Vec<&str>| {
+        json!({
+            "bot_id":"test-destination","started_at_ms":DateTime::now().timestamp_millis(),
+            "chats":[{"chat_id":"chat-exact","anchor_message_ids":anchors,"display_name":name,"unread":unread}]
+        })
+    };
+    let path = "/api/connectors/line-oa/inbox";
+    let old = snapshot("OA custom name", false, vec!["1001000"]);
+    assert_eq!(
+        request(&state, path, "POST", old.clone(), true).await.1["updated"],
+        1
+    );
+    let list = request(&state, "/api/inquiries", "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(list[0]["customer"]["display_name"], "OA custom name");
+    assert_eq!(list[0]["unread"], false);
+    assert_eq!(list[0]["unread_source"], "line_oa");
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let unread = snapshot("Renamed in OA", true, vec!["1001000"]);
+    assert_eq!(
+        request(&state, path, "POST", unread.clone(), true).await.0,
+        StatusCode::OK
+    );
+    let list = request(&state, "/api/inquiries", "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(list[0]["customer"]["display_name"], "Renamed in OA");
+    assert_eq!(list[0]["unread"], true);
+    request(&state, path, "POST", old, true).await;
+    let list = request(&state, "/api/inquiries", "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(list[0]["customer"]["display_name"], "Renamed in OA");
+    assert_eq!(list[0]["unread"], true);
+    let read_path = format!("/api/inquiries/{inquiry_id}/read");
+    let read = json!({"message_id":incoming.to_hex()});
+    assert_eq!(
+        request(&state, &read_path, "POST", read.clone(), true)
+            .await
+            .1["line_read_status"],
+        "SYNCED"
+    );
+    assert_eq!(
+        request(&state, &read_path, "POST", read.clone(), true)
+            .await
+            .1["line_read_status"],
+        "ALREADY_READ"
+    );
+    request(&state, path, "POST", unread, true).await;
+    assert_eq!(
+        request(&state, "/api/inquiries", "GET", Value::Null, true)
+            .await
+            .1[0]["unread"],
+        false
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    request(
+        &state,
+        path,
+        "POST",
+        snapshot(
+            "OA original name after nickname removal",
+            true,
+            vec!["1001000"],
+        ),
+        true,
+    )
+    .await;
+    assert_eq!(
+        request(&state, &read_path, "POST", read, true).await.1["line_read_status"],
+        "SYNCED"
+    );
+    assert_eq!(
+        mock.reads.lock().await.len(),
+        2,
+        "Re-marking unread in OA must allow another LINE read request for the same message"
+    );
+    let prior = snapshot("Before newer message", false, vec!["1001000", "1002000"]);
+    events::persist(&state, &event("oa-inbox-newer", "Uoa-inbox", 2000))
+        .await
+        .unwrap();
+    drain(&state).await;
+    request(&state, path, "POST", prior, true).await;
+    let list = request(&state, "/api/inquiries", "GET", Value::Null, true)
+        .await
+        .1;
+    assert_eq!(
+        list[0]["unread"], true,
+        "A snapshot collected before the new webhook must not clear it, even when its anchor ID was included"
+    );
+    let mut other = state.clone();
+    let mut cfg = (*state.config).clone();
+    cfg.shop_id = "other-shop".into();
+    other.config = Arc::new(cfg);
+    assert_eq!(
+        request(
+            &other,
+            path,
+            "POST",
+            snapshot("Wrong shop", false, vec!["1001000"]),
+            true
+        )
+        .await
+        .1["unlinked"],
+        1
+    );
+    for invalid in [
+        json!({}),
+        json!({"bot_id":"wrong-bot","started_at_ms":DateTime::now().timestamp_millis(),"chats":[]}),
+        json!({"bot_id":"test-destination","started_at_ms":0,"chats":[]}),
+    ] {
+        assert_eq!(
+            request(&state, path, "POST", invalid, true).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        request(
+            &state,
+            path,
+            "POST",
+            snapshot("Unauthenticated", true, vec!["1001000"]),
+            false
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let refresh = request(&state, "/api/line/oa-sync/refresh", "POST", json!({}), true)
+        .await
+        .1;
+    let id = refresh["request_id"].as_str().unwrap();
+    let pending = request(
+        &state,
+        "/api/connectors/line-oa/refresh",
+        "GET",
+        Value::Null,
+        true,
+    )
+    .await
+    .1;
+    assert!(pending["requests"].as_array().unwrap().contains(&json!(id)));
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/line/oa-sync/refresh/{id}"),
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .1["state"],
+        "PENDING"
+    );
+    assert_eq!(
+        request(
+            &other,
+            &format!("/api/line/oa-sync/refresh/{id}"),
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/connectors/line-oa/refresh/{id}"),
+            "POST",
+            json!({"state":"DONE"}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            &state,
+            &format!("/api/line/oa-sync/refresh/{id}"),
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .1["state"],
+        "DONE"
+    );
+    state.db.drop().await.unwrap();
+}
+
 async fn get(state: &AppState, uri: &str, cookie: Option<&str>) -> axum::response::Response {
     let mut request = Request::builder().uri(uri);
     if let Some(cookie) = cookie {

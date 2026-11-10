@@ -5,6 +5,7 @@ mod customers;
 mod drafts;
 mod inbox;
 mod mcp;
+mod oa_inbox;
 mod oa_sync;
 mod products;
 mod session;
@@ -110,6 +111,8 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/line/events/{id}/retry", post(admin::retry))
         .route("/api/line/status", get(admin::status))
         .route("/api/line/oa-sync/status", get(oa_sync::status))
+        .route("/api/line/oa-sync/refresh", post(oa_inbox::refresh))
+        .route("/api/line/oa-sync/refresh/{id}", get(oa_inbox::status))
         .route("/api/media/{id}", get(admin::media))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -132,6 +135,12 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         )
         .route("/api/connectors/line-oa/messages", post(oa_sync::ingest))
         .route("/api/connectors/line-oa/status", post(oa_sync::heartbeat))
+        .route("/api/connectors/line-oa/inbox", post(oa_inbox::ingest))
+        .route("/api/connectors/line-oa/refresh", get(oa_inbox::pending))
+        .route(
+            "/api/connectors/line-oa/refresh/{id}",
+            post(oa_inbox::finish),
+        )
         .merge(admin)
         .fallback(|| async { AppError::NotFound })
         .method_not_allowed_fallback(|| async { AppError::MethodNotAllowed })

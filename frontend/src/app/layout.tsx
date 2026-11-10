@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Mitr } from "next/font/google";
 import "./globals.css";
+import "./workspace-layout.css";
 import "./mobile.css";
 
 const mitr = Mitr({ subsets: ["thai", "latin"], weight: ["300", "400", "500", "600", "700"], variable: "--font-mitr", display: "swap" });

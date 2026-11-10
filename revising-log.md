@@ -4,6 +4,44 @@
 
 <!-- entries -->
 
+## 2026-11-10 00:58 — ปรับหน้าหลังบ้านเต็มขอบจอและเลื่อนแต่ละคอลัมน์
+- **คำอธิบาย:** ผู้ใช้ต้องการ layout เต็มจอถึงขอบล่างเหมือน LINE OA เปลี่ยนพื้นที่ทำงาน desktop ให้ยึด viewport จริง ตัดระยะรอบการ์ดด้านข้าง/ล่างและเพดานความสูงเดิม โดยคอลัมน์รายชื่อ แชท และร่างออเดอร์เลื่อนแยกกัน
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `workspace-layout.css` — เพิ่ม: desktop app shell แบบ fixed/inset และ 100dvh, main content แบบ flex ใช้พื้นที่ที่เหลือหลัง header/notice, workspace ไม่มีขอบมนหรือ gutter และยืดถึงขอบขวา/ล่าง; กำหนด min-height:0 และ scrolling ภายใน panel รักษา footer/ช่องตอบให้เข้าถึงได้ รวม tablet สองคอลัมน์และหน้าต่างเตี้ย
+  - `layout.tsx` — แก้: โหลด stylesheet ของ workspace หลัง globals และก่อน mobile เพื่อใช้พฤติกรรมมือถือ/แนวนอนที่มีอยู่
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261109175604-ea0aceb3acff` พร้อม static/runtime/metadata/checksum สำหรับ deploy Ubuntu
+- **ผลตรวจสอบ:** frontend lint/build และ TypeScript ผ่านใน local Linux build; ตรวจ checksum ครบ 2,108 ไฟล์/metadata Linux/amd64 และไม่มี .env ผ่าน; git diff --check ผ่าน
+- **ทดสอบหน้าจอ:** WebKit จาก compiled release จริงผ่าน 10 viewport (มือถือแนวตั้ง/แนวนอน แท็บเล็ต จอ 1440/1920 จอสูง 1600 และหน้าต่างเตี้ย) ตรวจขอบขวา/ล่างตรง viewport ไม่มี document overflow, เปลี่ยนขนาดหน้าต่างขณะมี notice หลายบรรทัดและข้อมูลยาว เลื่อนทั้งสามคอลัมน์ได้โดย footer ยังอยู่ในจอ รวมการสลับ panel/แท็บ ฟอร์ม บิล คีย์บอร์ด และข้อความที่พิมพ์ค้างไว้ ผ่านทั้งหมด ใช้ API จำลอง ไม่เปิด dev app/SSH tunnel หรือส่งสถานะอ่านไป LINE จริง
+- **ภาพและตัวตรวจ:** `data/layout-fullheight-check/` ถูก ignore; `desktop-workspace.png` แสดงหน้าปกติ และ `desktop-fullheight.png` แสดงกรณีข้อมูลยาว/notice สำหรับตรวจ layout
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat เพื่อส่ง source และ release แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main (แพ็กเกจ/deploy แบบ full-stack ใช้ precompiled release เท่านั้น) งานนี้ยังไม่ได้ commit/push/deploy และคงการแก้ไขงาน OA ที่มีอยู่ก่อนเริ่มทั้งหมด
+
+## 2026-11-09 22:34 — เพิ่มซิงก์ชื่อและ read/unread จาก OA เมื่อโหลดข้อมูลใหม่
+- **คำอธิบาย:** ผู้ใช้เปลี่ยนข้อกำหนดให้ชื่อที่ตั้งเองและสถานะอ่าน/ยังไม่อ่านอิง OA Manager และรับการเปลี่ยนจาก OA กลับมาเมื่อเปิดหน้าหรือกดโหลดข้อมูล เพิ่มทางซิงก์ผ่าน browser connector เนื่องจาก Messaging API ให้โปรไฟล์และส่งอ่านแล้วได้ แต่ไม่มี webhook แจ้งชื่อที่ตั้งใน OA หรือการสลับ read/unread จาก OA Manager
+- **โฟลเดอร์ `backend/src/`**
+  - `models/oa_inbox.rs`, `routes/oa_inbox.rs`, `db/oa_inbox.rs` — เพิ่ม: รับ snapshot ชื่อและสถานะอ่าน จับคู่บทสนทนา 1:1 ด้วย message ID ที่ตรง webhook แยกร้าน/ช่องทาง ตรวจ bot/input/เวลา ป้องกัน snapshot เก่าทับการอ่านใหม่ และสร้าง/อ่าน/จบงานขอรีเฟรชสำหรับตัวเชื่อม
+  - `db/users.rs` — แก้: ให้ชื่อจาก OA มาก่อนชื่อโปรไฟล์แคชเมื่อเปิดตัวเชื่อม โดยไม่เขียนทับชื่อโปรไฟล์ต้นฉบับ
+  - `db/inbox.rs` — แก้: เลือก unread จาก OA เมื่อครอบคลุมข้อความนั้น ระบุแหล่งสถานะ ไม่ล้างข้อความใหม่ที่อยู่นอก snapshot และให้ส่งอ่านแล้วซ้ำได้หากข้อความเดิมถูกตั้ง unread ใน OA อีกครั้ง
+  - `db/indexes.rs`, `db/mod.rs`, `models/mod.rs`, `routes/mod.rs` — แก้: ลงทะเบียนโมดูล/route และ index งานซิงก์พร้อม TTL หนึ่งวัน; browser ใช้ admin session/X-Admin-Request ส่วน connector รับ Bearer token เท่านั้น
+  - `tests_line.rs`, `tests_oa_sync.rs` — แก้: เพิ่ม integration test ชื่อ/read/unread สลับกลับไปมา retry ข้อความเดิม tenant/auth/input/queue และ race ขณะมีข้อความใหม่ รวม millisecond เดียวกัน
+- **โฟลเดอร์ `connectors/line-oa/`**
+  - `src/adapter.mjs` — แก้: decode ชื่อ/nickname และ unread แบบตรวจชนิดข้อมูล ไม่ตีความค่าที่หายเป็นอ่านแล้ว พร้อม anchor ข้อความรูป/สื่อของลูกค้า
+  - `src/index.mjs` — แก้: ส่ง snapshot ชื่อ/read state และตรวจคิวรีเฟรชทุกวินาที รักษาการอ่าน OA แบบ GET/HEAD เท่านั้น เพิ่ม schema diagnostics จาก response ของ OA UI เฉพาะชื่อฟิลด์/ชนิดข้อมูล และไม่กลบสาเหตุ OA ผิดพลาดด้วย backend error
+  - `test/adapter.test.mjs` — แก้: ตรวจ nickname เปลี่ยน/ถูกลบ read/unread ทั้งสองทาง สื่อ และ schema ที่ไม่ชัดเจน
+- **โฟลเดอร์ `frontend/src/`**
+  - `components/admin-workspace.tsx` — แก้: ขอรอบซิงก์เมื่อเปิดหน้า/โหลดข้อมูลใหม่ แสดงกำลังซิงก์และรอผลก่อนอ่านรายชื่อ โหลดหน้าที่เคยเปิดเพิ่มใหม่ด้วย แจ้งเมื่อใช้ข้อมูลเก่า แยกชื่อสถานะอ่าน OA/Alex และให้กดเปิดแชทเดิมเพื่อส่งอ่านแล้วอีกครั้ง
+  - `lib/api.ts` — แก้: เพิ่มชนิดข้อมูลแหล่ง unread
+- **โฟลเดอร์ `docs/`**
+  - `line-oa-auto-sync.md`, `step-1-line-inquiry.md` — แก้: อธิบายพฤติกรรมใหม่ API ข้อจำกัด schema และขั้นตอนเปิดตัวเชื่อม แม้ตอบลูกค้าจาก Alex เป็นหลัก
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — แก้: local Linux/amd64 release `rel-20261109152758-6d45ca9228d0`
+  - `frontend-linux/` — แก้: local standalone release `front-20261109152751-8066fd8114ba`
+  - `oa-connector-linux/` — แก้: local compiled connector release `oa-20261109152421-01c6d2488d1b`
+- **ผลตรวจสอบ:** cargo fmt/check และ clippy --all-targets -D warnings ผ่าน; cargo test -- --include-ignored ผ่านครบ 50 กรณีด้วย MongoDB แยกสำหรับทดสอบ; frontend lint/build ผ่าน; connector unit/control 6 กรณีผ่าน; ตรวจ backend checksum, frontend 2,108 checksum และ connector 182 checksum/tag ผ่าน ไม่มี .env ใน releases
+- **ทดสอบระบบจำลอง:** WebKit ผ่าน 6 ขนาดจอและกรณีกดโหลดข้อมูลเพื่อเปลี่ยนชื่อ/read/unread/เปิดแชทเดิมอีกครั้ง; compiled Linux connector กับ Chromium จริงผ่านคิวรีเฟรช เปลี่ยน/ลบ nickname สลับ read flags และปฏิเสธ schema ไม่รองรับ/การเขียนผ่าน OA UI โดย mock LINE responses ทั้งหมด ไม่ส่งข้อความหรือสถานะอ่านให้ลูกค้าจริง ตัวตรวจอยู่ใน `data/oa-inbox-check/` ที่ถูก ignore และหยุด container/network ทดสอบแล้ว
+- **ข้อจำกัดก่อนเปิดใช้จริง:** ตรวจ Ubuntu แบบอ่านอย่างเดียวพบ OA_CONNECTOR_ENABLED ยังไม่ได้ตั้ง (default false), backend ตอบ NOT_CONFIGURED, schema มีเพียง csrf/bots และ browser control /screen ตอบ 503 จึงยังไม่ยืนยัน schema ชื่อ/unread ของบัญชี OA จริง contract ของ adapter ยังต้องตรวจหลัง deploy ห้ามถือว่าทดสอบ production ผ่าน ไม่มีการแก้ .env/server config หรือ commit/push/deploy ในงานนี้
+- **ขั้นตอนถัดไป:** ผู้ใช้ส่ง source/release ด้วย rungit.bat; บน Ubuntu คงค่า .env เดิมแล้วตั้ง OA_CONNECTOR_ENABLED=true, รัน deploy-all.sh main และ sudo bash ./deploy-oa-connector.sh; ใช้ login-oa.bat หากต้องล็อกอินใหม่ แล้วตรวจ schema/เปลี่ยนชื่อและ read/unread จริง การ deploy ต้องใช้ sudo password ซึ่ง SSH ของ agent ยังไม่มี
+
 ## 2026-11-09 21:24 — เอาสถานะใต้การ์ดแชทออกครบและตรวจ release ก่อน deploy
 - **คำอธิบาย:** ผู้ใช้ขอข้อความตัวอย่างแทนรหัสเรื่อง ไม่แสดงสถานะใต้การ์ด และจุดเขียวอ่านแชท โดยยืนยันในงานนี้ให้อิงการอ่านใน Alex เป็นหลักและส่งอ่านแล้วไป LINE พบว่าโค้ดเดิมรองรับ preview/unread/markAsRead แล้ว แต่ยังเหลือบรรทัดร่างและอนุมัติร่างใต้การ์ด จึงนำออกให้ครบตามคำขอ
 - **โฟลเดอร์ `frontend/src/components/`**

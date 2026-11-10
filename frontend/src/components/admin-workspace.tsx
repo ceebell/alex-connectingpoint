@@ -61,6 +61,8 @@ export default function AdminWorkspace() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const inquiriesRef = useRef<Inquiry[]>([]);
+  const [syncingInbox, setSyncingInbox] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"inquiries" | "chat" | "draft">("inquiries");
@@ -96,6 +98,7 @@ export default function AdminWorkspace() {
   const current = inquiries.find(inquiry => inquiry._id === selected);
   const canApprove = !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { inquiriesRef.current = inquiries; }, [inquiries]);
   useEffect(() => {
     const app = appRef.current;
     const root = document.documentElement;
@@ -165,11 +168,42 @@ export default function AdminWorkspace() {
     if (!session) return;
     let cancelled = false;
     let loading = false;
+    let syncOnLoad = true;
     async function load() {
       if (cancelled || loading || document.hidden) return;
       loading = true;
       try {
-        const items = await api<Inquiry[]>("/api/inquiries");
+        if (syncOnLoad) {
+          syncOnLoad = false;
+          setSyncingInbox(true);
+          try {
+            const request = await api<{ state: string; request_id?: string }>("/api/line/oa-sync/refresh", { method: "POST", body: "{}" });
+            let state = request.state;
+            for (let attempt = 0; state === "PENDING" && attempt < 60; attempt++) {
+              await new Promise(resolve => window.setTimeout(resolve, 1000));
+              if (cancelled) return;
+              state = (await api<{ state: string }>(`/api/line/oa-sync/refresh/${request.request_id}`)).state;
+            }
+            if (!cancelled && state !== "DONE") {
+              const reason = state === "NOT_CONFIGURED" ? "ยังไม่ได้เชื่อม LINE OA" : state === "PENDING" ? "ซิงก์ LINE OA ไม่ทัน กรุณาลองโหลดข้อมูลอีกครั้ง" : oaStates[state] ?? "ซิงก์ LINE OA ไม่สำเร็จ";
+              setError(`${reason} ชื่อและสถานะอ่านที่แสดงอาจยังเป็นข้อมูลเดิม`);
+            }
+          } catch (cause) {
+            if (cause instanceof ApiError && cause.status === 401) throw cause;
+            if (!cancelled) setError("ซิงก์ชื่อและสถานะอ่านจาก LINE OA ไม่สำเร็จ ข้อมูลที่แสดงอาจยังเป็นข้อมูลเดิม");
+          } finally { if (!cancelled) setSyncingInbox(false); }
+        }
+        if (cancelled) return;
+        const items: Inquiry[] = [];
+        let before: Inquiry | undefined;
+        const pages = Math.max(1, Math.ceil(inquiriesRef.current.length / 100));
+        for (let page = 0; page < pages; page++) {
+          const records = await api<Inquiry[]>(`/api/inquiries${before ? `?before=${before._id}&before_at=${inquiryActivity(before)}` : ""}`);
+          if (cancelled) return;
+          items.push(...records);
+          if (records.length < 100) break;
+          before = records[records.length - 1];
+        }
         if (!cancelled) setInquiries(previous => mergeInquiries(previous, items));
       } catch (cause) {
         if (!cancelled) {
@@ -309,7 +343,11 @@ export default function AdminWorkspace() {
   function selectInquiry(id: string) {
     setMobilePanel("chat");
     // Re-selecting the open inquiry must not reset it: the load effect only reruns when the ID changes.
-    if (id === selected) return;
+    if (id === selected) {
+      if (current?.unread) { lastReadMessage.current = ""; setMessages(previous => [...previous]); }
+      return;
+    }
+    lastReadMessage.current = "";
     summaryDirty.current = false; setSummaryEdited(false); setSavedSummary(null); setSummaryConflict(false);
     setAttachments([]);
     setSelected(id); setSummary(""); setImages([]); setMessages([]); setDrafts([]); setVersion(0); setJob(null); setOrder(null); setApproveChecked(false); setError(""); setLoading(true); setTab("summary");
@@ -436,12 +474,12 @@ export default function AdminWorkspace() {
 
   return <div className="app-shell" ref={appRef}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">a<span>•</span></div><div><strong>alex</strong><small>connecting point</small></div></div><span className="nav-heading">พื้นที่ทำงาน</span><Link className="nav-item active" href="/" aria-current="page"><span aria-hidden="true">▤</span> แชทและ inquiry <span className="nav-count">{inquiries.length}</span></Link><div className="sidebar-note"><span className="online-dot" /> รับเรื่องจาก LINE OA<p>อ่านแชท เตรียมร่าง<br />แล้วตรวจสอบก่อนส่งต่อ</p></div><div className="sidebar-account"><div className="avatar">{session.username.charAt(0).toUpperCase()}</div><div><strong>{session.username}</strong><small>{session.login === "line" ? "เข้าด้วย LINE" : "ผู้ดูแลหลังบ้าน"}</small></div><button title="ออกจากระบบ" aria-label="ออกจากระบบ" className="icon-button" onClick={logout}>↪</button></div></aside>
-    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">โหลดข้อมูลล่าสุด</span></button></div></header>
+    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
       <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
         {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
           <div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div>
-          <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title="ยังไม่ได้อ่านใน Alex"><span className="sr-only">ยังไม่ได้อ่านใน Alex</span></span>}</div>
+          <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title={inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}><span className="sr-only">{inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}</span></span>}</div>
         </button>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
