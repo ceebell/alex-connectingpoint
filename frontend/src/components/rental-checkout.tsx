@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, cleanPhone, codeLabel, CodeName, errorText, PAYMENT_METHODS, Profile, RECEIVING_METHODS, STORE_PICKUP, UNPAID } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
+import DateInput from "./date-input";
+import { formatDate as day, formatDateTime } from "@/lib/dates";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
 type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number };
@@ -13,7 +15,6 @@ type Review = { review_id: string; group: Group; queue: Omit<Availability, "chec
 const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const nights = (pickup: string, returned: string) => Math.max(1, Math.round((Date.parse(returned) - Date.parse(pickup)) / 86_400_000));
 const badges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
-const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
 const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่งเข้า Alex", SUBMIT_UNKNOWN: "ส่งแล้ว · ยังไม่ได้เลขออเดอร์", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
 const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
 
@@ -153,7 +154,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
             <label>วิธีมารับ<select required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
             <label>ค่าจัดส่ง (บาท)<input required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
             {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select value={value} onChange={e => { set(e.target.value); invalidate(); }}>{PAYMENT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>)}
-            <label>วันเกิด (ถ้าทราบ)<input type="date" value={birth} onChange={e => { setBirth(e.target.value); invalidate(); }} /></label>
+            <label>วันเกิด (ถ้าทราบ)<DateInput value={birth} disabled={working} onChange={value => { setBirth(value); invalidate(); }} /></label>
           </div>
           {Number(shipping) > 0 && <p className="notice info">ค่าจัดส่ง {baht(satang(shipping))} บาท จะบันทึกต่อท้ายหมายเหตุของออเดอร์ใน Alex (Alex ไม่มีช่องค่าส่งแยก)</p>}
           <label>หมายเหตุ / อุปกรณ์<textarea rows={2} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
@@ -180,7 +181,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     </form>}
     {review && <section className="invoice-confirm">
       <p><strong>พร้อมส่ง:</strong> วิธีมารับ {review.receiving_method} · ชำระค่าเช่า {review.rental_payment_method} · ค่าประกัน {review.bail_payment_method}</p>
-      <p className="muted small">{expired ? "ใบตรวจหมดอายุแล้ว กรุณากดตรวจคิวและเตรียมบิลใหม่" : `ใบตรวจใช้ได้ถึง ${new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(review.expires_at))} น.`}</p>
+      <p className="muted small">{expired ? "ใบตรวจหมดอายุแล้ว กรุณากดตรวจคิวและเตรียมบิลใหม่" : `ใบตรวจใช้ได้ถึง ${formatDateTime(review.expires_at)} น.`}</p>
       {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ เวอร์ชันนี้จะขึ้นว่าส่งแล้วแต่ยังไม่มีเลขออเดอร์ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ภายหลังได้</p>}
       {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul>
         <label className="checkbox-row"><input type="checkbox" checked={acceptQueue} disabled={working} onChange={e => setAcceptQueue(e.target.checked)} />{review.queue.state === "UNAVAILABLE" ? "ทราบว่าติดคิว" : "ทราบว่ายังตรวจคิวไม่ได้"} ตกลงส่งออเดอร์เข้า Alex ต่อ</label></div>}

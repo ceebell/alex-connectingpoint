@@ -5,9 +5,10 @@ import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAm
 import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
 import RentalCheckout from "./rental-checkout";
+import DateInput from "./date-input";
+import { formatDate as day } from "@/lib/dates";
 
 const rentalKeys = Object.keys(emptyRental()) as (keyof Rental)[];
-const day = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }).format(new Date(`${value}T00:00:00+07:00`));
 const quotedKeys = ["rental_fee_satang", "deposit_satang", "shipping_fee_satang"] as const;
 
 // Older drafts kept dates, fees and notes per item; lift them to the order, which is what Alex books.
@@ -78,6 +79,13 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
 }
 
 export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void }) {
+  const form = useRef<HTMLDivElement>(null);
+  function validDates() {
+    for (const input of form.current?.querySelectorAll<HTMLInputElement>(".date-input-text") ?? []) {
+      if (!input.reportValidity()) return false;
+    }
+    return true;
+  }
   // A version that was sent to Alex or cancelled stays as it was; work continues on a clone.
   const closed = draft?.state === "SENT" || draft?.state === "CANCELLED";
   const [fields, setFields] = useState<Fields>(() => orderLevel(initial));
@@ -130,7 +138,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const aboveCatalog = !!cart.length && ((amount("rental_fee_satang") ?? 0) > rentalTotal || (amount("deposit_satang") ?? 0) > depositTotal);
   const tooMuch = !!cart.length && (rentalDiscount > rentalTotal || depositDiscount > depositTotal);
 
-  return <div className="draft-form">
+  return <div ref={form} className="draft-form">
     {closed && draft && <div className={`notice ${draft.state === "SENT" ? "success" : "warning"}`} role="status">
       <strong>{draft.state === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชัน {draft.draft_version} ส่งเข้า Alex แล้ว{draft.bill?.alex_order_id && ` · เลขออเดอร์ ${draft.bill.alex_order_id}`}</> : `ร่างเวอร์ชัน ${draft.draft_version} ถูกยกเลิกแล้ว`}</strong>
       <p>{draft.state === "SENT" ? "งานนี้ปิดแล้ว แก้ไขหรือส่งซ้ำไม่ได้" : "แก้ไขหรือส่งเข้า Alex ไม่ได้อีก"} — ถ้าต้องการใช้ข้อมูลนี้ต่อ ให้โคลนเป็นเวอร์ชันใหม่ (ตะกร้าของเวอร์ชันนี้จะกลับมาด้วย)</p>
@@ -150,7 +158,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
         return <button type="button" key={i} className={`request-chip ${chosen ? "selected" : ""}`} aria-pressed={chosen} disabled={busy} onClick={() => setFields(current => ({ ...current, rental: { ...current.rental, pickup_date: option.pickup_date ?? current.rental.pickup_date, return_date: option.return_date ?? current.rental.return_date } }))}>{option.label}<span> · รับ {option.pickup_date ? day(option.pickup_date) : "ยังไม่ระบุ"} – คืน {option.return_date ? day(option.return_date) : "ยังไม่ระบุ"}</span></button>;
       })}</div>}
       <div className="field-grid">
-        {(["pickup_date", "return_date"] as const).map(key => <label key={key}>{labels[`rental.${key}`]}<input type="date" value={fields.rental[key] ?? ""} disabled={busy} onChange={e => setRental(key, e.target.value)} /></label>)}
+        {(["pickup_date", "return_date"] as const).map(key => <label key={key}>{labels[`rental.${key}`]}<DateInput value={fields.rental[key] ?? ""} disabled={busy} onChange={value => setRental(key, value)} /></label>)}
         <label>วิธีมารับ<select value={receiving} disabled={busy} onChange={e => setReceiving(e.target.value)}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
       </div>
       <QueueCheck inquiryId={inquiryId} pickup={fields.rental.pickup_date} returned={fields.rental.return_date} count={cart.length} result={availability} disabled={busy} onResult={result => setQueue({ key: queueKey, result })} onUnauthorized={onUnauthorized} />
@@ -171,9 +179,9 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
     <details className="product-filters"><summary>ข้อมูลอื่นในร่าง</summary><div className="field-grid">{text("intent")}{text("branch")}</div></details>
     <label className="checkbox-row"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />ยืนยันข้อมูลที่กรอกครบในร่างนี้</label>
     <p className="muted small">ตะกร้าบันทึกทันทีเมื่อเพิ่มหรือแก้จำนวน ส่วนลูกค้า วันที่ ส่วนลด และหมายเหตุบันทึกเมื่อกดปุ่มด้านล่าง</p>
-    <button type="button" className={`button ${dirty || !draft ? "primary" : "secondary"} full`} disabled={busy || tooMuch} onClick={() => onSave(fields, confirm)}>{busy ? "กำลังบันทึก…" : "บันทึกร่างเป็นเวอร์ชันใหม่"}</button>
+    <button type="button" className={`button ${dirty || !draft ? "primary" : "secondary"} full`} disabled={busy || tooMuch} onClick={() => { if (validDates()) void onSave(fields, confirm); }}>{busy ? "กำลังบันทึก…" : "บันทึกร่างเป็นเวอร์ชันใหม่"}</button>
     <div className="order-submit">
-      <button type="button" className={`button ${dirty || !draft ? "secondary" : "primary"} full`} disabled={busy || dirty || !draft || !cart.length} onClick={() => setInvoice(true)}><span aria-hidden="true">🧾</span> สรุปออเดอร์และส่งเข้า Alex</button>
+      <button type="button" className={`button ${dirty || !draft ? "secondary" : "primary"} full`} disabled={busy || dirty || !draft || !cart.length} onClick={() => { if (validDates()) setInvoice(true); }}><span aria-hidden="true">🧾</span> สรุปออเดอร์และส่งเข้า Alex</button>
       <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอด เช็คคิว และยืนยันส่งออเดอร์เข้า Alex"}</p>
     </div>
     </fieldset>

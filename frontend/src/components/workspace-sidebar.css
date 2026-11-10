@@ -1,0 +1,180 @@
+.app-shell .sidebar.sidebar-rail {
+  position: relative;
+  z-index: 10;
+  width: 64px;
+  flex: 0 0 64px;
+  height: 100%;
+  min-height: 0;
+  gap: 20px;
+  padding: 16px 8px 12px;
+  overflow: visible;
+}
+
+.rail-brand {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+}
+
+.sidebar-rail .brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  padding-right: 4px;
+  font-size: 30px;
+  letter-spacing: -4px;
+}
+
+.sidebar-rail .brand-mark span {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.rail-navigation,
+.rail-utilities {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.rail-utilities {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.rail-group {
+  position: relative;
+  width: 44px;
+}
+
+.rail-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #475569;
+  touch-action: manipulation;
+}
+
+.rail-button:hover,
+.rail-button[aria-expanded="true"],
+.rail-button.is-active {
+  background: #eff6ff;
+  color: var(--color-primary-ink);
+}
+
+.rail-button svg {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.rail-count {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  min-width: 19px;
+  padding: 1px 4px;
+  border-radius: 8px;
+  background: var(--color-primary-ink);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.rail-flyout {
+  position: absolute;
+  z-index: 30;
+  top: 0;
+  left: calc(100% + 12px);
+  width: 248px;
+  padding: 14px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 8px 28px #0f172a1f;
+  text-align: left;
+}
+
+/* Bridge the rail-to-flyout gap so moving the pointer keeps the menu open. */
+.rail-flyout::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -12px;
+  width: 12px;
+  content: "";
+}
+
+.rail-group-bottom .rail-flyout {
+  top: auto;
+  bottom: 0;
+}
+
+.rail-flyout h2 {
+  margin: 0 6px 4px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rail-flyout .rail-meta {
+  margin: 0 6px 8px;
+  color: var(--color-description);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.rail-menu {
+  max-height: calc(100dvh - 164px);
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.rail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #334155;
+  font-size: 14px;
+  text-align: left;
+}
+
+.rail-menu-item svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+.rail-menu-item:hover,
+.rail-menu-item[aria-current] {
+  background: #eff6ff;
+  color: var(--color-primary-ink);
+}
+
+.rail-account-name {
+  display: block;
+  margin: 8px 6px 2px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.rail-menu-item.rail-logout {
+  color: #b91c1c;
+}

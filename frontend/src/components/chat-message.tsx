@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- Protected media uses same-origin session cookies; LINE CDN images are external. */
 import { useState } from "react";
 import type { Customer, LineEvent } from "@/lib/api";
+import { formatDateTime } from "@/lib/dates";
 
 type Props = {
   message: LineEvent;
@@ -29,7 +30,7 @@ export default function ChatMessage({ message, customer, selectedImages, disable
   const admin = message.sender_role === "admin" || message.direction === "outbound";
   const sender = admin ? message.sender_name ?? "แอดมิน" : customer?.display_name || "ลูกค้า";
   const content = message.payload?.message;
-  const timestamp = new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(message.event_at));
+  const timestamp = formatDateTime(message.event_at);
   return <article id={`chat-message-${message._id}`} className={`message ${admin ? "message-admin" : "message-customer"}`} aria-label={`ข้อความจาก${sender}`}>
     {admin ? <div className="avatar line-avatar admin-avatar" aria-hidden="true">A</div> : <CustomerAvatar customer={customer} />}
     <div className="message-body">

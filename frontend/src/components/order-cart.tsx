@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- Catalog images are external Alex links; next/image would need a fixed remote host list. */
 import { KeyboardEvent, useEffect, useState } from "react";
 import { api, ApiError, Attachment, Availability, Candidate, CartItem, codeLabel, CodeName, Draft, DraftItem, errorText, findCode, LineEvent } from "@/lib/api";
+import { formatDateTime } from "@/lib/dates";
 
 type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
@@ -10,7 +11,6 @@ type Mode = "code" | "text" | "product_url" | "image";
 // Alex shows catalog prices as plain baht, e.g. 600 or 1,500.
 export const price = (value: number | null) => value === null ? "ไม่ระบุ" : (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 const quantityLimit = (value: number) => Math.min(999, Math.max(1, Math.round(value) || 1));
-const date = (value: string) => new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }).format(new Date(value));
 const lookupStates: Record<string, string> = { MATCHED: "พบตรงหนึ่งรายการ", NEEDS_SELECTION: "พบหลายตัวเลือก", NOT_FOUND: "ยังไม่พบใน Alex", BRANCH_REQUIRED: "ต้องเลือกสาขา", MISSING_QUERY: "ไม่มีชื่อหรือรหัส", NOT_CONFIGURED: "ยังไม่เชื่อม Alex", FAILED: "ค้นอัตโนมัติไม่สำเร็จ", EXPIRED: "ผลค้นหาหมดอายุ กรุณาค้นใหม่" };
 const queueStates: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ติดคิว", UNKNOWN: "ยังตรวจไม่ได้" };
 // Short labels shown on each cart card after a queue check.
@@ -151,7 +151,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       <div className="field-grid search-grid">
         {(settings?.branches.length ?? 0) > 1 && <label className="span-2">สาขา Alex<select value={branch} disabled={working} onChange={e => setBranch(e.target.value)}><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}
         <label>ค้นหาจาก<select value={mode} disabled={working} onChange={e => setMode(e.target.value as Mode)}><option value="text">ชื่อหรือคำบรรยาย</option><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้า</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากแชท/รูปแนบ</option></select></label>
-        {mode === "image" ? <label>รูปอ้างอิง<select value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {date(image.event_at)}</option>)}</select></label>
+        {mode === "image" ? <label>รูปอ้างอิง<select value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {formatDateTime(image.event_at)}</option>)}</select></label>
           : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในแบรนด์/สาขา" : "เช่น 0291FRLDBRM"} /></label>}
         <label className="span-2">แบรนด์<select value={category} disabled={working} onChange={e => setCategory(e.target.value)}><option value="">ทุกแบรนด์</option>{categories.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{category && !categories.some(value => value.code === category) && <option value={category}>{category}</option>}</select></label>
         <label>สี<select value={color} disabled={working} onChange={e => setColor(e.target.value)}><option value="">ทุกสี</option>{colors.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{color && !colors.some(value => value.code === color) && <option value={color}>{color}</option>}</select></label>

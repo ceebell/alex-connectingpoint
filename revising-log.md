@@ -4,6 +4,40 @@
 
 <!-- entries -->
 
+## 2026-11-10 11:11 — ใช้วันที่ dd/mm/yyyy ทั้งแอป
+- **คำอธิบาย:** ผู้ใช้ต้องการวัน/เดือน/ปีแบบตัวเลขทั้งแอป รวมการแสดงผลและช่องกรอก ใช้ปี ค.ศ. เลขอารบิก และเขตเวลา Asia/Bangkok โดยข้อมูลวันที่ที่ส่ง API และเก็บในระบบยังใช้ ISO ตามสัญญาเดิม
+- **โฟลเดอร์ `frontend/src/lib/`**
+  - `dates.ts` — เพิ่ม: formatter ส่วนกลางสำหรับ dd/mm/yyyy และ dd/mm/yyyy HH:mm พร้อม parser ตรวจวันที่จริง ปีอธิกสุรทิน และช่วงปี 1900–2199 ให้ตรง backend; วันที่ผิดหรือว่างแสดงขีดแทนโดยไม่ทำให้หน้าจอล้ม
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `date-input.tsx`, `date-input.css` — เพิ่ม: ช่องกรอก dd/mm/yyyy พร้อมปฏิทิน native การแปลงค่าเป็น ISO และข้อความตรวจสอบภาษาไทย; รูปแบบข้อความคงเดิมแม้เบราว์เซอร์ใช้ locale อื่น
+  - `admin-workspace.tsx` — แก้: รายการแชท สรุป ประวัติร่าง การอนุมัติ/ส่งบิล/ยกเลิก ใช้ formatter ส่วนกลาง และวันที่รับ–คืนในร่างอ่านอย่างเดียวไม่แสดง ISO ดิบ
+  - `chat-message.tsx`, `order-cart.tsx` — แก้: วันเวลาในแชทและรายการเลือกรูปอ้างอิงใช้ dd/mm/yyyy HH:mm
+  - `draft-editor.tsx` — แก้: ตัวเลือกวันรับ–คืนและช่องกรอกใช้รูปแบบใหม่; ตรวจช่องวันที่ก่อนบันทึกหรือเปิดใบสรุปเพื่อกันวันที่ผิดไม่ให้กลายเป็นข้อมูลที่ถูกบันทึก
+  - `rental-checkout.tsx` — แก้: วันรับ–คืนและประวัติส่งบิลใช้ dd/mm/yyyy, วันเกิดใช้ช่องกรอกใหม่ และเวลาหมดอายุใบตรวจแสดงวันที่พร้อมเวลาไทย
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `layout.tsx` — แก้: โหลด CSS ของช่องวันที่ใหม่
+- **โฟลเดอร์ `frontend/`**
+  - `package.json`, `tests/dates.test.mjs` — แก้ | เพิ่ม: npm test และ regression tests 8 กรณี ครอบคลุม Gregorian, Bangkok ข้ามวัน/ข้ามปี, timezone เครื่อง, timestamp, leap year, วันที่ผิด/ไม่ครบ และแปลงเป็น ISO
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261110040936-7e0c9e810c20` พร้อม static/runtime/metadata/checksum
+- **ผลตรวจสอบ:** npm run lint, npm test (8/8), local Linux frontend build/TypeScript ผ่าน; checksum 2,107 ไฟล์และ metadata Linux/amd64 ผ่าน ไม่มี .env ใน release; browser checks Chrome/WebKit ผ่าน 4 กรณี desktop en-US/America/Los_Angeles และ phone th-TH/Asia/Bangkok ตรวจวันเวลา แก้วันที่ เลือกปฏิทิน กันวันที่ผิดก่อนบันทึก payload ISO ประวัติ รูปอ้างอิง ใบสรุปและวันเกิด ใช้ API จำลองทั้งหมด
+- **ภาพและตัวตรวจ:** `data/date-format-check/` ถูก ignore; `invoice-dates.png` แสดงวันที่ในใบสรุป
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat เพื่อส่ง source/release แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy ในงานนี้
+
+## 2026-11-10 11:01 — ย่อ sidebar เป็นแถบไอคอนพร้อมเมนูกางด้านข้าง
+- **คำอธิบาย:** ผู้ใช้ต้องการ sidebar ซ้ายสุดแคบ ใช้ไอคอนแทนชื่อเมนู และแสดงเมนูย่อยเมื่อ hover แบบ LINE OA เปลี่ยนเป็น rail กว้าง 64px พร้อม flyout ซ้อนเหนือพื้นที่ทำงานโดยไม่เปลี่ยนความกว้างคอลัมน์ขณะเปิดเมนู
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `workspace-sidebar.tsx` — เพิ่ม: sidebar ใช้ SVG ที่มีรูปแบบเดียวกัน พร้อม badge จำนวนเรื่อง เมนูแชทที่ไปยังรายชื่อ/บทสนทนา/ร่างออเดอร์ ข้อมูลพื้นที่ทำงาน และบัญชี/ออกจากระบบ; รองรับ hover, focus, click/tap, Tab/ArrowRight/ArrowDown, Escape คืน focus และคลิกภายนอกเพื่อปิด มี accessible labels และ aria-expanded/controls
+  - `workspace-sidebar.css` — เพิ่ม: แถบ 64px ปุ่ม 44px ไอคอน 24px flyout มีพื้นที่เชื่อมระหว่างแถบกับเมนูเพื่อไม่หุบระหว่างเลื่อนเมาส์ เมนูด้านล่างจัดชิดขอบล่างและซ้อนเหนือ workspace โดยไม่ถูก sidebar ตัด
+  - `admin-workspace.tsx` — แก้: ใช้ component sidebar ใหม่แทนเมนูข้อความเดิม ส่งข้อมูลบัญชี/จำนวนเรื่องและ callback เดิม เพิ่ม focus target ของแต่ละ panel โดยคงแชท/ร่าง/ข้อความที่พิมพ์ไว้ และถอด Next Link ที่ไม่ใช้แล้ว
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `layout.tsx` — แก้: โหลด stylesheet sidebar หลัง typography โดยกฎซ่อน sidebar บนมือถือยังทำงานตาม breakpoint เดิม
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261110035826-64182baae8db` พร้อม static/runtime/metadata/checksum
+- **ผลตรวจสอบ:** frontend lint/build/TypeScript ผ่าน; ตรวจ checksum 2,107 ไฟล์และ metadata Linux/amd64 ผ่าน ไม่มี .env ใน release; Chrome และ WebKit ผ่านรวม 12 กรณี (6 viewport ต่อ browser) ตรวจ rail 64px, hover และข้ามช่องว่างเข้า flyout, hit test ว่าเมนูอยู่เหนือ workspace, ไม่มี layout shift, ปิดเมื่อออก/คลิกภายนอก, keyboard/focus/Escape/Tab, touch บน tablet, เมนูบัญชีอยู่ในขอบจอ, panel navigation คงข้อความที่ยังไม่บันทึก, logout และ mobile navigation ใช้ API จำลองทั้งหมด ไม่ส่งข้อมูล/สถานะอ่านไป LINE จริง
+- **ภาพและตัวตรวจ:** `data/sidebar-rail-check/` ถูก ignore; `hover-menu.png` แสดงเมนูกาง และ `compact-rail.png` แสดงแถบปกติ
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat เพื่อส่ง source/release แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy ในงานนี้
+
 ## 2026-11-10 09:40 — แยกหัวข้อและคำอธิบาย พร้อมลดสีข้อความรองหนึ่งเฉด
 - **คำอธิบาย:** ผู้ใช้ต้องการคำอธิบาย/placeholder ขนาด 12px สีจางลงหนึ่งเบอร์ และหัวข้อใหญ่กว่าคำอธิบาย จัดหัวข้อส่วนเป็น 16px ป้ายกำกับช่องกรอก 14px และข้อความรอง/placeholder 12px โดยข้อความรองทั่วไปลด slate-500 เป็น slate-400 และ placeholder ลด slate-400 เป็น slate-300
 - **โฟลเดอร์ `frontend/src/app/`**
