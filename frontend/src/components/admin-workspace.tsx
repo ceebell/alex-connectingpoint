@@ -8,6 +8,8 @@ import type { Attachment } from "@/lib/api";
 import ChatMessage, { CustomerAvatar } from "./chat-message";
 import ReplyComposer from "./reply-composer";
 import WorkspaceSidebar from "./workspace-sidebar";
+import CustomerNameDialog from "./customer-name-dialog";
+import CustomerNotes from "./customer-notes";
 import { formatDate, formatDateTime as time } from "@/lib/dates";
 
 type Session = { username: string; login: "line" | "password" | "token"; hermes_configured: boolean };
@@ -32,7 +34,14 @@ function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
 }
 const inquiryActivity = (inquiry: Inquiry) => new Date(inquiry.last_activity_at ?? inquiry.created_at).getTime();
 function mergeInquiries(previous: Inquiry[], incoming: Inquiry[]) {
-  return [...new Map([...previous, ...incoming].map(inquiry => [inquiry._id, inquiry])).values()]
+  const merged = new Map(previous.map(inquiry => [inquiry._id, inquiry]));
+  for (const inquiry of incoming) {
+    const current = merged.get(inquiry._id);
+    // A poll started before a rename must not replace the name just saved by this browser.
+    const customer = (current?.customer?.name_version ?? 0) > (inquiry.customer?.name_version ?? 0) ? current?.customer : inquiry.customer;
+    merged.set(inquiry._id, { ...inquiry, customer });
+  }
+  return [...merged.values()]
     .sort((a, b) => inquiryActivity(b) - inquiryActivity(a) || b._id.localeCompare(a._id));
 }
 const versionStates: Record<VersionState, [string, string]> = { OPEN: ["ยังไม่ส่ง", "open"], SENT: ["ส่งเข้า Alex แล้ว", "sent"], CANCELLED: ["ยกเลิกแล้ว", "cancelled"] };
@@ -64,6 +73,7 @@ export default function AdminWorkspace() {
   const inquiriesRef = useRef<Inquiry[]>([]);
   const [syncingInbox, setSyncingInbox] = useState(false);
   const [query, setQuery] = useState("");
+  const [renaming, setRenaming] = useState<Inquiry | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"inquiries" | "chat" | "draft">("inquiries");
   const [messages, setMessages] = useState<LineEvent[]>([]);
@@ -81,7 +91,7 @@ export default function AdminWorkspace() {
   const summaryDirty = useRef(false);
   const [images, setImages] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [tab, setTab] = useState<"summary" | "draft" | "checkout" | "history">("summary");
+  const [tab, setTab] = useState<"summary" | "draft" | "checkout" | "history" | "notes">("summary");
   const [order, setOrder] = useState<Order | null>(null);
   const [approveChecked, setApproveChecked] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
@@ -485,22 +495,21 @@ export default function AdminWorkspace() {
     <WorkspaceSidebar inquiryCount={inquiries.length} username={session.username} login={session.login} activePanel={mobilePanel} onNavigate={panel => { setMobilePanel(panel); requestAnimationFrame(() => document.getElementById(`mobile-${panel}`)?.focus({ preventScroll: true })); }} onLogout={logout} />
     <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
-      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="panel-heading"><h2>เรื่องที่รับเข้า</h2><span className="small muted">ล่าสุดก่อน</span></div><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
-        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <button key={inquiry._id} className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
+      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
+        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.customer?.line_display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <div className="inquiry-row" key={inquiry._id}><button className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
           <div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div>
           <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title={inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}><span className="sr-only">{inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}</span></span>}</div>
-        </button>)}
+        </button>{inquiry.line_user_id && <button type="button" className="inquiry-rename" aria-label={`เปลี่ยนชื่อลูกค้า ${inquiry.customer?.display_name || "LINE"}`} title="เปลี่ยนชื่อลูกค้า" disabled={working} onClick={() => setRenaming(inquiry)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15l-1 6Z" /></svg></button>}</div>)}
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
-      <section tabIndex={-1} id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel"><div className="panel-heading"><div><h2>{current ? current.customer?.display_name || `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2></div>{current && <span className="line-badge">LINE OA</span>}</div>
+      <section tabIndex={-1} id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel">
         <div className="chat-stream" aria-busy={loading}>
           {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <>{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div>
         {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
-        <div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>
       </section>
-      <section tabIndex={-1} id="mobile-draft" aria-label="เตรียมออเดอร์" className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading"><div><h2>เตรียมร่างออเดอร์</h2><span className="small muted">แอดมินตรวจทุกครั้งก่อนดำเนินการต่อ</span></div>{version > 0 && <span className="version-badge">v{version}</span>}</div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
+      <section tabIndex={-1} id="mobile-draft" aria-label="เตรียมออเดอร์" className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading customer-panel-heading"><h2>{current ? current.customer?.display_name || "ลูกค้า LINE" : "เลือกลูกค้า"}</h2><div className="customer-heading-badges">{current && <span className="line-badge">LINE OA</span>}{version > 0 && <span className="version-badge">v{version}</span>}</div></div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "คิว/บิล"], ["history", "เวอร์ชันก่อนหน้า"], ["notes", "Note"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>
           {job && ["PENDING", "PROCESSING"].includes(job.status) && <div className="notice info" role="status">{job.status === "PROCESSING" ? "กำลังอ่านรูปหรือสรุปและค้นหาสินค้าใน Alex…" : "รับงานแล้ว กำลังรอประมวลผล…"} คุณกลับมาเปิดเรื่องนี้ใหม่เพื่อตรวจผลได้</div>}
           {tab === "summary" && <>
@@ -540,7 +549,7 @@ export default function AdminWorkspace() {
               <details><summary>ดูรายละเอียด</summary><DraftReadOnly draft={draft} /></details>
             </article>;
           })}<p className="muted small">แก้ไข: หยิบเวอร์ชันที่ยังไม่ส่งขึ้นมาเป็นร่างล่าสุด · โคลน: คัดลอกเป็นเวอร์ชันใหม่ได้ทุกสถานะ · ทั้งสองแบบคืนตะกร้าของเวอร์ชันนั้น</p></>}
-        </>}</div><div className="draft-footer">แนบรูป → ร่างออเดอร์ (ลูกค้า · ตะกร้า · วันที่ · เช็คคิว) → ส่งบิลเข้า Alex</div>
+        </>}{current?.line_user_id && <div hidden={tab !== "notes"}><CustomerNotes key={current.line_user_id} userId={current.line_user_id} active={tab === "notes"} onUnauthorized={() => setSession(null)} /></div>}{selected && !current?.line_user_id && tab === "notes" && <p className="muted small">ยังไม่พบลูกค้า LINE สำหรับบันทึกโน้ต</p>}</div>
       </section></div>
       <nav className="mobile-workspace-nav" aria-label="พื้นที่ทำงานบนมือถือ">
         <button type="button" aria-controls="mobile-inquiries" aria-pressed={mobilePanel === "inquiries"} onClick={() => setMobilePanel("inquiries")}>
@@ -557,5 +566,6 @@ export default function AdminWorkspace() {
         </button>
       </nav>
     </main>
+    {renaming?.line_user_id && <CustomerNameDialog userId={renaming.line_user_id} customer={renaming.customer} onClose={() => setRenaming(null)} onUnauthorized={() => setSession(null)} onSaved={(alias, lineName) => setInquiries(previous => previous.map(inquiry => inquiry.line_user_id === renaming.line_user_id ? { ...inquiry, customer: { ...inquiry.customer, display_name: alias.custom_name ?? lineName, line_display_name: lineName, custom_name: alias.custom_name, name_version: alias.version } } : inquiry))} />}
   </div>;
 }

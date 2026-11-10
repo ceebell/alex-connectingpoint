@@ -4,6 +4,50 @@
 
 <!-- entries -->
 
+## 2026-11-10 13:57 — ย่อแถบพิมพ์มือถือและรวมรูป/สติกเกอร์หลังปุ่มบวก
+- **คำอธิบาย:** ผู้ใช้ต้องการแถบพิมพ์แถวเดียวแบบ LINE ซ่อน navigation ตอนพิมพ์ ซ่อนรูป/สติกเกอร์จนกดปุ่มบวก และแตะพื้นที่แชทเพื่อพับ keyboard/แผงเลือกทั้งหมด โดยคงข้อความและรูปที่ยังไม่ส่ง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `reply-composer.tsx` — แก้: เพิ่มปุ่มบวก/ปิดสำหรับเปิดตัวเลือกสติกเกอร์และรูป เปลี่ยนปุ่มส่งเป็นไอคอนพร้อม accessible label, แยก state แสดงรูปออกจากไฟล์ที่เตรียมไว้, blur ช่องพิมพ์เมื่อเปิดเครื่องมือและปิดแผงเมื่อแตะภายนอก/Escape; รูปที่กำลังอัปโหลดไม่เปิดกลับเองเมื่อผู้ใช้สั่งซ่อน; คงข้อความและรูปที่ยังไม่ส่งเพื่อเปิดกลับมาใช้ต่อ; ใส่ autocomplete off ทั้ง form/textarea และ inputMode text; กัน focus blur ระหว่าง pointer gesture บนปุ่มส่งไม่ให้แถบ/ปุ่มขยับก่อนปล่อยนิ้วบน WebKit
+  - `reply-composer.css` — แก้: แถบพิมพ์หนึ่งแถวสูงประมาณ 56–60px ช่องข้อความสูงคงที่ 44px แบบโค้งพื้นอ่อนและฟอนต์มือถือ 17px, ปุ่มสัมผัส 44px, แผงแนบรูป/สติกเกอร์วางซ้อนเหนือช่องพิมพ์โดยไม่เพิ่มความสูง composer
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `mobile.css` — แก้: ซ่อนเมนูล่างและ page header ขณะ keyboard เปิดหรือ composer กำลังใช้งาน/เปิดแผงเลือก และคืนเมนูเมื่อพับ composer
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261110065307-093cb09de42e` พร้อม runtime/static/metadata/checksum
+- **ผลตรวจสอบ:** frontend lint/build/TypeScript ผ่าน; npm test 8/8 ผ่าน; ตรวจ checksum 2,107 ไฟล์และ metadata Linux/amd64 build_location local ผ่าน ไม่มี .env ใน release; Chrome/WebKit ผ่าน 10 กรณี (iPhone จำลอง 430x739, จอเล็ก 375x667, แนวนอน 932x430, tablet 834x1112 และ desktop 1440x900 ต่อ browser) ตรวจแถบแถวเดียว/ช่อง 44px, ซ่อน navigation, จำลอง keyboard/offset, ปุ่มบวก/สติกเกอร์/รูป, focus/blur/Escape, แตะแชทพับทั้งหมด, spacebar ในข้อความยังพิมพ์ช่องว่างตามปกติ, พับระหว่าง upload แล้วไม่เด้งกลับ, เปิดรูปเดิมกลับมา, ส่งข้อความ/รูป/สติกเกอร์ผ่าน API จำลอง และ Ctrl+Enter บนจอใหญ่; ไม่มี request ถึง LINE หรือ backend จริง
+- **ข้อจำกัด:** ทดสอบด้วย browser headless และจำลอง visual viewport ไม่ใช่ iPhone จริง; แถบ Password/บัตร/ปุ่มพับ keyboard ที่ iOS แสดงเป็น UI ของ Safari/ระบบ ไม่สามารถสั่งซ่อนด้วย CSS ของเว็บได้ ตั้ง autocomplete off ให้ช่องแชทแล้วโดยไม่ปิดการ pinch zoom หรือการพิมพ์ปกติ อ้างอิง https://developer.apple.com/documentation/uikit/uiresponder/inputassistantitem และ https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/autocomplete
+- **ภาพและตัวตรวจ:** `data/compact-composer-check/` ถูก ignore; iphone-composer.png, iphone-typing.png และ iphone-tools.png เป็น preview ของ release ใหม่; คงงานชื่อ/Note และไฟล์ prompts ที่แก้ไว้ก่อนหน้า
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy
+
+## 2026-11-10 13:35 — ย่อหัวแถว เพิ่มชื่อลูกค้าใน Alex และ Note พร้อมประวัติ
+- **คำอธิบาย:** เอาหัวแถวรายชื่อลูกค้าและแชทที่ขีดฆ่าออก รวม footer ทั้งสองด้าน ย้ายชื่อลูกค้าและป้าย LINE OA ไปหัวด้านขวาแทนหัวข้อร่าง เพิ่มการตั้งชื่อใน Alex/reset กลับชื่อ LINE และแท็บ Note ต่อ LINE user ซึ่งเพิ่มโน้ตพร้อมรูปได้หลายรายการ แก้ไขได้และมีประวัติผู้สร้าง/ผู้แก้พร้อมวันเวลา
+- **โฟลเดอร์ `backend/src/models/`**
+  - `customer_notes.rs` — เพิ่ม: DTO ชื่อและโน้ต ตรวจ expected_version/request UUID/text/รูป JPEG-PNG สูงสุด 5 รูป รูปละ 2 MB พร้อมปฏิเสธข้อมูลผู้สร้าง/ผู้แก้ที่ client พยายามส่งเอง
+  - `mod.rs` — แก้: ลงทะเบียน module
+- **โฟลเดอร์ `backend/src/db/`**
+  - `customers.rs` — แก้: เก็บ customer_aliases แยกจากชื่อ LINE/OA ใช้ optimistic versions และบันทึก actor/time; reset ล้างเฉพาะ custom_name
+  - `customer_notes.rs` — เพิ่ม: customer_notes แยกตามร้าน/ช่องทาง/LINE user, เพิ่มแบบ idempotent, แก้แบบ CAS, เก็บ history ทุกเวอร์ชันพร้อม actor ID/ชื่อ/เวลา/ข้อความ/รูป; เรียงตามวันสร้างล่าสุดและ paginate 50 รายการ; รูปเก็บ GridFS แบบถาวรและเปิดผ่าน authenticated endpoint ที่ตรวจขอบเขตลูกค้า/ร้าน/ช่องทาง
+  - `indexes.rs` — แก้: เพิ่ม unique alias และ note request ID รวม index ลำดับโน้ตตามลูกค้า
+  - `mod.rs` — แก้: ลงทะเบียน module
+- **โฟลเดอร์ `backend/src/routes/`**
+  - `customer_notes.rs` — เพิ่ม: GET/POST /api/line/users/{user_id}/alias, GET/POST notes และ notes/{note}, GET note-images/{image}; ใช้ actor จาก session/Bearer ฝั่ง server และ cache รูปแบบ private/no-store
+  - `admin.rs` — แก้: ตกแต่งรายชื่อด้วย custom_name/name_version และคง line_display_name เพื่อค้นหา/reset ได้ โดยการเปลี่ยนชื่อ OA ไม่ทับ alias
+  - `mod.rs` — แก้: ลงทะเบียน routes ภายใต้ admin authorization/CSRF middleware เดิม และกำหนด body limit สำหรับรูป
+- **โฟลเดอร์ `backend/src/`**
+  - `tests_customer_notes.rs`, `tests.rs` — เพิ่ม | แก้: ทดสอบ validation/auth, alias/reset และ OA เปลี่ยนชื่อ, optimistic conflicts, note retries, private/persistent photos, ประวัติผู้แก้, isolation ข้ามลูกค้า/ช่องทาง และ pagination กับ MongoDB จริง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `admin-workspace.tsx` — แก้: ลบหัวแถว/footers ตามภาพ ย้ายชื่อลูกค้าไปด้านขวา เพิ่มปุ่มดินสอในรายชื่อและแท็บ Note, ค้นหาชื่อ LINE หรือชื่อที่ตั้งเองได้; ป้องกัน poll รุ่นเก่าทับชื่อที่เพิ่งบันทึก
+  - `customer-name-dialog.tsx` — เพิ่ม: หน้าตั้งชื่อ/reset มีชื่อ LINE ปัจจุบันแสดงให้ตรวจ และเก็บข้อความที่พิมพ์ไว้เมื่อมีแอดมินแก้พร้อมกัน
+  - `customer-notes.tsx`, `customer-notes.css` — เพิ่ม: เพิ่มโน้ตด้วยปุ่มบวก แนบ/ดูรูป แก้ข้อความ/รูป ดูประวัติ และโหลดรายการเก่า; วันที่ dd/mm/yyyy HH:mm เวลาไทย, เก็บข้อความค้างเมื่อสลับแท็บ, retry ไม่สร้างซ้ำ, แจ้ง conflict ใกล้ช่องแก้ และ merge ตามเวอร์ชัน/วันสร้างเพื่อกันผลตอบกลับเก่าทับข้อมูลใหม่
+- **โฟลเดอร์ `frontend/src/lib/` และ `frontend/src/app/`**
+  - `api.ts` — แก้: เพิ่ม types ของ alias/โน้ต/รูป/ประวัติ
+  - `layout.tsx` — แก้: โหลด customer-notes.css
+- **โฟลเดอร์ `dist/line-linux/` และ `dist/frontend-linux/`**
+  - Linux releases — แก้: build บน local Docker Desktop เป็น backend `rel-20261110062300-16c1c07c8f6c` และ frontend `front-20261110063214-f43cea511f31` พร้อม binary/standalone/runtime/static/metadata/checksums
+- **ผลตรวจสอบ:** cargo fmt --check และ cargo clippy -- -D warnings ผ่าน; cargo test ผ่าน 33 tests โดย 20 Mongo integration tests ไม่รันในชุดปกติ; รัน integration ใหม่ mongo_customer_aliases_and_notes ผ่านกับ MongoDB 7 แบบ disposable บน local แล้วหยุดและลบ test container; frontend lint/build/TypeScript และ npm test 8/8 ผ่าน; ตรวจ backend checksum และ frontend 2,107 checksums พร้อม metadata build_location local Linux/amd64 ไม่มี .env ใน frontend release
+- **Browser checks:** Chrome/WebKit ผ่าน 6 กรณี (desktop 1920x1080, iPhone จำลอง 430x739 และจอเล็ก 375x667 ต่อ browser) ตรวจหัวแถว/footers, ตั้งชื่อ/reset, refresh และ stale poll ไม่ทับชื่อใหม่, Note พร้อมรูป, retry หลังจำลองเครือข่ายขาดไม่ซ้ำ, เรียงล่าสุด, reload แล้วยังอยู่, ประวัติพร้อมผู้แก้/เวลา, แก้พร้อมกันคงข้อความค้าง, แยกลูกค้า และ mobile state; API browser ใช้ fixture ไม่มีข้อมูลส่งเข้า LINE หรือ production
+- **ภาพและตัวตรวจ:** `data/customer-notes-check/` ถูก ignore; customer-notes.png และ phone-notes.png แสดง UI ใหม่; คงไฟล์ prompts ที่ผู้ใช้แก้ไว้เดิม
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main เพื่ออัปเดตทั้ง backend/frontend; ยังไม่ได้ commit/push/deploy
+
 ## 2026-11-10 12:13 — แก้จอ iPhone เลื่อนหลุดและย่อช่องตอบแชท
 - **คำอธิบาย:** ผู้ใช้พบเมนูล่างเลื่อนขึ้นจนเกิดพื้นที่ว่าง และ iPhone ซูมตอนแตะช่องพิมพ์ ต้องการตัวอักษรมือถือใหญ่ขึ้น 1px ปุ่มแนบอยู่เหนือข้อความและไม่มีกรอบ พร้อมเอาคำอธิบายที่ขีดฆ่าออก
 - **โฟลเดอร์ `frontend/src/app/`**

@@ -64,7 +64,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 }
 
 export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; last_activity_at?: string; last_message_preview?: string; last_incoming_message_id?: string; unread?: boolean; unread_source?: "alex" | "line_oa"; draft_version?: number; order_id?: string; customer?: Customer };
-export type Customer = { display_name?: string | null; picture_url?: string | null };
+export type Customer = { display_name?: string | null; picture_url?: string | null; line_display_name?: string | null; custom_name?: string | null; name_version?: number };
+export type CustomerAlias = { custom_name: string | null; version: number; updated_by: string; updated_at: string };
+export type NoteImage = { id: string; name: string; url: string };
+export type NoteRevision = { version: number; text: string; images: NoteImage[]; updated_by: string; updated_by_id: string; updated_at: string };
+export type CustomerNote = { _id: string; version: number; text: string; images: NoteImage[]; created_by: string; created_by_id: string; created_at: string; updated_by: string; updated_by_id: string; updated_at: string; history?: NoteRevision[] };
 export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string }; postback?: { data: string } } };
 // delivery_provider holds one of RECEIVING_METHODS when fulfillment is delivery.
 export type Rental = { pickup_date: string | null; return_date: string | null; fulfillment_method: string | null; delivery_provider?: string | null };

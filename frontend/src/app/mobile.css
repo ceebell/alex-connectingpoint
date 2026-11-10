@@ -400,7 +400,10 @@
     padding-bottom: max(20px, env(safe-area-inset-bottom));
   }
 
-  .app-shell[data-keyboard-open="true"] .page-header {
+  .app-shell[data-keyboard-open="true"] .page-header,
+  .app-shell[data-keyboard-open="true"] .mobile-workspace-nav,
+  .app-shell:has(.reply-box[data-active="true"]) .page-header,
+  .app-shell:has(.reply-box[data-active="true"]) .mobile-workspace-nav {
     display: none;
   }
 }

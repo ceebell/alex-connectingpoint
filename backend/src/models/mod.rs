@@ -1,6 +1,7 @@
 pub mod cart;
 pub mod checkout;
 pub mod customer;
+pub mod customer_notes;
 pub mod draft;
 pub mod inbox;
 pub mod line;

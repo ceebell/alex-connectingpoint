@@ -111,6 +111,7 @@ pub async fn list(
         .iter()
         .filter_map(|i| i.get_str("line_user_id").ok().map(String::from))
         .collect();
+    let aliases = crate::db::customers::aliases(&state, ids.clone()).await?;
     let profiles = crate::db::users::profiles(&state, ids).await?;
     // Users seen before profile caching get it fetched in the background once.
     let missing: Vec<String> = profiles
@@ -138,9 +139,15 @@ pub async fn list(
             .ok()
             .and_then(|id| profiles.get(id))
         {
+            let alias = inquiry
+                .get_str("line_user_id")
+                .ok()
+                .and_then(|id| aliases.get(id));
+            let custom_name = alias.and_then(|record| record.get_str("custom_name").ok());
+            let line_name = profile.get_str("display_name").ok();
             inquiry.insert(
                 "customer",
-                doc! {"display_name":profile.get_str("display_name").ok(),"picture_url":profile.get_str("picture_url").ok()},
+                doc! {"display_name":custom_name.or(line_name),"line_display_name":line_name,"custom_name":custom_name,"name_version":alias.and_then(|record|record.get_i64("version").ok()).unwrap_or(0),"picture_url":profile.get_str("picture_url").ok()},
             );
         }
     }

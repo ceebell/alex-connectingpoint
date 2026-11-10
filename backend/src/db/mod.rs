@@ -1,6 +1,7 @@
 pub mod attachments;
 pub mod cart;
 pub mod checkout;
+pub mod customer_notes;
 pub mod customers;
 pub mod drafts;
 pub mod events;

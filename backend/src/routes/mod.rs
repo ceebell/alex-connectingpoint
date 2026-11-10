@@ -1,6 +1,7 @@
 mod admin;
 mod cart;
 mod checkout;
+mod customer_notes;
 mod customers;
 mod drafts;
 mod inbox;
@@ -89,6 +90,26 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/conversations/{id}/inquiries", post(admin::create))
         .route("/api/line/events", get(admin::events))
         .route("/api/line/users", get(users::list))
+        .route(
+            "/api/line/users/{user_id}/alias",
+            get(customer_notes::alias).post(customer_notes::save_alias),
+        )
+        .route(
+            "/api/line/users/{user_id}/notes",
+            get(customer_notes::list)
+                .post(customer_notes::create)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/api/line/users/{user_id}/notes/{note}",
+            get(customer_notes::detail)
+                .post(customer_notes::edit)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/api/line/users/{user_id}/note-images/{image}",
+            get(customer_notes::image),
+        )
         .route("/api/line/users/{user_id}/messages", get(users::messages))
         .route(
             "/api/line/users/{user_id}/profile",
