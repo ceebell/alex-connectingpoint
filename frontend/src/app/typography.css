@@ -1,0 +1,48 @@
+/* Secondary copy is smaller and one slate shade lighter than before. */
+:is(.app-shell, .invoice-dialog, .login-page) .muted,
+.app-shell .page-header p.muted,
+.login-page .login-intro p.muted,
+.app-shell .panel-heading .small,
+.app-shell .empty p,
+.app-shell .sidebar-note p,
+.app-shell .sidebar-account small,
+.app-shell .chat-notice,
+.app-shell .chat-notice span,
+.app-shell .chat-footer,
+.app-shell .draft-footer,
+.app-shell .step-caption p,
+.app-shell .form-heading > span:not([aria-hidden]),
+.app-shell .inquiry-card .inquiry-preview {
+  font-size: 12px;
+  color: var(--color-description);
+}
+
+:is(.app-shell, .invoice-dialog, .login-page) .notice p {
+  font-size: 12px;
+}
+
+:is(.app-shell, .invoice-dialog) .notice.soft p {
+  color: var(--muted);
+}
+
+input::placeholder,
+textarea::placeholder {
+  font-size: 12px;
+  color: var(--color-placeholder);
+  opacity: 1;
+}
+
+/* Keep section titles and field labels distinct from their supporting copy. */
+.app-shell .panel-heading h2,
+.app-shell .step-caption h3,
+.app-shell .form-heading,
+.app-shell .empty h3 {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.app-shell .summary-label,
+.app-shell .field-grid label,
+.invoice-dialog label {
+  font-size: 14px;
+}

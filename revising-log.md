@@ -4,6 +4,37 @@
 
 <!-- entries -->
 
+## 2026-11-10 09:40 — แยกหัวข้อและคำอธิบาย พร้อมลดสีข้อความรองหนึ่งเฉด
+- **คำอธิบาย:** ผู้ใช้ต้องการคำอธิบาย/placeholder ขนาด 12px สีจางลงหนึ่งเบอร์ และหัวข้อใหญ่กว่าคำอธิบาย จัดหัวข้อส่วนเป็น 16px ป้ายกำกับช่องกรอก 14px และข้อความรอง/placeholder 12px โดยข้อความรองทั่วไปลด slate-500 เป็น slate-400 และ placeholder ลด slate-400 เป็น slate-300
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `globals.css` — แก้: เพิ่ม semantic color tokens description และ placeholder ตามเฉดใหม่
+  - `typography.css` — เพิ่ม: ขนาด/สีข้อความรองใน header, panel, sidebar, empty state, preview, ฟอร์ม, footer, ใบสรุปและหน้าล็อกอิน; กำหนด placeholder 12px สีอ่อนพร้อม opacity ชัดเจน และขนาดหัวข้อ/ป้ายกำกับแยกกัน โดย notice ยังคงสีสื่อความหมาย
+  - `layout.tsx` — แก้: โหลด typography หลัง mobile เพื่อใช้ลำดับขนาด/สีเดียวกันทุกขนาดจอ
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261110023554-5d8c3b9438bc` พร้อม static/runtime/metadata/checksum
+- **ผลตรวจสอบ:** frontend lint/build/TypeScript ผ่าน; ตรวจ checksum 2,108 ไฟล์และ metadata Linux/amd64 ผ่าน ไม่มี .env ใน release; Chrome จาก compiled release จริงผ่าน 6 viewport ตรวจ computed font/color ของคำอธิบาย 12px/slate-400, placeholder 12px/slate-300, หัวข้อส่วน 16px และ field label 14px รวมหน้าว่าง แบบฟอร์ม ใบสรุปที่ portal และหน้าล็อกอิน ข้อความแชทยังใช้ขนาด 12px ตามงานก่อนหน้าและพิมพ์ค้างได้ ตรวจ horizontal overflow ผ่าน ใช้ API จำลองทั้งหมด ภาพอยู่ใน `data/typography-hierarchy/` ที่ถูก ignore
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat เพื่อส่ง source/release จาก Windows แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy ในงานนี้ และคงการแก้ข้อความ 12px/บันทึกงานก่อนหน้าไว้ครบ
+
+## 2026-11-10 09:28 — ปรับข้อความตัวอย่าง แชท และช่องตอบเป็น 12px ตามภาพ
+- **คำอธิบาย:** ผู้ใช้ระบุขนาด 12px สำหรับข้อความตัวอย่างใต้ชื่อลูกค้า เนื้อหาข้อความในแชท และช่องพิมพ์ตอบรวม placeholder จึงปรับเฉพาะบริเวณที่วงไว้ให้ใช้ขนาดนี้ทั้ง desktop/tablet/mobile
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `inquiry-list.css` — แก้: ขนาดข้อความตัวอย่างของการ์ดจาก 14px เป็น 12px
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `workspace-layout.css` — แก้: กำหนด message bubble และ textarea ของช่องตอบเป็น 12px ด้วย selector ที่ครอบคลุมกฎจอใหญ่และมือถือ โดย placeholder รับขนาดจาก textarea
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build ใหม่บน local Docker Desktop เป็น `front-20261110022625-c0638d0f4f95` พร้อม static/runtime/metadata/checksum
+- **ผลตรวจสอบ:** lint/build/TypeScript ผ่านใน local Linux build; ตรวจ checksum 2,108 ไฟล์และ metadata Linux/amd64 ผ่าน ไม่มี .env ใน release; WebKit จาก compiled release จริงยืนยัน computed font ของ preview ข้อความลูกค้า/แอดมิน textarea และ placeholder เท่ากับ 12px ครบ 6 viewport (1440, 1920, tablet, phone, small phone, landscape) โดย body ยังเป็น 16px พิมพ์ข้อความและ layout ไม่มี horizontal overflow ใช้ API จำลองทั้งหมด ภาพอยู่ใน `data/typography-12px/` ที่ถูก ignore
+- **ขั้นตอนถัดไป:** ผู้ใช้ส่ง source/release ด้วย rungit.bat แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy ในงานนี้ คง entry และงาน config OA เดิมไว้ครบ
+
+## 2026-11-10 08:52 — เติมค่าเปิด OA sync บน Ubuntu และระบุจุดที่ยังติด
+- **คำอธิบาย:** ผู้ใช้เห็นแถบยังไม่ได้เชื่อม LINE OA หลัง deploy ตรวจ server จริงพบ release ใหม่ครบและ backend รองรับ unread_source แล้ว แต่ .env ไม่มี OA_CONNECTOR_ENABLED จึงใช้ default false และ runtime ตอบ NOT_CONFIGURED ขณะ companion connector ตอบ BACKEND_UNAVAILABLE และ browser /screen ตอบ 503
+- **โฟลเดอร์ `/home/ubuntu/alex-connectingpoint/` บน Ubuntu**
+  - `.env` — แก้: เติม OA_CONNECTOR_ENABLED=true โดยตรวจว่าค่าอื่นทั้งหมดคงเดิม เขียนแบบ atomic และ permission 600; ไฟล์ถูก ignore ใน Git
+  - `.env.before-oa-enable-20261110-085044` — เพิ่ม: สำรองไฟล์เดิมก่อนแก้ เก็บ permission 600 และตรวจว่าไม่เข้า Git
+- **ผลตรวจสอบ:** backend health ปกติ API คืน 54 รายการ มีข้อมูล unread_source ครบแต่ยังไม่มีรายการที่ใช้ snapshot OA; release บน server ตรงกับ backend rel-20261109152758-6d45ca9228d0, frontend front-20261109175604-ea0aceb3acff และ connector oa-20261109152421-01c6d2488d1b ไม่ได้แก้ source หรือ build โปรแกรมใหม่
+- **สถานะที่ยังเหลือ:** ค่าในไฟล์เปิดแล้ว แต่บริการต้อง deploy เพื่อโหลด env ใหม่ และ redeploy companion เพื่อเปิด browser จาก release ปัจจุบัน ใช้ sudo bash ./docker-deploy.sh --full-stack ตามด้วย sudo bash ./deploy-oa-connector.sh; หากขึ้น NEEDS_LOGIN ให้ใช้ login-oa.bat แล้วตรวจ schema/name/read จาก OA จริงต่อ
+- **ข้อจำกัดการดำเนินการ:** ตรวจ sudo -n true แล้ว server ต้องใช้รหัสผ่าน จึงยัง deploy/restart container แทนผู้ใช้ไม่ได้ ไม่เปิด SSH tunnel หรือหน้าล็อกอินเอง และไม่ได้ส่งข้อความ/สถานะอ่านไปหาลูกค้า ไม่มี secret หรือค่าลูกค้าในผลคำสั่ง/บันทึก
+
 ## 2026-11-10 00:58 — ปรับหน้าหลังบ้านเต็มขอบจอและเลื่อนแต่ละคอลัมน์
 - **คำอธิบาย:** ผู้ใช้ต้องการ layout เต็มจอถึงขอบล่างเหมือน LINE OA เปลี่ยนพื้นที่ทำงาน desktop ให้ยึด viewport จริง ตัดระยะรอบการ์ดด้านข้าง/ล่างและเพดานความสูงเดิม โดยคอลัมน์รายชื่อ แชท และร่างออเดอร์เลื่อนแยกกัน
 - **โฟลเดอร์ `frontend/src/app/`**
