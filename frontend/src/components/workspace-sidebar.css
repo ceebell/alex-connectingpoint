@@ -23,13 +23,13 @@
   height: 40px;
   border-radius: 11px;
   padding-right: 4px;
-  font-size: 30px;
+  font-size: calc(30px + var(--mobile-text-increment, 0px));
   letter-spacing: -4px;
 }
 
 .sidebar-rail .brand-mark span {
   margin-bottom: 6px;
-  font-size: 14px;
+  font-size: calc(14px + var(--mobile-text-increment, 0px));
 }
 
 .rail-navigation,
@@ -87,7 +87,7 @@
   border-radius: 8px;
   background: var(--color-primary-ink);
   color: white;
-  font-size: 12px;
+  font-size: calc(12px + var(--mobile-text-increment, 0px));
   font-weight: 500;
   line-height: 1.5;
 }
@@ -124,13 +124,13 @@
 .rail-flyout h2 {
   margin: 0 6px 4px;
   color: var(--ink);
-  font-size: 16px;
+  font-size: calc(16px + var(--mobile-text-increment, 0px));
 }
 
 .rail-flyout .rail-meta {
   margin: 0 6px 8px;
   color: var(--color-description);
-  font-size: 12px;
+  font-size: calc(12px + var(--mobile-text-increment, 0px));
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -152,7 +152,7 @@
   border-radius: 7px;
   background: transparent;
   color: #334155;
-  font-size: 14px;
+  font-size: calc(14px + var(--mobile-text-increment, 0px));
   text-align: left;
 }
 
@@ -171,7 +171,7 @@
 .rail-account-name {
   display: block;
   margin: 8px 6px 2px;
-  font-size: 14px;
+  font-size: calc(14px + var(--mobile-text-increment, 0px));
   overflow-wrap: anywhere;
 }
 

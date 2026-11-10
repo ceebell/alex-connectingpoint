@@ -104,16 +104,15 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
       <p className="muted small sticker-title">{pack.title} · กดเพื่อส่งทันที</p>
       <div className="sticker-grid">{stickerIds(pack).map(id => <button key={id} type="button" disabled={working} aria-label={`ส่งสติกเกอร์ ${id}`} onClick={() => void sendSticker(id)}><img src={stickerUrl(id)} alt="" loading="lazy" referrerPolicy="no-referrer" /></button>)}</div>
     </div>}
-    <div className="reply-row">
-      <div className="reply-tools">
-        <button type="button" className="tool-button" aria-label="สติกเกอร์" aria-expanded={stickersOpen} disabled={!canReply || working} onClick={() => setStickersOpen(open => !open)}><span aria-hidden="true">😊</span></button>
-        <button type="button" className="tool-button" aria-label="แนบรูป" disabled={!canReply || working} onClick={() => fileRef.current?.click()}><span aria-hidden="true">🖼️</span></button>
+    <div className="reply-tools" role="group" aria-label="เครื่องมือแนบข้อความ">
+        <button type="button" className="tool-button" aria-label="สติกเกอร์" aria-expanded={stickersOpen} disabled={!canReply || working} onClick={() => setStickersOpen(open => !open)}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 3 4 3 4-3 4-3M8 9h.01M16 9h.01" /></svg></button>
+        <button type="button" className="tool-button" aria-label="แนบรูป" disabled={!canReply || working} onClick={() => fileRef.current?.click()}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></svg></button>
         <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={e => void pickImage(e.target.files?.[0])} />
-      </div>
+    </div>
+    <div className="reply-row">
       <label className="sr-only" htmlFor="reply-text">ข้อความตอบลูกค้า</label>
-      <textarea id="reply-text" rows={2} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… (Ctrl+Enter เพื่อส่ง)" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onChange={e => { setText(e.target.value); setTextId(null); setError(""); setFailed(null); }} onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void sendText(); } }} />
+      <textarea id="reply-text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า…" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onChange={e => { setText(e.target.value); setTextId(null); setError(""); setFailed(null); }} onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void sendText(); } }} />
       <button className="button primary" disabled={working || !text.trim() || !canReply}>{busy ? "กำลังส่ง…" : textId ? "ส่งอีกครั้ง" : "ส่ง"}</button>
     </div>
-    <p className="muted small">ส่งถึงลูกค้าจริงทาง LINE OA และนับโควตาข้อความ · สติกเกอร์มีเฉพาะชุดที่ LINE อนุญาตให้ส่งผ่าน API</p>
   </form>;
 }

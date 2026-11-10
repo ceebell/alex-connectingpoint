@@ -9,4 +9,4 @@
 .date-picker-control:focus-within { outline: 3px solid #7dd3fc; outline-offset: 2px; }
 .date-picker-control:has(input:disabled) { opacity: .5; }
 .date-picker-control input:disabled { cursor: not-allowed; }
-.date-input-error { font-size: 12px; font-weight: 300; color: #c2410c; }
+.date-input-error { font-size: calc(12px + var(--mobile-text-increment, 0px)); font-weight: 300; color: #c2410c; }

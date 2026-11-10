@@ -1,23 +1,23 @@
 .summary-images{border:1px solid #bfdbfe;border-radius:10px;padding:12px;background:#f8fbff;margin-bottom:16px;min-width:0}
-.summary-images .section-caption{gap:8px;font-size:14px}.summary-images .button{font-size:13px;padding:7px 10px;white-space:nowrap}
+.summary-images .section-caption{gap:8px;font-size:calc(14px + var(--mobile-text-increment, 0px))}.summary-images .button{font-size:calc(13px + var(--mobile-text-increment, 0px));padding:7px 10px;white-space:nowrap}
 .summary-images>p{margin-top:10px;line-height:1.8}.summary-images .notice{margin-top:10px}
 .summary-image-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
 .summary-image{position:relative;border:2px solid #e2e8f0;border-radius:7px;background:white;padding:4px;min-width:0;overflow:hidden}.summary-image label{display:block;cursor:pointer}
 .summary-image.selected{border-color:#1d4ed8;background:#eff6ff}
-.summary-image-delete{position:absolute;top:7px;right:7px;width:30px;height:30px;border-radius:50%;border:1px solid #fecaca;background:white;color:#b91c1c;display:grid;place-items:center;font-size:14px;line-height:1;padding:0;box-shadow:0 1px 4px #0f172a26}.summary-image-delete:hover:enabled{background:#fef2f2;border-color:#f87171}
+.summary-image-delete{position:absolute;top:7px;right:7px;width:30px;height:30px;border-radius:50%;border:1px solid #fecaca;background:white;color:#b91c1c;display:grid;place-items:center;font-size:calc(14px + var(--mobile-text-increment, 0px));line-height:1;padding:0;box-shadow:0 1px 4px #0f172a26}.summary-image-delete:hover:enabled{background:#fef2f2;border-color:#f87171}
 .summary-image-grid img{width:100%;height:110px;object-fit:contain;background:white;border-radius:4px}
-.summary-image label>span{display:flex;align-items:center;gap:5px;padding:6px 2px;font-size:12px;white-space:nowrap}
+.summary-image label>span{display:flex;align-items:center;gap:5px;padding:6px 2px;font-size:calc(12px + var(--mobile-text-increment, 0px));white-space:nowrap}
 .summary-image-grid input{width:16px;height:16px;accent-color:#1d4ed8}
 .customer-extract{margin-bottom:15px}.customer-extract .notice{margin-top:10px}
 .customer-evidence{margin-top:10px}.customer-evidence summary{cursor:pointer;color:#0369a1}
 .customer-evidence>div{padding:8px 0;border-bottom:1px solid #bae6fd}.customer-evidence p{white-space:pre-wrap;overflow-wrap:anywhere}
-.customer-evidence a{color:#1d4ed8;text-decoration:underline;font-size:13px}
-.item-rental{margin-top:13px;padding-top:10px;border-top:1px solid #e2e8f0}.item-rental summary{font-size:14px;color:#0369a1;cursor:pointer}
-.item-rental>p{margin:9px 0}.item-rental textarea{font-size:15px}
+.customer-evidence a{color:#1d4ed8;text-decoration:underline;font-size:calc(13px + var(--mobile-text-increment, 0px))}
+.item-rental{margin-top:13px;padding-top:10px;border-top:1px solid #e2e8f0}.item-rental summary{font-size:calc(14px + var(--mobile-text-increment, 0px));color:#0369a1;cursor:pointer}
+.item-rental>p{margin:9px 0}.item-rental textarea{font-size:calc(15px + var(--mobile-text-increment, 0px))}
 @media(max-width:600px){.summary-image-grid img{height:95px}.summary-image-grid{gap:5px}}
 .rental-checkout{display:flex;flex-direction:column;gap:15px;min-width:0}.rental-checkout .notice,.rental-checkout .step-caption{margin:0}
-.rental-checkout label{font-size:14px}.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:15px;max-width:100%}
+.rental-checkout label{font-size:calc(14px + var(--mobile-text-increment, 0px))}.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:calc(15px + var(--mobile-text-increment, 0px));max-width:100%}
 .rental-checkout fieldset{border:0;min-width:0;display:flex;flex-direction:column;gap:13px}
-.rental-checkout .notice ul{font-size:13px}.rental-checkout code{font-size:13px;overflow-wrap:anywhere;user-select:all}
+.rental-checkout .notice ul{font-size:calc(13px + var(--mobile-text-increment, 0px))}.rental-checkout code{font-size:calc(13px + var(--mobile-text-increment, 0px));overflow-wrap:anywhere;user-select:all}
 .bill-resolve{margin-top:12px;display:flex;flex-direction:column;gap:10px}.bill-resolve input{background:white}
-@media(max-width:600px){.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:16px}}
+@media(max-width:600px){.rental-checkout input,.rental-checkout select,.rental-checkout textarea{font-size:calc(16px + var(--mobile-text-increment, 0px))}}

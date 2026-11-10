@@ -1,0 +1,58 @@
+/* Put the attachment tools above a compact composer without enclosing button borders. */
+.reply-box .reply-tools {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-box .tool-button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border: 0;
+  background: transparent;
+  color: #475569;
+}
+
+.reply-box .tool-button:hover:enabled,
+.reply-box .tool-button[aria-expanded="true"] {
+  background: #eff6ff;
+  color: var(--color-primary-ink);
+}
+
+.reply-tools svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
+  .app-shell .workspace .reply-box {
+    gap: 4px;
+    padding: 4px 10px 8px;
+  }
+
+  /* This must beat the desktop chat font rule so focusing the field never triggers Safari's text zoom. */
+  .app-shell .workspace .reply-row textarea {
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding: 8px 12px;
+    border-radius: 22px;
+    font-size: calc(16px + var(--mobile-text-increment, 0px));
+    line-height: 1.5;
+    resize: none;
+    overflow-y: auto;
+    scroll-margin-block: 0;
+  }
+
+  .app-shell .workspace .reply-row .button {
+    min-width: 48px;
+    height: 44px;
+    padding: 8px 12px;
+  }
+}

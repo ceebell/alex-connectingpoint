@@ -4,10 +4,28 @@
 
 /* Use one panel at a time on phones, including a phone turned sideways. */
 @media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
+  :root {
+    --mobile-text-increment: 1px;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  :root:has(.app-shell),
+  body:has(.app-shell) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   .app-shell {
+    position: fixed;
+    top: var(--app-top, 0px);
+    left: 0;
+    right: 0;
     height: var(--app-height, 100dvh);
     min-height: 0;
     width: 100%;
+    overflow: hidden;
   }
 
   .app-shell .sidebar,
@@ -20,6 +38,7 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    overflow: hidden;
     padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   }
 
@@ -35,7 +54,7 @@
   }
 
   .app-shell .page-header h1 {
-    font-size: 20px;
+    font-size: calc(20px + var(--mobile-text-increment, 0px));
     line-height: 1.5;
   }
 
@@ -56,7 +75,7 @@
     min-width: 44px;
     min-height: 44px;
     padding: 8px;
-    font-size: 20px;
+    font-size: calc(20px + var(--mobile-text-increment, 0px));
   }
 
   .app-shell .mobile-logout {
@@ -64,7 +83,7 @@
     align-items: center;
     justify-content: center;
     padding: 8px;
-    font-size: 13px;
+    font-size: calc(13px + var(--mobile-text-increment, 0px));
   }
 
   .app-shell .page-notice {
@@ -117,7 +136,7 @@
   }
 
   .panel-heading h2 {
-    font-size: 16px;
+    font-size: calc(16px + var(--mobile-text-increment, 0px));
     overflow-wrap: anywhere;
   }
 
@@ -178,7 +197,7 @@
   }
 
   .workspace .message-bubble {
-    font-size: 16px;
+    font-size: calc(16px + var(--mobile-text-increment, 0px));
   }
 
   .workspace .reply-box {
@@ -205,7 +224,7 @@
   .app-shell .tabs button {
     min-height: 48px;
     padding: 12px;
-    font-size: 14px;
+    font-size: calc(14px + var(--mobile-text-increment, 0px));
   }
 
   .app-shell button,
@@ -241,7 +260,7 @@
     min-width: 0;
     min-height: 44px;
     max-width: 100%;
-    font-size: 16px;
+    font-size: calc(16px + var(--mobile-text-increment, 0px));
     scroll-margin-block: 24px;
   }
 
@@ -298,6 +317,7 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     flex-shrink: 0;
+    margin-top: auto;
     gap: 8px;
     padding: 8px 0 max(8px, env(safe-area-inset-bottom));
   }
@@ -314,7 +334,7 @@
     border-radius: 10px;
     background: white;
     color: #475569;
-    font-size: 13px;
+    font-size: calc(13px + var(--mobile-text-increment, 0px));
     line-height: 1.5;
   }
 
@@ -335,7 +355,7 @@
   }
 
   .mobile-workspace-nav small {
-    font-size: 12px;
+    font-size: calc(12px + var(--mobile-text-increment, 0px));
   }
 
   .login-page {
@@ -352,7 +372,7 @@
 
   .invoice-dialog {
     position: fixed;
-    inset: 0;
+    inset: var(--app-top, 0px) 0 auto;
     width: 100%;
     max-width: none;
     height: var(--app-height, 100dvh);

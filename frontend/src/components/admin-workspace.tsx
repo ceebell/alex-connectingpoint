@@ -70,7 +70,6 @@ export default function AdminWorkspace() {
   const messagesRef = useRef<LineEvent[]>([]);
   const readPending = useRef(new Set<string>());
   const lastReadMessage = useRef("");
-  const [oaStatus, setOaStatus] = useState<OaStatus>({ state: "NOT_CONFIGURED" });
   const [nextMessage, setNextMessage] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [version, setVersion] = useState(0);
@@ -109,25 +108,37 @@ export default function AdminWorkspace() {
     const update = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        // Safari exposes the space above the keyboard through VisualViewport.
-        if (mobile.matches && viewport.scale === 1) root.style.setProperty("--app-height", `${viewport.height}px`);
-        else root.style.removeProperty("--app-height");
+        // Follow the visible viewport when Safari pans above the keyboard or moves its browser chrome.
+        // Keep the current layout during a deliberate pinch zoom instead of counteracting that gesture.
+        const unzoomed = Math.abs(viewport.scale - 1) < 0.01;
+        if (mobile.matches && unzoomed) {
+          root.style.setProperty("--app-height", `${viewport.height}px`);
+          root.style.setProperty("--app-top", `${viewport.offsetTop}px`);
+        } else if (!mobile.matches) {
+          root.style.removeProperty("--app-height");
+          root.style.removeProperty("--app-top");
+        }
         const editing = document.activeElement?.matches("input, textarea, select");
-        app.dataset.keyboardOpen = String(mobile.matches && viewport.scale === 1 && editing && viewport.height < window.innerHeight - 120);
+        app.dataset.keyboardOpen = String(mobile.matches && unzoomed && editing && viewport.height < window.innerHeight - 120);
       });
     };
     update();
     viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
     mobile.addEventListener("change", update);
     app.addEventListener("focusin", update);
     app.addEventListener("focusout", update);
     return () => {
       window.cancelAnimationFrame(frame);
       viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
       mobile.removeEventListener("change", update);
       app.removeEventListener("focusin", update);
       app.removeEventListener("focusout", update);
       root.style.removeProperty("--app-height");
+      root.style.removeProperty("--app-top");
     };
   }, [session, checking]);
   useEffect(() => {
@@ -267,9 +278,8 @@ export default function AdminWorkspace() {
       if (cancelled || polling || document.hidden) return;
       polling = true;
       try {
-        const status = await api<OaStatus>("/api/line/oa-sync/status");
+        await api<OaStatus>("/api/line/oa-sync/status");
         if (cancelled) return;
-        setOaStatus(status);
         if (selected) {
           let cursor: string | null = null;
           const records: LineEvent[] = [];
@@ -292,7 +302,6 @@ export default function AdminWorkspace() {
       } catch (cause) {
         if (!cancelled) {
           if (cause instanceof ApiError && cause.status === 401) setSession(null);
-          else setOaStatus({ state: cause instanceof ApiError && cause.status === 404 ? "BACKEND_UPDATE_REQUIRED" : "BACKEND_UNAVAILABLE" });
         }
       } finally { polling = false; }
     }
@@ -484,9 +493,9 @@ export default function AdminWorkspace() {
         {!inquiries.length && <div className="empty compact"><span aria-hidden="true">▤</span><h3>ยังไม่มี inquiry</h3><p>เมื่อมีข้อความเข้า LINE OA<br />เรื่องใหม่จะแสดงที่นี่</p></div>}
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
-      <section tabIndex={-1} id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel"><div className="panel-heading"><div><h2>{current ? current.customer?.display_name || `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2><span className="small muted">{current ? `${current.customer?.display_name ? `เรื่อง #${current._id.slice(-6).toUpperCase()} · ` : ""}ลูกค้าและแอดมิน · เวลาไทย` : "เลือก inquiry เพื่ออ่านรายละเอียด"}</span></div>{current && <span className="line-badge">LINE OA</span>}</div>
+      <section tabIndex={-1} id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel"><div className="panel-heading"><div><h2>{current ? current.customer?.display_name || `เรื่อง #${current._id.slice(-6).toUpperCase()}` : "บทสนทนาจาก LINE"}</h2></div>{current && <span className="line-badge">LINE OA</span>}</div>
         <div className="chat-stream" aria-busy={loading}>
-          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <><div className="chat-notice">ลูกค้าอยู่ด้านซ้าย · แอดมินอยู่ด้านขวา{oaStatus.state !== "NOT_CONFIGURED" && <><br /><span>{oaStates[oaStatus.state] ?? "กำลังตรวจตัวเชื่อม OA"}</span></>}</div>{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
+          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <>{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div>
         {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
         <div className="chat-footer"><span className="online-dot" /> เก็บประวัติแยกตามผู้ใช้และบทสนทนา</div>

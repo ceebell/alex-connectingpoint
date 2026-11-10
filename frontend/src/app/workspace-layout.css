@@ -1,7 +1,7 @@
 /* Fill the desktop viewport; each workspace panel owns its scrolling. */
 .app-shell .workspace .message-bubble,
 .app-shell .workspace .reply-row textarea {
-  font-size: 12px;
+  font-size: calc(12px + var(--mobile-text-increment, 0px));
 }
 
 @media (min-width: 1025px), (min-width: 768px) and (min-height: 601px) {

@@ -4,6 +4,24 @@
 
 <!-- entries -->
 
+## 2026-11-10 12:13 — แก้จอ iPhone เลื่อนหลุดและย่อช่องตอบแชท
+- **คำอธิบาย:** ผู้ใช้พบเมนูล่างเลื่อนขึ้นจนเกิดพื้นที่ว่าง และ iPhone ซูมตอนแตะช่องพิมพ์ ต้องการตัวอักษรมือถือใหญ่ขึ้น 1px ปุ่มแนบอยู่เหนือข้อความและไม่มีกรอบ พร้อมเอาคำอธิบายที่ขีดฆ่าออก
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `mobile.css` — แก้: ตรึง shell ตามพื้นที่มองเห็น ล็อก document เฉพาะหน้าทำงานให้เลื่อนภายใน panel, กำหนดเมนูล่างชิดขอบจอ และปรับ dialog ให้ตามตำแหน่ง visual viewport; เพิ่ม --mobile-text-increment: 1px เฉพาะ breakpoint มือถือ
+  - `globals.css`, `typography.css`, `workspace-layout.css` — แก้: ใช้ font-size ร่วมกับ mobile increment เพื่อเพิ่มข้อความ 1px บนมือถือโดยค่า desktop เดิมไม่เปลี่ยน
+  - `layout.tsx` — แก้: โหลด CSS ของ composer ใหม่
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `admin-workspace.tsx` — แก้: ติดตาม VisualViewport resize/scroll และ offsetTop เพื่อคง layout เมื่อ browser chrome หรือ keyboard เปลี่ยน; ไม่บังคับ layout ระหว่าง pinch zoom; เอาข้อความใต้ชื่อลูกค้าและ notice ลูกค้าซ้าย/แอดมินขวา/ติดต่อผู้ดูแลออก และถอด state ที่ใช้เฉพาะ notice เดิม
+  - `reply-composer.tsx` — แก้: ย้ายปุ่มสติกเกอร์และแนบรูปขึ้นเหนือช่องพิมพ์ ใช้ SVG ไอคอนพร้อม accessible labels, ลด textarea เป็นหนึ่งแถว, ย่อ placeholder และเอาคำอธิบายท้ายกล่องออก โดยการส่ง/การส่งซ้ำ/แนบรูปเดิมยังใช้ API เดิม
+  - `reply-composer.css` — เพิ่ม: toolbar แนวนอนไม่มีกรอบ และช่องตอบมือถือสูงคงที่ 44px เลื่อนข้อความภายในได้; ใช้ตัวอักษร 17px ที่มี specificity สูงกว่ากฎ desktop เดิม 12px โดยยังอนุญาต pinch zoom
+  - `date-input.css`, `inquiry-list.css`, `invoice.css`, `order-cart.css`, `rental-summary.css`, `workspace-sidebar.css` — แก้: font-size ใช้ mobile increment เพื่อเพิ่มทุกส่วนของแอปตาม breakpoint เดียวกัน
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone release — แก้: build บน local Docker Desktop เป็น `front-20261110050730-f2f22b0f799d` พร้อม runtime/static/metadata/checksum
+- **ผลตรวจสอบ:** local Linux frontend lint/build/TypeScript ผ่าน; npm test ผ่าน 8/8; ตรวจ checksum 2,107 ไฟล์ Linux/amd64 build_location local และไม่มี .env ใน release; Chrome/WebKit ผ่าน 12 กรณี 6 viewport ต่อ browser ครอบคลุม iPhone/จอยาว/จอเล็ก/แนวนอน/tablet/desktop ตรวจ 70 ลูกค้าและ 80 ข้อความ การเลื่อน document, เมนูชิดขอบ, browser chrome resize, จำลอง visual keyboard/offset/zoom, textarea 44px คงเดิมเมื่อพิมพ์หลายบรรทัด, computed mobile fonts +1px, ปุ่มไร้กรอบอยู่เหนือช่องพิมพ์, ข้อความถูกลบ, สลับ panel คงข้อความค้าง, ส่งข้อความและ Ctrl+Enter ผ่าน API จำลอง, ปุ่มสติกเกอร์และตัวเลือกไฟล์; ตรวจเพิ่มใบสรุปบน iPhone จำลองทั้งสอง browser ว่าวันที่ถูกต้อง ฟอนต์ช่องกรอก 17px และ dialog ตาม visual viewport เมื่อ keyboard เปิด
+- **ขอบเขตการตรวจ:** ใช้ Chrome/WebKit แบบ headless และจำลอง keyboard/viewport ไม่ใช่การทดสอบบน iPhone จริง; ทุก API ใช้ fixture ไม่มีข้อความหรือสถานะอ่านถูกส่งไป LINE จริง; git diff --check ผ่านเฉพาะไฟล์งาน frontend/dist/revising-log โดยคงไฟล์ prompts ที่ผู้ใช้แก้ไว้เดิม
+- **ภาพและตัวตรวจ:** `data/iphone-chat-check/` ถูก ignore; `iphone-chat.png` แสดง layout ใหม่ และ `iphone-keyboard-layout.png` แสดงพื้นที่จำลองเหนือ keyboard
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat เพื่อส่ง source/release แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy ในงานนี้
+
 ## 2026-11-10 11:11 — ใช้วันที่ dd/mm/yyyy ทั้งแอป
 - **คำอธิบาย:** ผู้ใช้ต้องการวัน/เดือน/ปีแบบตัวเลขทั้งแอป รวมการแสดงผลและช่องกรอก ใช้ปี ค.ศ. เลขอารบิก และเขตเวลา Asia/Bangkok โดยข้อมูลวันที่ที่ส่ง API และเก็บในระบบยังใช้ ISO ตามสัญญาเดิม
 - **โฟลเดอร์ `frontend/src/lib/`**
