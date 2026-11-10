@@ -4,6 +4,12 @@
 
 <!-- entries -->
 
+## 2026-11-10 14:07 — ย่อ guideline HTML เป็น build-all/rungit และ deploy-all
+- **คำอธิบาย:** ผู้ใช้ต้องการ guideline ใน HTML ให้ local ใช้เพียง build-all.bat แล้ว rungit.bat พร้อมข้อความ commit และ Ubuntu ใช้ cd ~/alex-connectingpoint ตามด้วย bash ./deploy-all.sh main ซึ่งทำ git load/pull และ deploy Docker ให้อัตโนมัติ
+- **โฟลเดอร์ `/`**
+  - `alex-line-hermes-mcp-workflow.html` — แก้: ปรับสรุปงานผู้พัฒนา ส่วน deploy หลัก ข้อ 4.2 และตาราง/ขั้นตอน Step 2 ให้ใช้ workflow เดียวกัน; code block ฝั่ง local มี 2 คำสั่งพร้อมตัวอย่าง rungit.bat "Compact mobile chat composer and attachment menu"; ฝั่ง Ubuntu ใช้ deploy-all.sh main แทนการแยก loadgit/docker-build/docker-deploy; อธิบายการ pull Git, package runtime images และ deploy --full-stack อัตโนมัติ พร้อมเก็บงานติดตั้ง/อัปเดต companion OA ไว้ในรายละเอียดแยก
+- **ผลตรวจสอบ:** อ่าน deploy-all.sh ยืนยันลำดับ loadgit → docker-build --full-stack → docker-deploy --full-stack; เปิด HTML ด้วย Chrome headless ตรวจ code blocks ครบทั้ง 3 ส่วนว่าตรงตัวอย่าง local/Ubuntu และไม่มี script error; git diff --check ผ่าน แก้เอกสารเท่านั้นจึงไม่ build โปรแกรม และไม่ได้รัน script deploy/commit/push
+
 ## 2026-11-10 13:57 — ย่อแถบพิมพ์มือถือและรวมรูป/สติกเกอร์หลังปุ่มบวก
 - **คำอธิบาย:** ผู้ใช้ต้องการแถบพิมพ์แถวเดียวแบบ LINE ซ่อน navigation ตอนพิมพ์ ซ่อนรูป/สติกเกอร์จนกดปุ่มบวก และแตะพื้นที่แชทเพื่อพับ keyboard/แผงเลือกทั้งหมด โดยคงข้อความและรูปที่ยังไม่ส่ง
 - **โฟลเดอร์ `frontend/src/components/`**
