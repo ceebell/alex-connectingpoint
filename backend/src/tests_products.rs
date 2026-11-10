@@ -84,6 +84,8 @@ async fn mcp_is_authenticated_read_only_and_supports_json_rpc_lifecycle() {
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let body = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}});

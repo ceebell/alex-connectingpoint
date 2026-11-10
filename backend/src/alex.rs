@@ -169,6 +169,10 @@ pub async fn login(state: &AppState) -> Result<Session, AppError> {
             .filter(|v| !v.trim().is_empty() && v.len() <= 1000)
             .ok_or(AppError::AlexFailed)?;
         if (cfg.branch_ids.is_empty() || cfg.branch_ids.iter().any(|allowed| allowed == id))
+            && state
+                .access
+                .as_ref()
+                .is_none_or(|access| access.allows_branch(id))
             && seen.insert(id.to_string())
         {
             branches.push(Branch {

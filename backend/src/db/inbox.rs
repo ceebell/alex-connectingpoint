@@ -139,8 +139,14 @@ pub async fn decorate(state: &AppState, inquiries: &mut [Document]) -> Result<()
                 source = "line_oa";
             }
         }
-        if let Some(message_id) = incoming.get(&id).and_then(|m| m.get_object_id("_id").ok()) {
-            inquiry.insert("last_incoming_message_id", message_id);
+        if let Some(message) = incoming.get(&id) {
+            if let Ok(message_id) = message.get_object_id("_id") {
+                inquiry.insert("last_incoming_message_id", message_id);
+            }
+            if let Ok(at) = message.get_datetime("event_at") {
+                inquiry.insert("last_incoming_message_at", *at);
+            }
+            inquiry.insert("last_incoming_message_preview", preview(message));
         }
         inquiry.insert("unread", unread);
         inquiry.insert("unread_source", source);

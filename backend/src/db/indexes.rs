@@ -2,7 +2,55 @@ use crate::{error::AppError, state::AppState};
 use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
+    for (collection, keys, partial) in [
+        ("team_settings", doc! {"shop_id":1,"channel_id":1}, None),
+        (
+            "admin_accounts",
+            doc! {"login_channel_id":1,"line_user_id":1},
+            None,
+        ),
+        (
+            "team_memberships",
+            doc! {"shop_id":1,"channel_id":1,"line_user_id":1},
+            Some(doc! {"live_member":true}),
+        ),
+        (
+            "team_memberships",
+            doc! {"shop_id":1,"channel_id":1,"request_id":1,"created_by_id":1},
+            Some(doc! {"request_id":{"$type":"string"}}),
+        ),
+        (
+            "team_memberships",
+            doc! {"shop_id":1,"channel_id":1,"token_hash":1},
+            Some(doc! {"token_hash":{"$type":"string"}}),
+        ),
+        (
+            "team_memberships",
+            doc! {"shop_id":1,"channel_id":1,"bootstrap_user_id":1},
+            Some(doc! {"bootstrap_user_id":{"$type":"string"}}),
+        ),
+    ] {
+        state
+            .collection(collection)
+            .create_index(
+                IndexModel::builder()
+                    .keys(keys)
+                    .options(
+                        IndexOptions::builder()
+                            .unique(true)
+                            .partial_filter_expression(partial)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await?;
+    }
     for (collection, keys, unique) in [
+        (
+            "team_memberships",
+            doc! {"shop_id":1,"channel_id":1,"_id":-1},
+            false,
+        ),
         (
             "customer_aliases",
             doc! {"shop_id":1,"channel_id":1,"line_user_id":1},

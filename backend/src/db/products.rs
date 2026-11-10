@@ -106,11 +106,19 @@ pub(crate) async fn search_record(
 ) -> Result<Document, AppError> {
     let mut filter = state.scope();
     filter.extend(doc! {"_id":search,"inquiry_id":inquiry,"expires_at":{"$gt":DateTime::now()}});
-    state
+    let record = state
         .collection("product_searches")
         .find_one(filter)
         .await?
-        .ok_or(AppError::ProductConflict)
+        .ok_or(AppError::ProductConflict)?;
+    super::team::check_branch(
+        state,
+        record
+            .get_document("input")
+            .and_then(|input| input.get_str("branch_id"))
+            .map_err(|_| AppError::Data)?,
+    )?;
+    Ok(record)
 }
 
 pub(crate) fn search_candidates(record: &Document) -> Result<Vec<Candidate>, AppError> {

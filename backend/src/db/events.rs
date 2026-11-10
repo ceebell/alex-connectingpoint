@@ -6,6 +6,7 @@ use mongodb::{
 
 pub fn duplicate(error: &mongodb::error::Error) -> bool {
     matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(e)) if e.code == 11000)
+        || matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(e) if e.code == 11000)
 }
 
 pub async fn persist(state: &AppState, event: &LineEvent) -> Result<bool, AppError> {

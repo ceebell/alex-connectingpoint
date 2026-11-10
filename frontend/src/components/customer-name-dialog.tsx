@@ -40,9 +40,9 @@ export default function CustomerNameDialog({ userId, customer, onSaved, onClose,
   }
 
   return <dialog ref={dialog} className="customer-name-dialog" aria-labelledby="customer-name-title" onCancel={event => { if (busy) event.preventDefault(); }} onClose={onClose}>
-    <form onSubmit={event => { event.preventDefault(); if (name.trim()) void save(name.trim()); }}>
+    <form autoComplete="off" onSubmit={event => { event.preventDefault(); if (name.trim()) void save(name.trim()); }}>
       <div className="section-caption"><h2 id="customer-name-title">ตั้งชื่อลูกค้า</h2><button type="button" className="text-button" disabled={busy} onClick={onClose}>ปิด</button></div>
-      <label>ชื่อที่ใช้ใน Alex<input autoFocus value={name} maxLength={200} disabled={busy || loading} onChange={event => setName(event.target.value)} /></label>
+      <label>ชื่อที่ใช้ใน Alex<input autoComplete="off" autoFocus value={name} maxLength={200} disabled={busy || loading} onChange={event => setName(event.target.value)} /></label>
       <p className="muted small">ชื่อใน LINE: {lineName || "ยังไม่มีชื่อ"}</p>
       {error && <p className="notice warning" role="alert">{error}</p>}
       <div className="customer-name-actions"><button type="button" className="button secondary" disabled={busy || loading || !custom} onClick={() => void save(null)}>ใช้ชื่อจาก LINE</button><button className="button primary" disabled={busy || loading || !name.trim()}>{busy ? "กำลังบันทึก…" : "บันทึกชื่อ"}</button></div>

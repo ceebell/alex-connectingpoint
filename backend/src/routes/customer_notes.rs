@@ -5,11 +5,10 @@ use crate::{
         customer::valid_user_id,
         customer_notes::{AliasInput, CreateInput, EditInput},
     },
-    state::AppState,
 };
 use axum::{
     Json,
-    extract::{Path, Query, State, rejection::JsonRejection},
+    extract::{Path, Query, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -27,7 +26,7 @@ fn id(value: &str) -> Result<ObjectId, AppError> {
 }
 
 pub async fn alias(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let user = user(&user_id)?;
@@ -39,7 +38,7 @@ pub async fn alias(
 }
 
 pub async fn save_alias(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<AliasInput>, JsonRejection>,
@@ -57,7 +56,7 @@ pub struct Page {
 }
 
 pub async fn list(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
     Query(page): Query<Page>,
 ) -> Result<Json<Value>, AppError> {
@@ -67,7 +66,7 @@ pub async fn list(
 }
 
 pub async fn detail(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((user_id, note)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(
@@ -76,7 +75,7 @@ pub async fn detail(
 }
 
 pub async fn create(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<CreateInput>, JsonRejection>,
@@ -89,7 +88,7 @@ pub async fn create(
 }
 
 pub async fn edit(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((user_id, note)): Path<(String, String)>,
     headers: HeaderMap,
     input: Result<Json<EditInput>, JsonRejection>,
@@ -103,7 +102,7 @@ pub async fn edit(
 }
 
 pub async fn image(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((user_id, image)): Path<(String, String)>,
 ) -> Result<Response, AppError> {
     let (mime, bytes) = customer_notes::read_image(&state, user(&user_id)?, id(&image)?).await?;

@@ -19,7 +19,7 @@ use sha2::Sha256;
 
 pub async fn authorize(
     State(state): State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
     if super::session::valid_cookie(&state, request.headers()) {
@@ -28,6 +28,39 @@ pub async fn authorize(
             axum::http::Method::GET | axum::http::Method::HEAD
         ) {
             super::session::require_browser_header(request.headers())?;
+        }
+        if crate::db::team::enabled(&state) {
+            let identity = super::session::identity(&state, request.headers())
+                .ok_or(AppError::Unauthorized)?;
+            if !identity.is_line() {
+                return Err(AppError::Forbidden);
+            }
+            let access = crate::db::team::access(&state, &identity.id, &identity.name).await?;
+            let path = request
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .ok_or(AppError::Data)?
+                .as_str();
+            let mutation = !matches!(
+                *request.method(),
+                axum::http::Method::GET | axum::http::Method::HEAD
+            );
+            if (path.starts_with("/api/admin/team")
+                || path.ends_with("/assign")
+                || path.ends_with("/retry"))
+                && access.role != crate::models::team::Role::Owner
+            {
+                return Err(AppError::Forbidden);
+            }
+            if mutation
+                && (path.ends_with("/checkout/submit")
+                    || path.ends_with("/checkout/resolve")
+                    || path.ends_with("/order"))
+                && !access.can_submit()
+            {
+                return Err(AppError::Forbidden);
+            }
+            request.extensions_mut().insert(access);
         }
         let mut response = next.run(request).await;
         response
@@ -68,6 +101,7 @@ fn object_id(value: &str) -> Result<ObjectId, AppError> {
 
 #[derive(Default, Deserialize)]
 pub struct ListQuery {
+    pub id: Option<String>,
     pub status: Option<String>,
     pub before: Option<String>,
     pub before_at: Option<String>,
@@ -106,7 +140,11 @@ pub async fn list(
         .as_deref()
         .map(|at| at.parse::<i64>().map_err(|_| AppError::BadRequest))
         .transpose()?;
-    let mut inquiries = inquiries::list(&state, query.status.as_deref(), before, before_at).await?;
+    let mut inquiries = if let Some(id) = query.id.as_deref() {
+        inquiries::by_id(&state, object_id(id)?).await?
+    } else {
+        inquiries::list(&state, query.status.as_deref(), before, before_at).await?
+    };
     let ids: Vec<String> = inquiries
         .iter()
         .filter_map(|i| i.get_str("line_user_id").ok().map(String::from))

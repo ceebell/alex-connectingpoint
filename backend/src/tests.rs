@@ -34,6 +34,8 @@ mod product_tests;
 mod rental_tests;
 #[path = "tests_step2.rs"]
 mod step2;
+#[path = "tests_team.rs"]
+mod team_tests;
 
 fn config() -> Config {
     Config {
@@ -165,6 +167,8 @@ async fn public_routes_verify_before_database_access() {
         db: client.database(&config.mongodb_db),
         config: Arc::new(config),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let (status, body) = request(&state, "/api/health", "GET", Value::Null, false).await;
@@ -228,6 +232,8 @@ async fn webhook_does_not_acknowledge_database_failure() {
         db: client.database(&config.mongodb_db),
         config: Arc::new(config),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let (status, response) = request(

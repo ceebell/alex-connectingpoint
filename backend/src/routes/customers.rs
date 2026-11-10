@@ -5,11 +5,10 @@ use crate::{
         customer::{ApproveInput, ProfileInput, valid_user_id},
         outbound::{SendInput, UploadInput},
     },
-    state::AppState,
 };
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -27,7 +26,7 @@ fn inquiry(value: &str) -> Result<ObjectId, AppError> {
 }
 
 pub async fn profile(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let profile = customers::get(&state, user(&user_id)?).await?;
@@ -35,7 +34,7 @@ pub async fn profile(
 }
 
 pub async fn save_profile(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(user_id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<ProfileInput>, JsonRejection>,
@@ -47,7 +46,7 @@ pub async fn save_profile(
 }
 
 pub async fn order(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(
@@ -56,7 +55,7 @@ pub async fn order(
 }
 
 pub async fn approve(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<ApproveInput>, JsonRejection>,
@@ -68,7 +67,7 @@ pub async fn approve(
 }
 
 pub async fn send_message(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<SendInput>, JsonRejection>,
@@ -80,7 +79,7 @@ pub async fn send_message(
 }
 
 pub async fn upload_media(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(id): Path<String>,
     headers: HeaderMap,
     input: Result<Json<UploadInput>, JsonRejection>,
@@ -93,7 +92,7 @@ pub async fn upload_media(
 
 // Public by design: LINE downloads sent images from this unguessable URL.
 pub async fn outbound_media(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((token, variant)): Path<(String, String)>,
 ) -> Result<Response, AppError> {
     let (mime, bytes) = outbound::read(&state, &token, &variant).await?;

@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
 type Panel = "inquiries" | "chat" | "draft";
-type Menu = "chat" | "info" | "account";
-type Icon = Panel | "info" | "account" | "logout";
+type Menu = "chat" | "info" | "account" | "settings";
+type Icon = Panel | "info" | "account" | "logout" | "settings";
 type Props = {
-  inquiryCount: number;
+  inquiryCount?: number;
   username: string;
   login: "line" | "password" | "token";
   activePanel: Panel;
   onNavigate: (panel: Panel) => void;
   onLogout: () => Promise<void>;
+  onManageTeam?: () => void;
+  teamActive?: boolean;
 };
 
 function RailIcon({ name }: { name: Icon }) {
@@ -23,6 +25,7 @@ function RailIcon({ name }: { name: Icon }) {
     {name === "info" && <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>}
     {name === "account" && <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="9" r="3" /><path d="M6 19a6 6 0 0 1 12 0" /></>}
     {name === "logout" && <><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M8 12h13" /></>}
+    {name === "settings" && <><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z" /><circle cx="12" cy="12" r="3" /></>}
   </svg>;
 }
 
@@ -32,7 +35,7 @@ const destinations: { panel: Panel; label: string }[] = [
   { panel: "draft", label: "ร่างออเดอร์" },
 ];
 
-export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout }: Props) {
+export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout, onManageTeam, teamActive }: Props) {
   const [open, setOpen] = useState<Menu | null>(null);
   const sidebar = useRef<HTMLElement>(null);
 
@@ -82,16 +85,17 @@ export default function WorkspaceSidebar({ inquiryCount, username, login, active
     <div className="rail-brand" role="img" aria-label="Alex"><div className="brand-mark" aria-hidden="true">a<span>•</span></div></div>
     <nav className="rail-navigation" aria-label="พื้นที่ทำงาน">
       <div className="rail-group" {...groupEvents("chat")}>
-        <button type="button" className="rail-button is-active" aria-label={`แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
-          <RailIcon name="chat" /><span className="rail-count" aria-hidden="true">{inquiryCount > 99 ? "99+" : inquiryCount}</span>
+        <button type="button" className={`rail-button ${teamActive ? "" : "is-active"}`} aria-label={inquiryCount === undefined ? "แชทและ inquiry" : `แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
+          <RailIcon name="chat" />{inquiryCount !== undefined && <span className="rail-count" aria-hidden="true">{inquiryCount > 99 ? "99+" : inquiryCount}</span>}
         </button>
         {open === "chat" && <div className="rail-flyout" id="rail-chat-menu" role="region" aria-labelledby="rail-chat-heading">
-          <h2 id="rail-chat-heading">แชทและ inquiry</h2><p className="rail-meta">เรื่องที่รับเข้า {inquiryCount} รายการ</p>
+          <h2 id="rail-chat-heading">แชทและ inquiry</h2>{inquiryCount !== undefined && <p className="rail-meta">เรื่องที่รับเข้า {inquiryCount} รายการ</p>}
           <div className="rail-menu">{destinations.map(({ panel, label }) => <button key={panel} type="button" className="rail-menu-item" aria-current={activePanel === panel ? "location" : undefined} onClick={() => { setOpen(null); onNavigate(panel); }}><RailIcon name={panel} /><span>{label}</span></button>)}</div>
         </div>}
       </div>
     </nav>
     <div className="rail-utilities">
+      {onManageTeam && <div className="rail-group rail-group-bottom" {...groupEvents("settings")}><button type="button" className={`rail-button ${teamActive ? "is-active" : ""}`} aria-label="ตั้งค่าร้าน" aria-expanded={open === "settings"} aria-controls="rail-settings-menu" onClick={() => setOpen("settings")}><RailIcon name="settings" /></button>{open === "settings" && <div className="rail-flyout" id="rail-settings-menu" role="region" aria-labelledby="rail-settings-heading"><h2 id="rail-settings-heading">ตั้งค่าร้าน</h2><button type="button" className="rail-menu-item" aria-current={teamActive ? "page" : undefined} onClick={() => { setOpen(null); onManageTeam(); }}><RailIcon name="account" /><span>จัดการทีม</span></button></div>}</div>}
       <div className="rail-group rail-group-bottom" {...groupEvents("info")}>
         <button type="button" className="rail-button" aria-label="ข้อมูลพื้นที่ทำงาน" aria-expanded={open === "info"} aria-controls="rail-info-menu" onClick={() => setOpen("info")}><RailIcon name="info" /></button>
         {open === "info" && <div className="rail-flyout" id="rail-info-menu" role="region" aria-labelledby="rail-info-heading"><h2 id="rail-info-heading">ข้อมูลพื้นที่ทำงาน</h2><p className="rail-meta">รับเรื่องจาก LINE OA</p><p className="rail-meta">อ่านแชท เตรียมร่าง แล้วตรวจสอบก่อนส่งต่อ</p></div>}

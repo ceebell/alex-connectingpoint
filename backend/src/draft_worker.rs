@@ -113,6 +113,8 @@ async fn copied_cart(
 }
 
 pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
+    let scoped = crate::db::team::job_state(state, job).await?;
+    let state = &scoped;
     let job_id = job.get_object_id("_id").map_err(|_| AppError::Data)?;
     let inquiry_id = job
         .get_object_id("inquiry_id")

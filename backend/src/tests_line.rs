@@ -134,6 +134,8 @@ async fn lazy_state(cfg: Config) -> AppState {
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     }
 }
@@ -916,6 +918,48 @@ async fn inbox_previews_unread_and_line_read_receipts_are_scoped_and_race_safe()
     let path = format!("/api/inquiries/{id}/read");
     let (_, inbox) = request(&state, "/api/inquiries", "GET", Value::Null, true).await;
     assert_eq!(inbox[0]["last_message_preview"], "Preview read-b");
+    assert_eq!(inbox[0]["last_incoming_message_preview"], "Preview read-b");
+    assert_eq!(inbox[0]["last_incoming_message_id"]["$oid"], b.to_hex());
+    assert_eq!(
+        inbox[0]["last_incoming_message_at"],
+        serde_json::to_value(DateTime::from_millis(2000)).unwrap()
+    );
+    let direct = format!("/api/inquiries?id={id}");
+    assert_eq!(
+        request(&state, &direct, "GET", Value::Null, false).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, found) = request(&state, &direct, "GET", Value::Null, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found, inbox);
+    assert_eq!(
+        request(
+            &state,
+            "/api/inquiries?id=invalid",
+            "GET",
+            Value::Null,
+            true
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let foreign_id = ObjectId::new();
+    state
+        .collection("inquiries")
+        .insert_one(doc! {"_id":foreign_id,"shop_id":"other-shop","channel_id":"other-channel"})
+        .await
+        .unwrap();
+    let (status, foreign) = request(
+        &state,
+        &format!("/api/inquiries?id={foreign_id}"),
+        "GET",
+        Value::Null,
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(foreign, json!([]));
     assert_eq!(inbox[0]["unread"], true);
     assert_eq!(
         request(

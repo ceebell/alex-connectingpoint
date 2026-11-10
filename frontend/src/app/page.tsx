@@ -1,2 +1,2 @@
-import AdminWorkspace from "@/components/admin-workspace";
-export default function Page() { return <AdminWorkspace />; }
+import AdminPortal from "@/components/admin-portal";
+export default function Page() { return <AdminPortal />; }

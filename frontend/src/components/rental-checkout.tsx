@@ -19,7 +19,7 @@ const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวล�
 const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
 
 // The bill as an invoice: one order from the cart and the latest draft, checked and reviewed before it is sent to Alex.
-export default function RentalCheckout({ inquiryId, userId, disabled, titleId, onUnauthorized }: { inquiryId: string; userId?: string; disabled: boolean; titleId?: string; onUnauthorized: () => void }) {
+export default function RentalCheckout({ inquiryId, userId, disabled, titleId, onUnauthorized, canSubmit = true }: { inquiryId: string; userId?: string; disabled: boolean; titleId?: string; onUnauthorized: () => void; canSubmit?: boolean }) {
   const [data, setData] = useState<Data | null>(null);
   const [groupKey, setGroupKey] = useState("");
   const [name, setName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState("");
@@ -94,6 +94,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
   async function submit() {
+    if (!canSubmit) return;
     if (!review || !confirmed || (queueBlocked && !acceptQueue) || working) return;
     setBusy(true); setError("");
     try { await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: review.review_id, confirmed: true, accept_queue: queueBlocked && acceptQueue }) }); await refresh(); invalidate(); }
@@ -101,6 +102,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     catch (cause) { fail(cause); if (cause instanceof ApiError && cause.code === "QUEUE_BLOCKED") { invalidate(); refresh().catch(() => {}); } } finally { setBusy(false); }
   }
   async function resolve(outcome: "created" | "not_created") {
+    if (!canSubmit) return;
     if (!resolveId || !resolveChecked || working) return;
     setBusy(true); setError("");
     try { await api(`${endpoint}/resolve`, { method: "POST", body: JSON.stringify({ submission_id: resolveId, outcome, order_id: resolveOrder || null, verified_in_alex: true }) }); await refresh(); setResolveId(""); setResolveOrder(""); setResolveChecked(false); }
@@ -121,20 +123,20 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     {error && <div className="notice warning" role="alert">{error}<button type="button" className="text-button" disabled={working} onClick={() => refresh().catch(fail)}>โหลดผลล่าสุด</button></div>}
     {data?.closed && <div className={`notice ${data.closed === "SENT" ? "success" : "warning"}`}><strong>{data.closed === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชันนี้ส่งเข้า Alex แล้ว</> : "ร่างเวอร์ชันนี้ถูกยกเลิกแล้ว"}</strong><p>ส่งซ้ำไม่ได้ ถ้าต้องการส่งอีกครั้งให้โคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า</p></div>}
     {data?.submissions.map(submission => <div key={submission._id} className={`notice ${submission.status === "CONFIRMED" ? "success" : submission.status === "SUBMITTING" ? "warning" : "info"}`}><strong>{submission.status === "CONFIRMED" && <span aria-hidden="true">✅ </span>}{submission.draft_version ? `ร่าง v${submission.draft_version} · ` : ""}{states[submission.status] ?? submission.status}</strong><p>{submission.group.lines.map(line => line.code).join(", ")} · {day(submission.group.pickup_date)} – {day(submission.group.return_date)}{submission.queue_accepted && " · ส่งทั้งที่ติดคิว"}</p>{submission.alex_order_id && <p>เลขออเดอร์ Alex: <code>{submission.alex_order_id}</code></p>}
-      {["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status) && <><p>{submission.status === "SUBMITTING" ? "กำลังรอ Alex ตอบกลับ ถ้าค้างนานให้ตรวจใน Alex แล้วบันทึกผล" : "ระบบอ่านเลขออเดอร์จากผลตอบกลับไม่ได้ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ไว้ได้ (ไม่ล็อกการส่งเวอร์ชันอื่น)"}</p><button type="button" className="text-button" onClick={() => { setResolveId(submission._id); setResolveChecked(false); setResolveOrder(""); }}>บันทึกผลที่ตรวจจาก Alex</button>
-        {resolveId === submission._id && <div className="bill-resolve"><label>เลขออเดอร์ที่พบใน Alex<input value={resolveOrder} disabled={working} onChange={e => setResolveOrder(e.target.value)} /></label><label className="checkbox-row"><input type="checkbox" checked={resolveChecked} onChange={e => setResolveChecked(e.target.checked)} disabled={working} />ตรวจสถานะใน Alex ด้วยตัวเองแล้ว</label><button type="button" className="button secondary full" disabled={working || !resolveChecked || !resolveOrder.trim()} onClick={() => resolve("created")}>ยืนยันว่ามีออเดอร์นี้แล้ว</button><button type="button" className="text-button full" disabled={working || !resolveChecked || now - new Date(submission.created_at).getTime() < 120000} onClick={() => resolve("not_created")}>ตรวจแล้วว่าไม่ได้สร้างบิล</button><p className="muted small">กรณีไม่พบบิล ต้องรออย่างน้อย 2 นาทีแล้วตรวจ Alex ก่อนเปิดให้ส่งใหม่</p></div>}
+      {["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status) && <><p>{submission.status === "SUBMITTING" ? "กำลังรอ Alex ตอบกลับ ถ้าค้างนานให้ตรวจใน Alex แล้วบันทึกผล" : "ระบบอ่านเลขออเดอร์จากผลตอบกลับไม่ได้ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ไว้ได้ (ไม่ล็อกการส่งเวอร์ชันอื่น)"}</p><button type="button" className="text-button" disabled={!canSubmit} onClick={() => { setResolveId(submission._id); setResolveChecked(false); setResolveOrder(""); }}>บันทึกผลที่ตรวจจาก Alex</button>
+        {resolveId === submission._id && <div className="bill-resolve"><label>เลขออเดอร์ที่พบใน Alex<input autoComplete="off" value={resolveOrder} disabled={working} onChange={e => setResolveOrder(e.target.value)} /></label><label className="checkbox-row"><input type="checkbox" checked={resolveChecked} onChange={e => setResolveChecked(e.target.checked)} disabled={working} />ตรวจสถานะใน Alex ด้วยตัวเองแล้ว</label><button type="button" className="button secondary full" disabled={!canSubmit || working || !resolveChecked || !resolveOrder.trim()} onClick={() => resolve("created")}>ยืนยันว่ามีออเดอร์นี้แล้ว</button><button type="button" className="text-button full" disabled={!canSubmit || working || !resolveChecked || now - new Date(submission.created_at).getTime() < 120000} onClick={() => resolve("not_created")}>ตรวจแล้วว่าไม่ได้สร้างบิล</button><p className="muted small">กรณีไม่พบบิล ต้องรออย่างน้อย 2 นาทีแล้วตรวจ Alex ก่อนเปิดให้ส่งใหม่</p></div>}
       </>}
     </div>)}
     {data?.context_error && <div className="notice warning">ร่างหรือแชทเปลี่ยน กรุณาตรวจและบันทึกร่างล่าสุดก่อนเตรียมบิลใหม่</div>}
     {!!data?.missing.length && <div className="notice warning"><strong>ข้อมูลที่ยังต้องเติมในแท็บร่างล่าสุด</strong><ul>{data.missing.map((missing, i) => <li key={i}>{missingLabels[missing.field] ?? missing.field}{missing.code && ` (${missing.code})`}</li>)}</ul></div>}
     {data?.has_conflicts && !data.context_error && <div className="notice warning">มีข้อมูลขัดกันในร่าง กรุณาตรวจในแท็บร่างล่าสุดก่อน</div>}
-    {group && totals && <form className="invoice-body" onSubmit={e => { e.preventDefault(); void prepare(); }}>
+    {group && totals && <form autoComplete="off" className="invoice-body" onSubmit={e => { e.preventDefault(); void prepare(); }}>
       <fieldset disabled={working || !ready || !!pending}>
         <section className="invoice-block">
           <h4><span aria-hidden="true">👤</span> ลูกค้า</h4>
           <div className="field-grid">
-            <label>ชื่อลูกค้า<input required value={name} maxLength={200} onChange={e => { setName(e.target.value); invalidate(); }} /></label><label>เบอร์โทร<input required value={phone} maxLength={40} inputMode="tel" onChange={e => { setPhone(cleanPhone(e.target.value)); invalidate(); }} /></label>
-            <label className="span-2">ที่อยู่<textarea rows={2} required={group.fulfillment_method === "delivery"} value={address} maxLength={1000} onChange={e => { setAddress(e.target.value); invalidate(); }} /></label>
+            <label>ชื่อลูกค้า<input autoComplete="off" required value={name} maxLength={200} onChange={e => { setName(e.target.value); invalidate(); }} /></label><label>เบอร์โทร<input autoComplete="off" required value={phone} maxLength={40} inputMode="tel" onChange={e => { setPhone(cleanPhone(e.target.value)); invalidate(); }} /></label>
+            <label className="span-2">ที่อยู่<textarea autoComplete="off" rows={2} required={group.fulfillment_method === "delivery"} value={address} maxLength={1000} onChange={e => { setAddress(e.target.value); invalidate(); }} /></label>
           </div>
           <CustomerExtractButton inquiryId={inquiryId} disabled={working} onBusyChange={setExtracting} onUnauthorized={onUnauthorized} onFill={value => { setName(current => value.display_name ?? current); setPhone(current => value.phone ? cleanPhone(value.phone) : current); setAddress(current => value.address ?? current); invalidate(); }} />
         </section>
@@ -151,13 +153,13 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
         <section className="invoice-block">
           <h4><span aria-hidden="true">💳</span> การรับและชำระเงิน</h4>
           <div className="field-grid">
-            <label>วิธีมารับ<select required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
-            <label>ค่าจัดส่ง (บาท)<input required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
-            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select value={value} onChange={e => { set(e.target.value); invalidate(); }}>{PAYMENT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>)}
+            <label>วิธีมารับ<select autoComplete="off" required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
+            <label>ค่าจัดส่ง (บาท)<input autoComplete="off" required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
+            {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select autoComplete="off" value={value} onChange={e => { set(e.target.value); invalidate(); }}>{PAYMENT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>)}
             <label>วันเกิด (ถ้าทราบ)<DateInput value={birth} disabled={working} onChange={value => { setBirth(value); invalidate(); }} /></label>
           </div>
           {Number(shipping) > 0 && <p className="notice info">ค่าจัดส่ง {baht(satang(shipping))} บาท จะบันทึกต่อท้ายหมายเหตุของออเดอร์ใน Alex (Alex ไม่มีช่องค่าส่งแยก)</p>}
-          <label>หมายเหตุ / อุปกรณ์<textarea rows={2} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
+          <label>หมายเหตุ / อุปกรณ์<textarea autoComplete="off" rows={2} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
           <div className="invoice-options"><label className="checkbox-row"><input type="checkbox" checked={freePromotion} onChange={e => { setFreePromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นของแถม</label><label className="checkbox-row"><input type="checkbox" checked={discountPromotion} onChange={e => { setDiscountPromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นส่วนลด</label></div>
         </section>
         <section className="invoice-totals" aria-label="สรุปยอด">
@@ -186,7 +188,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
       {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul>
         <label className="checkbox-row"><input type="checkbox" checked={acceptQueue} disabled={working} onChange={e => setAcceptQueue(e.target.checked)} />{review.queue.state === "UNAVAILABLE" ? "ทราบว่าติดคิว" : "ทราบว่ายังตรวจคิวไม่ได้"} ตกลงส่งออเดอร์เข้า Alex ต่อ</label></div>}
       <label className="checkbox-row"><input type="checkbox" checked={confirmed} disabled={working} onChange={e => setConfirmed(e.target.checked)} />ตรวจลูกค้า รายการ วันที่ ยอด และส่วนลดแล้ว ยืนยันสร้างออเดอร์จริงใน Alex</label>
-      <div className="invoice-actions"><button type="button" className="button secondary" disabled={working} onClick={invalidate}>แก้ไขข้อมูล</button><button type="button" className="button primary" disabled={working || !confirmed || (queueBlocked && !acceptQueue) || !!pending || expired} onClick={submit}><span aria-hidden="true">🚀</span> {busy ? "กำลังส่งออเดอร์…" : "ยืนยันส่งออเดอร์เข้า Alex"}</button></div>
+      {!canSubmit && <p className="notice info">เตรียมข้อมูลและเช็คคิวได้ ให้ผู้จัดการหรือเจ้าของร้านยืนยันส่งออเดอร์</p>}<div className="invoice-actions"><button type="button" className="button secondary" disabled={working} onClick={invalidate}>แก้ไขข้อมูล</button><button type="button" className="button primary" disabled={!canSubmit || working || !confirmed || (queueBlocked && !acceptQueue) || !!pending || expired} onClick={submit}><span aria-hidden="true">🚀</span> {busy ? "กำลังส่งออเดอร์…" : "ยืนยันส่งออเดอร์เข้า Alex"}</button></div>
     </section>}
   </div>;
 }

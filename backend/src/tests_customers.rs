@@ -15,6 +15,8 @@ async fn profile_and_order_routes_check_auth_and_input_before_database_access() 
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let profile = "/api/line/users/Uvalid/profile";

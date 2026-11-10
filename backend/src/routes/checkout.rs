@@ -2,11 +2,10 @@ use crate::{
     db::checkout,
     error::AppError,
     models::checkout::{CheckInput, ResolveInput, ReviewInput, SubmitInput},
-    state::AppState,
 };
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, rejection::JsonRejection},
     http::HeaderMap,
 };
 use mongodb::bson::oid::ObjectId;
@@ -15,13 +14,13 @@ fn id(value: &str) -> Result<ObjectId, AppError> {
     ObjectId::parse_str(value).map_err(|_| AppError::BadRequest)
 }
 pub async fn list(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(checkout::list(&state, id(&inquiry)?).await?))
 }
 pub async fn availability(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<CheckInput>, JsonRejection>,
 ) -> Result<Json<Value>, AppError> {
@@ -31,7 +30,7 @@ pub async fn availability(
     ))
 }
 pub async fn review(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<ReviewInput>, JsonRejection>,
 ) -> Result<Json<Value>, AppError> {
@@ -39,7 +38,7 @@ pub async fn review(
     Ok(Json(checkout::review(&state, id(&inquiry)?, input).await?))
 }
 pub async fn submit(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     headers: HeaderMap,
     input: Result<Json<SubmitInput>, JsonRejection>,
@@ -51,7 +50,7 @@ pub async fn submit(
     ))
 }
 pub async fn resolve(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     headers: HeaderMap,
     input: Result<Json<ResolveInput>, JsonRejection>,

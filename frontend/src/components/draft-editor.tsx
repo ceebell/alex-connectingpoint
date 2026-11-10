@@ -78,7 +78,7 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
   </dialog>, document.body);
 }
 
-export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void }) {
+export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized, canSubmit = true }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void; canSubmit?: boolean }) {
   const form = useRef<HTMLDivElement>(null);
   function validDates() {
     for (const input of form.current?.querySelectorAll<HTMLInputElement>(".date-input-text") ?? []) {
@@ -126,8 +126,8 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       return JSON.stringify(amounts) === JSON.stringify(current.amounts) ? current : { ...current, amounts };
     });
   }
-  const text = (key: "intent" | "customer_name" | "customer_phone" | "customer_address" | "branch") => <label className={key === "customer_address" ? "span-2" : ""}>{labels[key]}{key === "customer_address" ? <textarea rows={3} value={fields[key] ?? ""} maxLength={1000} disabled={busy} onChange={e => setFields({ ...fields, [key]: e.target.value || null })} /> : <input value={fields[key] ?? ""} maxLength={200} disabled={busy} inputMode={key === "customer_phone" ? "tel" : undefined} onChange={e => setFields({ ...fields, [key]: (key === "customer_phone" ? cleanPhone(e.target.value) : e.target.value) || null })} />}</label>;
-  const money = (key: keyof Amounts, label: string, max?: number, auto?: number) => <label>{label} (บาท)<input type="number" min="0" max={max === undefined ? undefined : max / 100} step="0.01" disabled={busy} placeholder={auto ? `อัตโนมัติ ${price(auto)}` : undefined} value={amount(key) == null ? "" : amount(key)! / 100} onChange={e => setAmount(key, e.target.value)} /></label>;
+  const text = (key: "intent" | "customer_name" | "customer_phone" | "customer_address" | "branch") => <label className={key === "customer_address" ? "span-2" : ""}>{labels[key]}{key === "customer_address" ? <textarea autoComplete="off" rows={3} value={fields[key] ?? ""} maxLength={1000} disabled={busy} onChange={e => setFields({ ...fields, [key]: e.target.value || null })} /> : <input autoComplete="off" value={fields[key] ?? ""} maxLength={200} disabled={busy} inputMode={key === "customer_phone" ? "tel" : undefined} onChange={e => setFields({ ...fields, [key]: (key === "customer_phone" ? cleanPhone(e.target.value) : e.target.value) || null })} />}</label>;
+  const money = (key: keyof Amounts, label: string, max?: number, auto?: number) => <label>{label} (บาท)<input autoComplete="off" type="number" min="0" max={max === undefined ? undefined : max / 100} step="0.01" disabled={busy} placeholder={auto ? `อัตโนมัติ ${price(auto)}` : undefined} value={amount(key) == null ? "" : amount(key)! / 100} onChange={e => setAmount(key, e.target.value)} /></label>;
   // Same rule as the bill on the server: with no written discount, a fee quoted below the Alex prices in the cart is the discount.
   const fromQuote = (quoted: number | null, catalog: number) => !cart.length || quoted == null ? 0 : Math.max(0, catalog - quoted);
   const autoRental = fromQuote(amount("rental_fee_satang"), rentalTotal);
@@ -159,7 +159,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       })}</div>}
       <div className="field-grid">
         {(["pickup_date", "return_date"] as const).map(key => <label key={key}>{labels[`rental.${key}`]}<DateInput value={fields.rental[key] ?? ""} disabled={busy} onChange={value => setRental(key, value)} /></label>)}
-        <label>วิธีมารับ<select value={receiving} disabled={busy} onChange={e => setReceiving(e.target.value)}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
+        <label>วิธีมารับ<select autoComplete="off" value={receiving} disabled={busy} onChange={e => setReceiving(e.target.value)}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
       </div>
       <QueueCheck inquiryId={inquiryId} pickup={fields.rental.pickup_date} returned={fields.rental.return_date} count={cart.length} result={availability} disabled={busy} onResult={result => setQueue({ key: queueKey, result })} onUnauthorized={onUnauthorized} />
     </section>
@@ -174,7 +174,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       {usesAuto && <p className="notice info">ใส่ส่วนลดอัตโนมัติจากราคาที่แจ้งลูกค้าเทียบกับราคาใน Alex{autoRental > 0 && rentalDiscount === autoRental && ` · ค่าเช่า ${price(autoRental)} บาท`}{autoDeposit > 0 && depositDiscount === autoDeposit && ` · ค่าประกัน ${price(autoDeposit)} บาท`} — แก้ตัวเลขได้ หรือกรอก 0 ถ้าไม่ให้ส่วนลด แล้วกดบันทึกร่าง</p>}
       {aboveCatalog && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex กรุณาตรวจสินค้าในตะกร้า</p>}
       {!!cart.length && <p className={tooMuch ? "notice warning" : "cart-total"}>{tooMuch ? "ส่วนลดมากกว่ายอดตามแค็ตตาล็อก" : `ยอดหลังหักส่วนลด: ค่าเช่า ${price(rentalTotal - rentalDiscount)} บาท · ค่าประกัน ${price(depositTotal - depositDiscount)} บาท`}</p>}
-      <label className="order-notes">หมายเหตุ / อุปกรณ์<textarea rows={3} value={fields.notes ?? ""} maxLength={3000} disabled={busy} onChange={e => setFields({ ...fields, notes: e.target.value || null })} /></label>
+      <label className="order-notes">หมายเหตุ / อุปกรณ์<textarea autoComplete="off" rows={3} value={fields.notes ?? ""} maxLength={3000} disabled={busy} onChange={e => setFields({ ...fields, notes: e.target.value || null })} /></label>
     </section>
     <details className="product-filters"><summary>ข้อมูลอื่นในร่าง</summary><div className="field-grid">{text("intent")}{text("branch")}</div></details>
     <label className="checkbox-row"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />ยืนยันข้อมูลที่กรอกครบในร่างนี้</label>
@@ -185,6 +185,6 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอด เช็คคิว และยืนยันส่งออเดอร์เข้า Alex"}</p>
     </div>
     </fieldset>
-    {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}
+    {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}
   </div>;
 }

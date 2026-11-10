@@ -13,6 +13,10 @@ pub enum AppError {
     BadRequest,
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("Forbidden")]
+    Forbidden,
+    #[error("Team request could not be completed")]
+    Team(&'static str),
     #[error("Not found")]
     NotFound,
     #[error("Method not allowed")]
@@ -92,6 +96,8 @@ impl AppError {
         match self {
             Self::BadRequest => "BAD_REQUEST",
             Self::Unauthorized => "UNAUTHORIZED",
+            Self::Forbidden => "FORBIDDEN",
+            Self::Team(code) => code,
             Self::NotFound => "NOT_FOUND",
             Self::MethodNotAllowed => "METHOD_NOT_ALLOWED",
             Self::Conflict => "INQUIRY_SELECTION_REQUIRED",
@@ -134,6 +140,9 @@ impl IntoResponse for AppError {
         let status = match self {
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Team("INVITE_INVALID") => StatusCode::NOT_FOUND,
+            Self::Team(_) => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict => StatusCode::CONFLICT,

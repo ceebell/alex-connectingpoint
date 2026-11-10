@@ -65,7 +65,7 @@ function Editor({ text, images, busy, onText, onImages, onError, onBusy, childre
   }
   return <>
     <label className="sr-only" htmlFor={textId}>ข้อความโน้ต</label>
-    <textarea id={textId} rows={3} maxLength={5000} placeholder="เขียนโน้ตเกี่ยวกับลูกค้า…" disabled={busy} value={text} onChange={event => onText(event.target.value)} />
+    <textarea autoComplete="off" id={textId} rows={3} maxLength={5000} placeholder="เขียนโน้ตเกี่ยวกับลูกค้า…" disabled={busy} value={text} onChange={event => onText(event.target.value)} />
     {!!images.length && <div className="note-images note-image-drafts">{images.map(image => <div key={pending(image) ? image.key : image.id}><img src={image.url} alt={image.name} /><button type="button" className="note-remove-image" aria-label={`นำรูป ${image.name} ออกจากโน้ต`} disabled={busy} onClick={() => onImages(images.filter(value => value !== image))}>×</button></div>)}</div>}
     <div className="note-editor-actions"><button type="button" className="text-button" disabled={busy || images.length >= 5} onClick={() => file.current?.click()}><span aria-hidden="true">＋</span> แนบรูป</button><input ref={file} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden aria-label="แนบรูปในโน้ต" disabled={busy} onChange={event => void attach(event.target.files)} />{children}</div>
   </>;

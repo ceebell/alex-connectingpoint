@@ -284,6 +284,17 @@ fn safe_submission(mut record: Document) -> Result<Value, AppError> {
     serde_json::to_value(record).map_err(|_| AppError::Data)
 }
 
+fn check_record_branch(state: &AppState, record: &Document) -> Result<(), AppError> {
+    if state.access.is_some() {
+        let branch = record
+            .get_document("group")
+            .and_then(|group| group.get_str("branch_id"))
+            .map_err(|_| AppError::Data)?;
+        super::team::check_branch(state, branch)?;
+    }
+    Ok(())
+}
+
 pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     let inquiry = drafts::inquiry(state, id).await?;
     // Only a send in progress holds the lock; an unclear Alex reply no longer blocks the next version.
@@ -301,6 +312,11 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     }
     let mut filter = state.scope();
     filter.insert("inquiry_id", id);
+    if let Some(access) = &state.access
+        && access.role != crate::models::team::Role::Owner
+    {
+        filter.insert("group.branch_id", doc! {"$in": &access.branch_ids});
+    }
     let submissions: Vec<Document> = state
         .collection("alex_submissions")
         .find(filter)
@@ -646,6 +662,7 @@ async fn recover(
         .find_one(identity.clone())
         .await?
     {
+        check_record_branch(state, &record)?;
         return Ok(Some(record));
     }
     let inquiry = drafts::inquiry(state, id).await?;
@@ -659,6 +676,7 @@ async fn recover(
     else {
         return Err(AppError::Data);
     };
+    check_record_branch(state, &review)?;
     let now = DateTime::now();
     let started = inquiry
         .get_datetime("alex_submission_started_at")
@@ -679,6 +697,7 @@ async fn recover(
                 .find_one(identity)
                 .await?
             {
+                check_record_branch(state, &existing)?;
                 return Ok(Some(existing));
             }
             let mut filter = state.scope();
@@ -688,6 +707,7 @@ async fn recover(
                 .find_one(filter)
                 .await?
                 .ok_or(AppError::Data)?;
+            check_record_branch(state, &existing)?;
             let mut owner = state.scope();
             owner.extend(doc! {"_id":id,"alex_submission_id":submission});
             state.collection("inquiries").update_one(owner,doc! {"$set":{"alex_submission_id":existing.get_object_id("_id").map_err(|_|AppError::Data)?}}).await?;
@@ -713,6 +733,7 @@ pub async fn submit(
         .find_one(identity.clone())
         .await?
     {
+        check_record_branch(state, &existing)?;
         return safe_submission(existing);
     }
     let mut filter = identity.clone();
@@ -722,6 +743,7 @@ pub async fn submit(
         .find_one(filter)
         .await?
         .ok_or(AppError::BillNotReady)?;
+    check_record_branch(state, &review)?;
     let group: Group = bson::from_bson(review.get("group").cloned().ok_or(AppError::Data)?)
         .map_err(|_| AppError::Data)?;
     let source = source(state, id).await?;
@@ -786,6 +808,7 @@ pub async fn submit(
         if self::source(state, id).await?.source_hash != source.source_hash {
             return Err(AppError::ContextChanged);
         }
+        super::team::revalidate(state).await?;
         Ok::<_, AppError>((session, json!({"state":queue,"items":results})))
     }
     .await;

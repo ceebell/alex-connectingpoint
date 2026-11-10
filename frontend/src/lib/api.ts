@@ -3,6 +3,12 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  FORBIDDEN: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ หรือสิทธิ์ถูกเปลี่ยนแล้ว กรุณาตรวจสถานะบัญชีอีกครั้ง",
+  INVITE_INVALID: "ไม่พบคำเชิญนี้ กรุณาขอลิงก์ใหม่จากเจ้าของร้าน",
+  INVITE_EXPIRED: "คำเชิญหมดอายุแล้ว กรุณาให้เจ้าของร้านสร้างคำเชิญใหม่",
+  INVITE_USED: "คำเชิญนี้ถูกใช้หรือยกเลิกแล้ว กรุณาตรวจสถานะบัญชีหรือขอลิงก์ใหม่",
+  TEAM_MEMBER_EXISTS: "บัญชี LINE นี้มีอยู่ในทีมแล้ว ติดต่อเจ้าของร้านเพื่อตรวจหรือเปิดสิทธิ์เดิม",
+  TEAM_NOT_READY: "ร้านยังไม่ได้เปิดระบบจัดการทีม กรุณาติดต่อเจ้าของร้าน",
   LINE_READ_FAILED: "ส่งสถานะอ่านแล้วไป LINE ไม่สำเร็จ ระบบจะลองอีกครั้งเมื่อโหลดแชท",
   BILL_NOT_READY: "บิลยังไม่พร้อม ตรวจข้อมูลลูกค้า วันเช่า รายการสินค้า และผลเช็คคิวล่าสุด",
   BILL_PENDING: "มีบิลกำลังส่งเข้า Alex อยู่ รอสักครู่แล้วกดโหลดผลล่าสุด",
@@ -63,7 +69,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return normalize(value) as T;
 }
 
-export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; last_activity_at?: string; last_message_preview?: string; last_incoming_message_id?: string; unread?: boolean; unread_source?: "alex" | "line_oa"; draft_version?: number; order_id?: string; customer?: Customer };
+export type Inquiry = { _id: string; line_user_id?: string; status: string; created_at: string; updated_at: string; last_activity_at?: string; last_message_preview?: string; last_incoming_message_id?: string; last_incoming_message_at?: string; last_incoming_message_preview?: string; unread?: boolean; unread_source?: "alex" | "line_oa"; draft_version?: number; order_id?: string; customer?: Customer };
 export type Customer = { display_name?: string | null; picture_url?: string | null; line_display_name?: string | null; custom_name?: string | null; name_version?: number };
 export type CustomerAlias = { custom_name: string | null; version: number; updated_by: string; updated_at: string };
 export type NoteImage = { id: string; name: string; url: string };

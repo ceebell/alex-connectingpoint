@@ -400,6 +400,10 @@
     padding-bottom: max(20px, env(safe-area-inset-bottom));
   }
 
+  /* Hide app navigation for every editable form, including dialogs in the top layer.
+     Focus works even when iOS does not report a keyboard-sized viewport change. */
+  body:has(.app-shell):has(:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([readonly]), textarea:not([readonly]), select, [contenteditable="true"]):focus) .app-shell .page-header,
+  body:has(.app-shell):has(:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([readonly]), textarea:not([readonly]), select, [contenteditable="true"]):focus) .mobile-workspace-nav,
   .app-shell[data-keyboard-open="true"] .page-header,
   .app-shell[data-keyboard-open="true"] .mobile-workspace-nav,
   .app-shell:has(.reply-box[data-active="true"]) .page-header,

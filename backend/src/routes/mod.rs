@@ -1,3 +1,4 @@
+mod access;
 mod admin;
 mod cart;
 mod checkout;
@@ -10,6 +11,7 @@ mod oa_inbox;
 mod oa_sync;
 mod products;
 mod session;
+mod team;
 mod users;
 pub(crate) mod webhook;
 
@@ -24,10 +26,16 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub fn router(state: AppState) -> Result<Router, AppError> {
     let admin = Router::new()
-        .route(
-            "/api/admin/session",
-            get(session::info).delete(session::logout),
-        )
+        .route("/api/admin/team", get(team::list))
+        .route("/api/admin/team/branches", get(team::branches))
+        .route("/api/admin/team/{id}", get(team::detail))
+        .route("/api/admin/team/invitations", post(team::create))
+        .route("/api/admin/team/{id}/link", post(team::link))
+        .route("/api/admin/team/{id}/approve", post(team::approve))
+        .route("/api/admin/team/{id}/reject", post(team::reject))
+        .route("/api/admin/team/{id}/cancel", post(team::cancel))
+        .route("/api/admin/team/{id}/update", post(team::edit))
+        .route("/api/admin/team/{id}/history", get(team::history))
         .route("/api/inquiries/{id}/drafts", get(drafts::list))
         .route("/api/inquiries/{id}/checkout", get(checkout::list))
         .route(
@@ -140,6 +148,14 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             admin::authorize,
         ));
     let mut router = Router::new()
+        .route(
+            "/api/admin/session",
+            get(session::info).delete(session::logout),
+        )
+        .route("/api/admin/invite", get(team::invitation))
+        .route("/api/admin/invite/open", post(team::open))
+        .route("/api/admin/invite/accept", post(team::accept))
+        .route("/api/admin/invite/clear", post(team::clear))
         .route("/api/admin/alex/mcp", post(mcp::handle).get(mcp::get))
         .route("/api/admin/login", post(session::login))
         .route("/api/admin/login-options", get(session::options))

@@ -11,12 +11,13 @@ import WorkspaceSidebar from "./workspace-sidebar";
 import CustomerNameDialog from "./customer-name-dialog";
 import CustomerNotes from "./customer-notes";
 import { formatDate, formatDateTime as time } from "@/lib/dates";
+import { useChatNotifications } from "@/lib/use-chat-notifications";
+import { AdminSession, canManageTeam, canSubmitOrder, lineLoginErrors as loginErrors } from "@/lib/team-api";
 
-type Session = { username: string; login: "line" | "password" | "token"; hermes_configured: boolean };
+type Session = AdminSession;
 type LoginOptions = { line: boolean; password: boolean };
 // The login screen renders only after the session check, so reading the URL here cannot cause a hydration mismatch.
 const loginParams = () => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
-const loginErrors: Record<string, string> = { LINE_CANCELLED: "ยกเลิกการเข้าสู่ระบบด้วย LINE", LINE_STATE_INVALID: "การเข้าสู่ระบบหมดเวลาหรือไม่ถูกต้อง กรุณาลองใหม่", LINE_LOGIN_FAILED: "เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่", LINE_NOT_CONFIGURED: "ยังไม่ได้ตั้งค่า LINE Login กรุณาติดต่อผู้ดูแลระบบ", LINE_NOT_ALLOWED: "บัญชี LINE นี้ยังไม่มีสิทธิ์เข้าหลังบ้าน" };
 type OaStatus = { state: string; synced?: number; pending?: number };
 const oaStates: Record<string, string> = { NOT_CONFIGURED: "รอเปิดตัวเชื่อม OA บน Ubuntu", NEEDS_LOGIN: "ตัวเชื่อมรอล็อกอิน LINE กรุณาติดต่อผู้ดูแลระบบ", READY: "อ่าน OA ได้ ยังไม่มีข้อความแอดมินใหม่ที่จับคู่ได้", SYNCING: "กำลังรับข้อความแอดมินจาก OA อัตโนมัติ", UNLINKED: "มีข้อความ OA รอจับคู่กับบทสนทนาลูกค้า", UNSUPPORTED_SCHEMA: "รูปแบบข้อมูล OA ยังไม่รองรับ กรุณาติดต่อผู้พัฒนา", OFFLINE: "ตัวเชื่อม OA ขาดการติดต่อ", LINE_UNAVAILABLE: "ตัวเชื่อมติดต่อ LINE ไม่สำเร็จ", BACKEND_UNAVAILABLE: "backend ของตัวเชื่อมยังไม่พร้อม", BACKEND_UPDATE_REQUIRED: "ต้องอัปเดต backend เพื่อเปิดตัวเชื่อม OA", STOPPED: "ตัวเชื่อม OA หยุดทำงาน" };
 // The admin can drag the chat/draft divider; the width is a per-browser convenience only.
@@ -60,7 +61,7 @@ function DraftReadOnly({ draft }: { draft: Draft }) {
   })}</dl><EvidenceList evidence={draft.result.evidence} /></div>;
 }
 
-export default function AdminWorkspace() {
+export default function AdminWorkspace({ access }: { access?: AdminSession | null }) {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [loginError, setLoginError] = useState(() => { const code = loginParams().get("login_error"); return code ? loginErrors[code] ?? "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่" : ""; });
@@ -105,9 +106,29 @@ export default function AdminWorkspace() {
   const latest = drafts[0];
   const working = busy || job?.status === "PENDING" || job?.status === "PROCESSING";
   const current = inquiries.find(inquiry => inquiry._id === selected);
-  const canApprove = !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
+  const submitAllowed = !access || canSubmitOrder(access);
+  const manageTeam = !!access && canManageTeam(access);
+  const canApprove = submitAllowed && !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
+  const notifications = useChatNotifications(!!session, openNotificationInquiry, id => !document.hidden && document.hasFocus() && selected === id && (!window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)").matches || mobilePanel === "chat"));
+  const { observeInbox, pollInBackground } = notifications;
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { inquiriesRef.current = inquiries; }, [inquiries]);
+  useEffect(() => {
+    if (!session) return;
+    const mobile = window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)");
+    const editable = 'textarea, select, input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([readonly]), [contenteditable="true"]';
+    let frame = 0;
+    const dismiss = (event: globalThis.PointerEvent) => {
+      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")?.querySelector(editable)) return;
+      const control = document.activeElement;
+      if (!(control instanceof HTMLElement) || !control.matches(editable)) return;
+      // Let the tapped button finish its click before restoring navigation and moving the layout.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { if (document.activeElement === control) control.blur(); });
+    };
+    document.addEventListener("pointerup", dismiss);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerup", dismiss); };
+  }, [session]);
   useEffect(() => {
     const app = appRef.current;
     const root = document.documentElement;
@@ -191,7 +212,7 @@ export default function AdminWorkspace() {
     let loading = false;
     let syncOnLoad = true;
     async function load() {
-      if (cancelled || loading || document.hidden) return;
+      if (cancelled || loading || (document.hidden && !pollInBackground())) return;
       loading = true;
       try {
         if (syncOnLoad) {
@@ -225,7 +246,10 @@ export default function AdminWorkspace() {
           if (records.length < 100) break;
           before = records[records.length - 1];
         }
-        if (!cancelled) setInquiries(previous => mergeInquiries(previous, items));
+        if (!cancelled) {
+          observeInbox(items);
+          setInquiries(previous => mergeInquiries(previous, items));
+        }
       } catch (cause) {
         if (!cancelled) {
           if (cause instanceof ApiError && cause.status === 401) setSession(null);
@@ -244,7 +268,7 @@ export default function AdminWorkspace() {
       window.removeEventListener("focus", resume);
       document.removeEventListener("visibilitychange", resume);
     };
-  }, [session, refresh]);
+  }, [session, refresh, observeInbox, pollInBackground]);
 
   useEffect(() => {
     if (!selected || !session) return;
@@ -372,6 +396,22 @@ export default function AdminWorkspace() {
     setSelected(id); setSummary(""); setImages([]); setMessages([]); setDrafts([]); setVersion(0); setJob(null); setOrder(null); setApproveChecked(false); setError(""); setLoading(true); setTab("summary");
   }
 
+  async function openNotificationInquiry(id: string) {
+    try {
+      // A notification may refer to a conversation outside the currently loaded inbox page.
+      if (!inquiriesRef.current.some(inquiry => inquiry._id === id)) {
+        const records = await api<Inquiry[]>(`/api/inquiries?id=${encodeURIComponent(id)}`);
+        if (!records.length) { setError("ไม่พบแชทจากการแจ้งเตือนนี้ กรุณาโหลดข้อมูลล่าสุด"); return; }
+        setInquiries(previous => mergeInquiries(previous, records));
+      }
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      setQuery(""); setRenaming(null); selectInquiry(id);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) setSession(null);
+      else setError(errorText(cause));
+    }
+  }
+
   function editSummary(text: string) {
     summaryDirty.current = true; setSummaryEdited(true); setSummary(text);
   }
@@ -483,19 +523,20 @@ export default function AdminWorkspace() {
   }
 
   if (checking) return <main className="login-page"><p role="status">กำลังตรวจสอบการเข้าสู่ระบบ…</p></main>;
-  if (!session) return <main className="login-page"><div className="login-intro"><div className="brand-mark">a<span>•</span></div><p className="eyebrow">ALEX CONNECTING POINT</p><h1>ทุกบทสนทนา<br />สู่ร่างออเดอร์ที่ชัดเจน</h1><p className="muted">พื้นที่ทำงานของแอดมินสำหรับอ่านแชท สรุปความต้องการ<br />และตรวจร่างออเดอร์ก่อนดำเนินการต่อ</p></div><form className="login-card" onSubmit={login}><span className="pill">สำหรับทีมแอดมิน</span><h2>เข้าสู่ระบบหลังบ้าน</h2><p className="muted">{loginOptions.line ? "ใช้บัญชี LINE ที่ผู้ดูแลระบบเพิ่มสิทธิ์ไว้" : "ใช้บัญชีที่ผู้ดูแลระบบกำหนดให้"}</p>
+  if (!session) return <main className="login-page"><div className="login-intro"><div className="brand-mark">a<span>•</span></div><p className="eyebrow">ALEX CONNECTING POINT</p><h1>ทุกบทสนทนา<br />สู่ร่างออเดอร์ที่ชัดเจน</h1><p className="muted">พื้นที่ทำงานของแอดมินสำหรับอ่านแชท สรุปความต้องการ<br />และตรวจร่างออเดอร์ก่อนดำเนินการต่อ</p></div><form autoComplete="off" className="login-card" onSubmit={login}><span className="pill">สำหรับทีมแอดมิน</span><h2>เข้าสู่ระบบหลังบ้าน</h2><p className="muted">{loginOptions.line ? "ใช้บัญชี LINE ที่ผู้ดูแลระบบเพิ่มสิทธิ์ไว้" : "ใช้บัญชีที่ผู้ดูแลระบบกำหนดให้"}</p>
     {loginError && <div className="notice warning" role="alert">{loginError}{deniedLineId && <p>ส่ง LINE user ID นี้ให้ผู้ดูแลเพิ่มใน ADMIN_LINE_USER_IDS:<br /><code className="line-id">{deniedLineId}</code></p>}</div>}
     {loginOptions.line && <a className="button primary full" href="/api/admin/line/start"><span aria-hidden="true">💬</span> เข้าสู่ระบบด้วย LINE</a>}
     {loginOptions.line && loginOptions.password && <p className="login-divider muted small">หรือใช้รหัสผ่านสำรอง</p>}
-    {loginOptions.password && <><label>ชื่อผู้ใช้<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required /></label><label>รหัสผ่าน<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label><button className={`button ${loginOptions.line ? "secondary" : "primary"} full`} disabled={loginBusy}>{loginBusy ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่พื้นที่ทำงาน →"}</button></>}
+    {loginOptions.password && <><label>ชื่อผู้ใช้<input autoComplete="off" value={username} onChange={e => setUsername(e.target.value)} required /></label><label>รหัสผ่าน<input type="password" autoComplete="off" value={password} onChange={e => setPassword(e.target.value)} required /></label><button className={`button ${loginOptions.line ? "secondary" : "primary"} full`} disabled={loginBusy}>{loginBusy ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่พื้นที่ทำงาน →"}</button></>}
     {!loginOptions.line && !loginOptions.password && <p className="notice warning">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ กรุณาติดต่อผู้ดูแลระบบ</p>}
   </form></main>;
 
   return <div className="app-shell" ref={appRef}>
-    <WorkspaceSidebar inquiryCount={inquiries.length} username={session.username} login={session.login} activePanel={mobilePanel} onNavigate={panel => { setMobilePanel(panel); requestAnimationFrame(() => document.getElementById(`mobile-${panel}`)?.focus({ preventScroll: true })); }} onLogout={logout} />
-    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
+    <WorkspaceSidebar inquiryCount={inquiries.length} username={session.username} login={session.login} activePanel={mobilePanel} onNavigate={panel => { setMobilePanel(panel); requestAnimationFrame(() => document.getElementById(`mobile-${panel}`)?.focus({ preventScroll: true })); }} onLogout={logout} onManageTeam={manageTeam ? () => { window.location.hash = "team"; } : undefined} />
+    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions">{manageTeam && <button type="button" className="button secondary mobile-manage-team" aria-label="จัดการทีม" title="จัดการทีม" onClick={() => { window.location.hash = "team"; }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 4v2" /></svg></button>}<button type="button" className="button secondary notification-button" aria-label={notifications.enabled ? "ปิดแจ้งเตือนข้อความใหม่" : "เปิดแจ้งเตือนข้อความใหม่"} title={notifications.enabled ? "ปิดแจ้งเตือนข้อความใหม่" : "เปิดแจ้งเตือนข้อความใหม่"} aria-pressed={notifications.enabled} disabled={notifications.busy} onClick={() => void notifications.toggle()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />{notifications.enabled && <path d="m16 4 2 2 4-4" />}</svg></button><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
+      {notifications.message && <div className="notice page-notice" role="status">{notifications.message}<button className="text-button" aria-label="ปิดคำแนะนำการแจ้งเตือน" onClick={notifications.dismissMessage}>ปิด</button></div>}
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
-      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="search-box"><span aria-hidden="true">⌕</span><input aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
+      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="search-box"><span aria-hidden="true">⌕</span><input autoComplete="off" aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
         {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.customer?.line_display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <div className="inquiry-row" key={inquiry._id}><button className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
           <div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div>
           <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title={inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}><span className="sr-only">{inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}</span></span>}</div>
@@ -518,7 +559,7 @@ export default function AdminWorkspace() {
             {savedSummary?.stale && !savedSummary.redacted && <div className="notice warning">มีข้อความใหม่หลังบันทึกสรุป กรุณาตรวจแชทก่อนเตรียมร่างอีกครั้ง</div>}
             {summaryConflict && <div className="notice warning"><p>สรุปบนระบบมีการเปลี่ยนแปลง คัดลอกข้อความที่ต้องการเก็บไว้ก่อนโหลด</p><button type="button" className="text-button" disabled={working} onClick={reloadSummary}>โหลดสรุปล่าสุด</button></div>}
             <SummaryImages inquiryId={selected} attachments={attachments} selected={images} disabled={!!working} onUploaded={uploadedSummaryImage} onDeleted={deletedSummaryImage} onToggle={toggleSummaryImage} onBusy={setBusy} onUnauthorized={() => setSession(null)} />
-            <label className="summary-label">คำบรรยายเพิ่มเติม (ไม่จำเป็นเมื่อแนบรูป)<textarea rows={4} maxLength={20000} value={summary} disabled={working} onChange={e => editSummary(e.target.value)} placeholder="วางสรุปบิล เช่น ชื่อ Vappen / Lyn Dress - Yellow / size M / 3 วัน พร้อมค่าเช่า ค่าประกัน วันลูกค้ารับชุดและส่งคืนชุด หรือเพิ่มรายละเอียดที่ไม่มีในภาพ" /></label>
+            <label className="summary-label">คำบรรยายเพิ่มเติม (ไม่จำเป็นเมื่อแนบรูป)<textarea autoComplete="off" rows={4} maxLength={20000} value={summary} disabled={working} onChange={e => editSummary(e.target.value)} placeholder="วางสรุปบิล เช่น ชื่อ Vappen / Lyn Dress - Yellow / size M / 3 วัน พร้อมค่าเช่า ค่าประกัน วันลูกค้ารับชุดและส่งคืนชุด หรือเพิ่มรายละเอียดที่ไม่มีในภาพ" /></label>
             {chatBill && <button type="button" className="button secondary full" disabled={working || summary.trim() === chatBill.text.trim()} onClick={() => applyChatBill(chatBill.text)}><span aria-hidden="true">📋</span> ใช้สรุปบิลล่าสุดจากแชท ({time(chatBill.event.event_at)})</button>}
             <div className="section-caption small muted"><span>แนบรูปที่เลือก {images.length}/5 รูป</span><span>{summary.length.toLocaleString()}/20,000</span></div>
             <p className="muted small">วันที่ที่ไม่ระบุปีจะใช้ปีปัจจุบันตามเวลาไทย ส่วนวันที่ที่อ่านได้หลายแบบ AI จะถามให้ยืนยัน</p>
@@ -532,8 +573,8 @@ export default function AdminWorkspace() {
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">แชทหรือสรุปแอดมินมีการเปลี่ยนแปลง ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}
           {order ? <div className="notice success" role="status"><strong><span aria-hidden="true">✅</span> อนุมัติร่างภายในแล้ว</strong><p>จากร่าง v{order.draft_version} · โดย {order.approved_by} · {time(order.approved_at)}<br />บันทึกร่างที่อนุมัติภายในแล้ว สร้างบิลจริงใน Alex ที่แท็บคิว/บิล</p></div>
             : latest?.result && <div className="approve-card">{canApprove ? <><label className="checkbox-row"><input type="checkbox" checked={approveChecked} disabled={working} onChange={e => setApproveChecked(e.target.checked)} />ตรวจร่าง v{latest.draft_version} กับลูกค้าแล้ว ข้อมูลถูกต้อง</label><button type="button" className="button primary full" disabled={working || !approveChecked} onClick={approveOrder}>อนุมัติร่างภายใน</button><p className="muted small">เก็บร่างที่ตรวจแล้วในระบบ หากต้องการสร้างบิลใน Alex ให้ไปที่แท็บคิว/บิล</p></> : <p className="muted small">อนุมัติร่างภายในได้เมื่อร่างล่าสุดข้อมูลครบ ไม่มีข้อขัดแย้ง และแชทไม่มีข้อความใหม่หลังทำร่าง</p>}</div>}
-          <DraftEditor key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onClone={() => { if (latest) void copyVersion(latest, "clone"); }} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
-          {tab === "checkout" && <RentalCheckout key={`${selected}-${version}-${contextHash}`} inquiryId={selected} userId={current?.line_user_id} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
+          <DraftEditor canSubmit={submitAllowed} key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onClone={() => { if (latest) void copyVersion(latest, "clone"); }} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
+          {tab === "checkout" && <RentalCheckout canSubmit={submitAllowed} key={`${selected}-${version}-${contextHash}`} inquiryId={selected} userId={current?.line_user_id} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
           {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => {
             const state = draft.state ?? "OPEN";
             const [label, tone] = versionStates[state];

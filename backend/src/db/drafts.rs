@@ -338,6 +338,10 @@ async fn enqueue_job(
     if let Some(source) = copied_from {
         record.insert("copied_from", source);
     }
+    if let Some(access) = &state.access {
+        record.insert("requested_by_member", access.member_id);
+        record.insert("requested_by_member_version", access.version);
+    }
     match state
         .collection("draft_requests")
         .insert_one(record.clone())
@@ -442,6 +446,7 @@ pub async fn commit(
     expected: i64,
     draft: Document,
 ) -> Result<(), AppError> {
+    super::team::revalidate(state).await?;
     let id = job
         .get_object_id("inquiry_id")
         .map_err(|_| AppError::Data)?;

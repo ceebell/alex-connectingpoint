@@ -2,11 +2,10 @@ use crate::{
     db::{cart, checkout},
     error::AppError,
     models::cart::{AddInput, CheckInput, UpdateInput},
-    state::AppState,
 };
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, rejection::JsonRejection},
     http::HeaderMap,
 };
 use mongodb::bson::oid::ObjectId;
@@ -17,14 +16,14 @@ fn id(value: &str) -> Result<ObjectId, AppError> {
 }
 
 pub async fn list(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(cart::list(&state, id(&inquiry)?).await?))
 }
 
 pub async fn add(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     headers: HeaderMap,
     input: Result<Json<AddInput>, JsonRejection>,
@@ -35,7 +34,7 @@ pub async fn add(
 }
 
 pub async fn update(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<UpdateInput>, JsonRejection>,
 ) -> Result<Json<Value>, AppError> {
@@ -44,7 +43,7 @@ pub async fn update(
 }
 
 pub async fn availability(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<CheckInput>, JsonRejection>,
 ) -> Result<Json<Value>, AppError> {

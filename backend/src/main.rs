@@ -34,6 +34,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Return only sanitized errors from startup, too.
     let state = AppState::connect(config).await?;
     db::indexes::ensure(&state).await?;
+    db::team::bootstrap(&state).await?;
     let router = routes::router(state.clone())?;
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);

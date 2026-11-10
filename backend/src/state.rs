@@ -12,6 +12,8 @@ pub struct AppState {
     pub db: Database,
     pub http: reqwest::Client,
     pub login_attempts: Arc<tokio::sync::Mutex<(u32, std::time::Instant)>>,
+    pub team_enabled: Arc<std::sync::atomic::AtomicBool>,
+    pub access: Option<crate::models::team::Access>,
 }
 
 impl AppState {
@@ -42,6 +44,8 @@ impl AppState {
             db,
             http,
             login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
+            team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            access: None,
         })
     }
 

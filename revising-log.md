@@ -3,6 +3,67 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-10 22:57 — เพิ่มระบบเชิญพนักงานและจัดการสิทธิ์ร้าน Arisa Rental
+- **คำอธิบาย:** ทำระบบตามแบบที่ผู้ใช้อนุมัติ เจ้าของร้านสร้างคำเชิญอายุ 24 ชั่วโมงเป็นลิงก์หรือ QR พนักงานยืนยัน LINE และรับคำเชิญก่อนรอเจ้าของร้านตรวจบัญชีแล้วอนุมัติ กำหนดบทบาท/สาขา แก้ชื่อทำงาน ระงับหรือคืนสิทธิ์ และดูประวัติผู้ดำเนินการพร้อมวันเวลาได้ ผู้ใช้ยืนยันให้ LINE user ID ที่เข้าได้ปัจจุบันเป็นเจ้าของร้าน จึงย้ายรายการ ADMIN_LINE_USER_IDS เดิมเพียงครั้งเดียว ไม่ให้ผู้สมัครใหม่หรือการเพิ่ม env ภายหลังกลายเป็นเจ้าของร้านอัตโนมัติ
+- **โฟลเดอร์ `backend/src/models/`, `backend/src/db/`**
+  - `team.rs`, `mod.rs`, `indexes.rs` — เพิ่มและลงทะเบียนบัญชี LINE/สมาชิก/คำเชิญ/ประวัติใน MongoDB พร้อม unique indexes, scope ร้าน/ช่องทาง, atomic acceptance และ version conflict; ป้องกันสองบัญชีรับคำเชิญเดียวและบัญชีเดียวรับหลายคำเชิญพร้อมกัน ลิงก์ใช้โทเคน HMAC แยก scope และเก็บเฉพาะ hash ในฐานข้อมูล
+  - `cart.rs`, `products.rs`, `checkout.rs`, `drafts.rs`, `events.rs` — ตรวจสาขาของผู้ใช้กับสินค้า ตะกร้า บิลเก่า/ใหม่ การกู้สถานะและการแก้ผลบิลด้วยมือ; เก็บสมาชิกและเวอร์ชันสิทธิ์ในงาน AI ตรวจใหม่ก่อนบันทึก/ส่งออเดอร์; รองรับ duplicate-key ชนิด Command ของ MongoDB สำหรับการรับคำเชิญพร้อมกัน
+- **โฟลเดอร์ `backend/src/routes/`, `backend/src/`**
+  - `team.rs`, `access.rs`, `admin.rs`, `session.rs`, `mod.rs` — เพิ่ม API จัดการทีมสำหรับเจ้าของร้าน แยก verified LINE identity ออกจากสิทธิ์เข้าร้าน ผู้รออนุมัติ/ถูกระงับเข้าถึงได้เฉพาะสถานะตนเอง; ใช้ session cookie HttpOnly และ CSRF header เดิม ตรวจ role/status จากฐานข้อมูลทุกคำขอ ปิด shared-password fallback เมื่อเปิดระบบทีม และไม่ให้ service Bearer จัดการสมาชิกบุคคล
+  - `cart.rs`, `checkout.rs`, `customers.rs`, `customer_notes.rs`, `drafts.rs`, `products.rs` — ส่งสิทธิ์จาก middleware ไปยัง layer ข้อมูลด้วย ScopedState และบันทึก actor เป็นชื่อทำงานคู่กับ LINE identity เดิม
+  - `state.rs`, `main.rs`, `error.rs`, `draft_worker.rs` — เพิ่ม bootstrap เจ้าของร้านหลังสร้าง indexes สถานะเปิดระบบทีม ข้อผิดพลาดสิทธิ์และ conflict และการตรวจสิทธิ์งาน AI ที่เข้าคิว
+  - `tests_team.rs`, `tests*.rs` — เพิ่ม integration ของ invitation/OAuth/roles/branches/revocation/audit/races และปรับ AppState fixtures เดิมให้รองรับระบบทีม โดยทดสอบผ่าน MongoDB ชั่วคราวและ mock LINE/Alex เท่านั้น
+- **โฟลเดอร์ `frontend/src/components/`, `frontend/src/lib/`, `frontend/src/app/`, `frontend/tests/`**
+  - `admin-portal.tsx`, `team-welcome.tsx`, `team-workspace.tsx`, `team.css`, `team-api.ts` — เพิ่มหน้ารับคำเชิญ/รอสถานะและหน้าจัดการทีมบน desktop/มือถือ มีฟอร์มสิทธิ์/สาขา ตรวจชื่อและรูป LINE, QR สร้างในเครื่อง, คัดลอกลิงก์, ประวัติและ pagination ที่ไม่ย้อนกลับเมื่อ refresh เบื้องหลัง; ส่ง token ใน URL fragment แล้วย้ายไป HttpOnly invitation cookie ไม่ส่งใน query; ยืนยันรับด้วย invitation ID/version ที่เห็นเพื่อกันสลับคำเชิญข้ามแท็บ
+  - `workspace-sidebar.tsx`, `admin-workspace.tsx`, `draft-editor.tsx`, `rental-checkout.tsx`, `page.tsx`, `layout.tsx` — เพิ่มทางเข้าจัดการทีมสำหรับเจ้าของร้านและแสดงปุ่มตามสิทธิ์ พนักงานเตรียมงานได้แต่ส่งออเดอร์หรือแก้ผลบิลไม่ได้ ผู้จัดการส่งออเดอร์ได้ตามสาขา; ไม่ mount/poll ข้อมูลร้านก่อนอนุมัติหรือหลังระงับ ตรวจ session ซ้ำทุก 10 วินาทีและเมื่อกลับเข้าแท็บ
+  - `use-chat-notifications.ts`, `team-workspace.tsx` — แจ้งเตือนข้อความต่อเนื่องระหว่างอยู่หน้าทีม คลิกกลับเข้าแชทลูกค้าได้ ยกเลิกงานแจ้งเตือนที่ค้างและปิด toast ของแอปเมื่อออกจาก workspace
+  - `team-access.test.mjs` — ทดสอบ capability ตามสถานะ/บทบาท ความเข้ากันได้ระบบเดิม และการตรวจ fragment คำเชิญ
+- **โฟลเดอร์ `frontend/`, `docs/` และ root**
+  - `package.json`, `package-lock.json` — เพิ่ม qrcode และชนิด TypeScript สำหรับสร้าง QR ภายในแอป ไม่ส่งลิงก์คำเชิญให้บริการ QR ภายนอก
+  - `arisa-rental-team-onboarding.md`, `step-2-admin.md`, `.env.example` — อัปเดตคู่มือใช้งานจริง การย้ายสิทธิ์เดิมครั้งเดียว การตั้ง LINE Login ให้ Published เพื่อรับพนักงานทั่วไป ข้อจำกัดคำสั่งภายนอกที่ส่งไปแล้ว และขั้นตอน deploy; ไม่เพิ่ม env หรือ secret ใหม่
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — build Linux/amd64 บน local: `rel-20261110155401-cafd0a5d7d18` พร้อม binary/checksum/metadata
+  - `frontend-linux/` — build Linux/amd64 standalone บน local: `front-20261110155457-95de554f0eb2` พร้อม public/static/runtime/checksum/metadata รวมหน้าทีมและงานก่อนหน้าที่ยังไม่ส่ง Git
+- **ผลตรวจสอบ:** cargo fmt --check และ cargo clippy --all-targets -- -D warnings ผ่าน; cargo test -- --include-ignored ผ่าน 55/55 รวม MongoDB integration; frontend lint/build/TypeScript ผ่านและ npm test ผ่าน 24/24; Chrome/WebKit ผ่าน 16 กรณีบน desktop, iPhone จำลอง, จอเล็กและแนวนอน ครอบคลุมสร้างคำเชิญ/QR/อนุมัติ/แก้ไข/ระงับ/ประวัติ/สถานะ/ลิงก์หมดอายุ/notification/pagination และไม่มี request ภายนอกหรือ API ที่ไม่คาดคิด; regression แจ้งเตือนและ focus ของทุกฟอร์มเดิมผ่าน 10 กรณี; npm audit --omit=dev ไม่พบช่องโหว่; ตรวจ checksum frontend ครบ 2,110 ไฟล์และ backend ตรง metadata ยืนยัน build_location local/platform linux/amd64, worker ตรง source, ไม่มี .env ใน release และ git diff --check ผ่าน
+- **ขอบเขตและขั้นตอนถัดไป:** ยังไม่ทดสอบการล็อกอิน LINE ของพนักงานจริงหรือ iPhone จริง ไม่สร้างบัญชี/คำเชิญบน production ไม่ส่งข้อความ LINE ไม่เปิด dev stack และลบ MongoDB ชั่วคราวที่ใช้ทดสอบแล้ว; ไม่ commit/push/deploy และคงไฟล์ prompts ของผู้ใช้ ผู้ใช้รัน rungit.bat "Add team invitations and role-based access" บน Windows จากนั้นบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main ซึ่ง pull และ deploy Docker runtime จาก release นี้
+
+## 2026-11-10 18:33 — ออกแบบขั้นตอนเพิ่มพนักงานร้าน Arisa Rental
+- **คำอธิบาย:** ผู้ใช้ขอออกแบบขั้นตอน add user ของร้าน ร่างนี้ยึดการเพิ่มพนักงานเข้าหลังบ้าน Alex ตามบริบท โดยถามแยกจากการเพิ่มข้อมูลลูกค้าไว้แล้วและระบุสมมติฐานในเอกสาร ไม่แก้ระบบสิทธิ์หรือสร้างผู้ใช้จริง
+- **โฟลเดอร์ `docs/`**
+  - `arisa-rental-team-onboarding.md` — เพิ่ม: ขั้นตอนเจ้าของร้านเพิ่มคน/บทบาท/สาขา สร้างคำเชิญอายุ 24 ชั่วโมง ส่งลิงก์หรือ QR ให้พนักงานยืนยัน LINE ยอมรับคำเชิญ รอเจ้าของร้านตรวจบัญชีและอนุมัติก่อนเริ่มใช้ พร้อม Mermaid flow, ข้อความ UI, บทบาทเจ้าของร้าน/ผู้จัดการ/พนักงาน, สถานะและกรณีลิงก์หมดอายุ/ซ้ำ/ผิดบัญชี/ระงับสิทธิ์; ระบุการตรวจสิทธิ์ฝั่ง backend, audit, bootstrap เจ้าของร้านเดิม, ทางเข้ารหัสผ่านที่ห้ามข้ามสิทธิ์ และการแยกสิทธิ์แอปออกจาก OA Manager/Alex Rental ภายนอก
+- **ผลตรวจสอบ:** อ่าน session.rs, admin whitelist, sidebar และคู่มือ LINE Login ปัจจุบันยืนยันว่ายังไม่มีระบบทีม/บทบาท/คำเชิญในแอป; ใช้แนวทาง UX สำหรับฟอร์มและ feedback จาก ui-ux-pro-max และตรวจเอกสาร LINE Developers เรื่องตัวตน/provider; ตรวจขั้นตอน สถานะ ตารางสิทธิ์ และลิงก์เอกสารเดิมแล้ว git diff --check ผ่าน; เอกสารเท่านั้นจึงไม่ build/deploy และไม่ commit/push คงไฟล์/รหัสและ release ที่แก้ไว้จากงานก่อนหน้า
+
+## 2026-11-10 16:14 — แจ้งเตือนข้อความลูกค้าผ่าน Chrome และซ่อนเมนูตอนกรอกทุกฟอร์ม
+- **คำอธิบาย:** ผู้ใช้ต้องการแจ้งเตือนเมื่อมีข้อความลูกค้าใหม่ และให้เมนูล่างของแอปหายขณะกรอกทุก textbox/form บนมือถือ รวมถึงลดการเสนอกรอกข้อมูลอัตโนมัติ โดยไม่อ้างว่าสามารถซ่อนแถบกุญแจ/บัตร/ตำแหน่ง/ปุ่มพับ keyboard ของ iOS ได้ทั้งหมด
+- **โฟลเดอร์ `backend/src/db/`**
+  - `inbox.rs` — แก้: ส่ง last_incoming_message_at/preview คู่กับ ID ของข้อความลูกค้าล่าสุดที่ยังไม่ถูกยกเลิก แยกจาก preview รวมซึ่งอาจเป็นคำตอบแอดมิน ไม่ส่ง read token ให้ browser
+  - `inquiries.rs` — แก้: เพิ่ม query ตาม ID ภายใต้ shop/channel scope เดิม และตัด lease_token
+- **โฟลเดอร์ `backend/src/routes/`**
+  - `admin.rs` — แก้: รองรับ GET /api/inquiries?id=ObjectId พร้อม decoration ชื่อ/สถานะเดิม เพื่อเปิดแชทจากแจ้งเตือนที่อยู่นอกหน้าแรกของ inbox โดยยังผ่าน admin authorization
+- **โฟลเดอร์ `backend/src/`**
+  - `tests_line.rs` — แก้: ตรวจ metadata ข้อความลูกค้า, การอ่าน inquiry ตาม ID, auth/invalid ID และการป้องกันอ่านข้ามร้าน/ช่องทาง
+- **โฟลเดอร์ `frontend/src/lib/`**
+  - `api.ts` — แก้: เพิ่มชนิด incoming notification metadata
+  - `chat-notifications.ts` — เพิ่ม: tracker แยกข้อความใหม่จาก initial snapshot/ประวัติเก่า/คำตอบแอดมิน/unsend rewind, ข้อความแจ้งเตือนตามชื่อลูกค้าที่ใช้จริง และ history จำกัดจำนวน
+  - `use-chat-notifications.ts` — เพิ่ม: opt-in ผ่านปุ่มกระดิ่งเท่านั้น, เก็บ preference, รองรับ denied/unsupported/storage blocked, poll ขณะสลับแท็บเมื่อเปิดแจ้งเตือน, ยกเว้นแชทที่กำลังอ่าน, ป้องกันแจ้งซ้ำข้ามแท็บด้วย Web Locks และ ID history, เปิดแชทจาก worker/deep link และปิด toast เมื่อ logout/ปิดแจ้งเตือน
+- **โฟลเดอร์ `frontend/public/`**
+  - `alex-notifications-sw.js` — เพิ่ม: worker สำหรับ notification โดยใช้ scope /alex-notifications/ ไม่ควบคุมหน้าแอป ไม่ cache หน้าและไม่เรียก API; client handshake และ click เปิดเฉพาะแท็บต้นทางหรือ fallback ของ origin เดียวกัน ตรวจ inquiry ID ก่อนเปิด
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `admin-workspace.tsx` — แก้: ปุ่มกระดิ่งพร้อมสถานะ/คำแนะนำ, เชื่อม inbox กับ notification tracker และ background polling, เปิดแชทที่เลือกจากแจ้งเตือน, แตะนอกช่องกรอกบนมือถือเพื่อ blur หลัง button click จบแล้วจึงคืน navigation
+  - `customer-name-dialog.tsx`, `customer-notes.tsx`, `date-input.tsx`, `draft-editor.tsx`, `order-cart.tsx`, `rental-checkout.tsx`, `admin-workspace.tsx` — แก้: autocomplete off สำหรับทุก form/ช่องข้อความ/ตัวเลข/วันที่/select รวม login ตามคำขอ; ไม่ใส่ fake fields หรือเปลี่ยนประเภท password
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `mobile.css` — แก้: ซ่อน page header/navigation ทันทีเมื่อ focus ช่องกรอกทุกส่วน รวม invoice portal และ dialog โดยไม่ต้องรอ viewport ยุบ; checkbox/radio/file ไม่ทำให้เข้าโหมดพิมพ์
+  - `workspace-layout.css` — แก้: รูปแบบปุ่มกระดิ่งและสถานะเปิดใช้งาน
+- **โฟลเดอร์ `frontend/tests/`**
+  - `chat-notifications.test.mjs`, `notification-worker.test.mjs` — เพิ่ม: ตรวจ initial/repeated snapshots, incoming-only previews, new customers, pagination, stale/withdrawn snapshots, read toggles, bounded storage, worker click เฉพาะแท็บเป้าหมาย, fallback/deep link และปฏิเสธ ID/ข้อความต่าง origin
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - Linux releases — แก้: build-all.bat ผ่านบน local Docker Desktop และ build frontend รุ่นสุดท้ายหลังเพิ่ม outside-tap behavior; backend `rel-20261110090759-fd12ec1e5eff`, frontend `front-20261110091043-4b3e961c3eed` พร้อม checksum/runtime/metadata
+- **ผลตรวจสอบ:** cargo fmt --check, cargo clippy -- -D warnings และ cargo test ผ่าน (33 passed, 20 integration tests ignored ตามปกติ); รัน Mongo integration inbox/read/notification metadata เพิ่มผ่าน 1/1 ด้วย MongoDB disposable บน local ซึ่งหยุด/ลบ container แล้ว; frontend lint/build/TypeScript ผ่าน และ npm test 18/18 ผ่าน; ตรวจ frontend checksum 2,108 ไฟล์, backend checksum, Linux/amd64 build_location local, worker ตรง source และไม่มี .env ใน release
+- **ผลทดสอบ browser:** Chrome/WebKit บนจอ 430x739, 375x667, แนวนอน 932x430 และ desktop 1440x900 ผ่าน ตรวจ focus/autocomplete/navigation/layout ของค้นหา แชท สรุป วันที่/โทรศัพท์ในร่าง ลูกค้า/ที่อยู่/select ใน invoice portal, Note และเปลี่ยนชื่อ พร้อมแตะนอกสรุป/Note เพื่อคืนเมนู; API fixture ตรวจ opt-in, incoming preview, hidden-tab poll, click-to-open, ยกเว้นแชทที่เปิดอ่าน, dedup หลายแท็บ, refresh, disable, denied/unsupported/storage blocked โดยไม่เรียก LINE จริง; Chrome แบบเต็ม headless และ profile ทดสอบแยกตรวจ service worker activation/client handshake/showNotification/getNotifications/renotify/cleanup ด้วย API จริงผ่าน โดยหน้า root ไม่ถูก worker ควบคุม
+- **ข้อจำกัด:** notification รุ่นนี้ต้องเปิดแท็บ Alex ค้างไว้ browser/ระบบอาจชะลอ background timer; ยังไม่มี server Web Push สำหรับปิดทุกแท็บหรือปิด browser; native OS toast ที่ผู้ใช้มองเห็นและคีย์บอร์ด/AutoFill บน iPhone จริงยังต้องลองหลัง deploy เนื่องจาก headless ไม่จำลอง UI ของระบบ iOS; Safari อาจไม่ทำตาม autocomplete off และไม่มี CSS/เว็บ API ให้ซ่อนแถบระบบนี้ทั้งหมด อ้างอิง https://developer.apple.com/documentation/safari-developer-tools/autofill และ https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/autocomplete
+- **ตัวตรวจ:** `data/notification-check/` ถูก ignore เก็บ fixture และผลจำลอง; คงไฟล์ prompts ที่ผู้ใช้แก้ไว้อยู่แล้ว
+- **ขั้นตอนถัดไป:** build-all.bat บน local ผ่านแล้ว ผู้ใช้รัน rungit.bat "Add Chrome message notifications and hide mobile navigation on form focus" แล้วบน Ubuntu รัน cd ~/alex-connectingpoint ตามด้วย bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy
+
 
 ## 2026-11-10 14:07 — ย่อ guideline HTML เป็น build-all/rungit และ deploy-all
 - **คำอธิบาย:** ผู้ใช้ต้องการ guideline ใน HTML ให้ local ใช้เพียง build-all.bat แล้ว rungit.bat พร้อมข้อความ commit และ Ubuntu ใช้ cd ~/alex-connectingpoint ตามด้วย bash ./deploy-all.sh main ซึ่งทำ git load/pull และ deploy Docker ให้อัตโนมัติ

@@ -17,6 +17,8 @@ async fn browser_login_uses_signed_http_only_sessions_and_requires_csrf_header()
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let app = routes::router(state.clone()).unwrap();

@@ -5,6 +5,18 @@ use mongodb::{
     options::ReturnDocument,
 };
 
+pub async fn by_id(state: &AppState, id: ObjectId) -> Result<Vec<Document>, AppError> {
+    let mut filter = state.scope();
+    filter.insert("_id", id);
+    Ok(state
+        .collection("inquiries")
+        .find_one(filter)
+        .projection(doc! {"lease_token":0})
+        .await?
+        .into_iter()
+        .collect())
+}
+
 pub async fn link(
     state: &AppState,
     event: &LineEvent,

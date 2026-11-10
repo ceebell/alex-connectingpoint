@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}";
+self.__REACT_LOADABLE_MANIFEST='{"components/team-workspace.tsx -> qrcode":{"id":768,"files":["static/chunks/768.ea6949f54131a3b6.js"]}}';

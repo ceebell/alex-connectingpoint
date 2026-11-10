@@ -1,7 +1,7 @@
-use crate::{alex, db::products, error::AppError, models::product::SearchInput, state::AppState};
+use crate::{alex, db::products, error::AppError, models::product::SearchInput};
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, rejection::JsonRejection},
 };
 use mongodb::bson::oid::ObjectId;
 use serde_json::{Value, json};
@@ -10,7 +10,9 @@ fn id(value: &str) -> Result<ObjectId, AppError> {
     ObjectId::parse_str(value).map_err(|_| AppError::BadRequest)
 }
 
-pub async fn settings(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+pub async fn settings(
+    super::access::ScopedState(state): super::access::ScopedState,
+) -> Result<Json<Value>, AppError> {
     let configured = state.config.alex.is_some();
     let branches = if configured {
         alex::login(&state).await?.branches
@@ -22,14 +24,18 @@ pub async fn settings(State(state): State<AppState>) -> Result<Json<Value>, AppE
         "product_url_configured":state.config.alex.as_ref().is_some_and(|cfg| cfg.product_url_prefix.is_some())})))
 }
 
-pub async fn categories(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+pub async fn categories(
+    super::access::ScopedState(state): super::access::ScopedState,
+) -> Result<Json<Value>, AppError> {
     let session = alex::login(&state).await?;
     Ok(Json(
         json!({"categories":alex::categories(&state, &session).await?}),
     ))
 }
 
-pub async fn colors(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+pub async fn colors(
+    super::access::ScopedState(state): super::access::ScopedState,
+) -> Result<Json<Value>, AppError> {
     let session = alex::login(&state).await?;
     Ok(Json(
         json!({"colors":alex::colors(&state, &session).await?}),
@@ -37,14 +43,14 @@ pub async fn colors(State(state): State<AppState>) -> Result<Json<Value>, AppErr
 }
 
 pub async fn list(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(products::list(&state, id(&inquiry)?).await?))
 }
 
 pub async fn search(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<SearchInput>, JsonRejection>,
 ) -> Result<Json<Value>, AppError> {

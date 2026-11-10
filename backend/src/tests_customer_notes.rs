@@ -80,6 +80,8 @@ async fn customer_notes_routes_authorize_and_validate_before_database_access() {
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     for (path, method, body) in [

@@ -19,14 +19,21 @@ const MAX_LINES: usize = 20;
 pub async fn items(state: &AppState, inquiry_id: ObjectId) -> Result<Vec<Document>, AppError> {
     let mut filter = state.scope();
     filter.insert("inquiry_id", inquiry_id);
-    Ok(state
+    let records: Vec<Document> = state
         .collection("cart_items")
         .find(filter)
         .sort(doc! {"created_at":1,"_id":1})
         .limit(MAX_LINES as i64)
         .await?
         .try_collect()
-        .await?)
+        .await?;
+    for record in &records {
+        super::team::check_branch(
+            state,
+            record.get_str("branch_id").map_err(|_| AppError::Data)?,
+        )?;
+    }
+    Ok(records)
 }
 
 pub fn candidate(record: &Document) -> Result<Candidate, AppError> {
@@ -87,6 +94,13 @@ pub async fn replace(
     lines: &[Document],
     added_by: &str,
 ) -> Result<(), AppError> {
+    items(state, inquiry_id).await?;
+    for line in lines {
+        super::team::check_branch(
+            state,
+            line.get_str("branch_id").map_err(|_| AppError::Data)?,
+        )?;
+    }
     let mut filter = state.scope();
     filter.insert("inquiry_id", inquiry_id);
     let collection = state.collection("cart_items");
@@ -232,6 +246,13 @@ pub async fn update(
     }
     let mut filter = state.scope();
     filter.extend(doc! {"_id":id,"inquiry_id":inquiry_id,"revision":input.expected_revision});
+    if let Some(access) = state
+        .access
+        .as_ref()
+        .filter(|access| access.role != crate::models::team::Role::Owner)
+    {
+        filter.insert("branch_id", doc! {"$in":&access.branch_ids});
+    }
     let collection = state.collection("cart_items");
     let changed = match input.quantity {
         None => collection.delete_one(filter).await?.deleted_count,

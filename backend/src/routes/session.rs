@@ -69,10 +69,15 @@ fn fresh(expiry: &str, max_age: u64) -> bool {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Admin {
-    kind: String,
-    id: String,
-    name: String,
+pub struct Admin {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+}
+impl Admin {
+    pub fn is_line(&self) -> bool {
+        matches!(self.kind.as_str(), "line" | "team-line")
+    }
 }
 
 // Secret material a session is bound to. Rotating the password, removing a LINE
@@ -80,6 +85,10 @@ struct Admin {
 fn binding(state: &AppState, admin: &Admin) -> Option<String> {
     let config = &state.config;
     match admin.kind.as_str() {
+        "team-line" if config.line_login_enabled() && crate::db::team::enabled(state) => config
+            .line_login_channel_id
+            .as_ref()
+            .map(|c| format!("team-line:{c}")),
         "password" if config.password_login_enabled() && admin.id == config.admin_username => {
             config
                 .admin_password
@@ -127,9 +136,15 @@ fn session(state: &AppState, headers: &HeaderMap) -> Option<Admin> {
 pub fn valid_cookie(state: &AppState, headers: &HeaderMap) -> bool {
     session(state, headers).is_some()
 }
+pub fn identity(state: &AppState, headers: &HeaderMap) -> Option<Admin> {
+    session(state, headers)
+}
 
 // Recorded on admin writes; the internal Bearer token has no person behind it.
 pub fn actor(state: &AppState, headers: &HeaderMap) -> Actor {
+    if let Some(access) = &state.access {
+        return crate::db::team::actor(access);
+    }
     match session(state, headers) {
         Some(admin) => Actor {
             id: format!("{}:{}", admin.kind, admin.id),
@@ -193,6 +208,9 @@ pub async fn login(
     input: Result<Json<Login>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(HeaderMap, Json<serde_json::Value>), AppError> {
     require_browser_header(&headers)?;
+    if crate::db::team::enabled(&state) {
+        return Err(AppError::Forbidden);
+    }
     let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     if !state.config.password_login_enabled() {
         return Err(AppError::AdminUnavailable);
@@ -244,19 +262,59 @@ pub async fn logout(
     ))
 }
 
-pub async fn info(State(state): State<AppState>, headers: HeaderMap) -> Json<serde_json::Value> {
+pub async fn info(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Json<serde_json::Value>), AppError> {
     let admin = session(&state, &headers);
-    Json(serde_json::json!({
-        "username":admin.as_ref().map_or("internal-api", |a| a.name.as_str()),
-        "login":admin.as_ref().map_or("token", |a| a.kind.as_str()),
-        "hermes_configured":state.config.hermes_url.is_some() && state.config.hermes_api_key.is_some()
-    }))
+    if admin.is_none() {
+        super::admin::require_token(&state, &headers)?;
+    }
+    if crate::db::team::enabled(&state)
+        && let Some(admin) = &admin
+    {
+        if !admin.is_line() {
+            return Err(AppError::Forbidden);
+        }
+        let member = crate::db::team::membership(&state, &admin.id).await?;
+        let member = match member {
+            Some(record) => Some(super::team::member_view(&state, record).await?),
+            None => None,
+        };
+        let active = member.as_ref().is_some_and(|m| m["status"] == "ACTIVE");
+        let owner = active && member.as_ref().is_some_and(|m| m["role"] == "OWNER");
+        let submit = active && member.as_ref().is_some_and(|m| m["role"] != "STAFF");
+        let name = member
+            .as_ref()
+            .and_then(|m| m["name"].as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&admin.name);
+        let profile = crate::db::team::identity_profile(&state, &admin.id).await?;
+        let line_profile = serde_json::json!({"name":profile.as_ref().and_then(|p|p.get_str("line_name").ok()).unwrap_or(&admin.name),
+            "picture_url":profile.as_ref().and_then(|p|p.get_str("picture_url").ok())});
+        return Ok((
+            cookie_headers(&[])?,
+            Json(
+                serde_json::json!({"username":name,"login":"line","team_enabled":true,"membership":member,"line_profile":line_profile,
+            "capabilities":{"manage_team":owner,"submit_order":submit},"hermes_configured":state.config.hermes_url.is_some() && state.config.hermes_api_key.is_some()}),
+            ),
+        ));
+    }
+    Ok((
+        cookie_headers(&[])?,
+        Json(serde_json::json!({
+            "username":admin.as_ref().map_or("internal-api", |a| a.name.as_str()),
+            "login":admin.as_ref().map_or("token", |a| a.kind.as_str()),
+            "hermes_configured":state.config.hermes_url.is_some() && state.config.hermes_api_key.is_some(),
+            "team_enabled":false,"capabilities":{"manage_team":false,"submit_order":true}
+        })),
+    ))
 }
 
 pub async fn options(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "line":state.config.line_login_enabled(),
-        "password":state.config.password_login_enabled()
+        "password":state.config.password_login_enabled() && !crate::db::team::enabled(&state)
     }))
 }
 
@@ -268,7 +326,15 @@ fn login_redirect(state: &AppState, query: &str) -> Response {
     }
 }
 
-pub async fn line_start(State(state): State<AppState>) -> Response {
+#[derive(Deserialize)]
+pub struct StartQuery {
+    #[serde(default)]
+    switch_account: bool,
+}
+pub async fn line_start(
+    State(state): State<AppState>,
+    Query(query): Query<StartQuery>,
+) -> Response {
     let config = &state.config;
     let (Some(client_id), Some(redirect_uri)) = (
         &config.line_login_channel_id,
@@ -284,7 +350,7 @@ pub async fn line_start(State(state): State<AppState>) -> Response {
         let value = format!("{expiry}.{random}");
         let token = format!("{value}.{}", sign(&state, "line-state", &value)?);
         let nonce = sign(&state, "line-nonce", &random)?;
-        let url = reqwest::Url::parse_with_params(
+        let mut url = reqwest::Url::parse_with_params(
             AUTHORIZE_URL,
             [
                 ("response_type", "code"),
@@ -296,6 +362,10 @@ pub async fn line_start(State(state): State<AppState>) -> Response {
             ],
         )
         .map_err(|_| AppError::Config("Invalid LINE_LOGIN_REDIRECT_URI".into()))?;
+        if query.switch_account {
+            url.query_pairs_mut()
+                .append_pair("disable_auto_login", "true");
+        }
         // Lax: the cookie must come back on LINE's top-level redirect to the callback.
         let headers = cookie_headers(&[cookie(
             &state,
@@ -327,6 +397,7 @@ struct IdToken {
     sub: String,
     aud: String,
     name: Option<String>,
+    picture: Option<String>,
 }
 
 async fn line_identity(state: &AppState, code: &str, nonce: &str) -> Result<IdToken, AppError> {
@@ -408,7 +479,40 @@ pub async fn line_callback(
     let Ok(identity) = identity else {
         return login_redirect(&state, "login_error=LINE_LOGIN_FAILED");
     };
-    if !state
+    let team_mode = crate::db::team::enabled(&state);
+    if team_mode {
+        let allowed = async {
+            let member = crate::db::team::membership(&state, &identity.sub).await?;
+            let invitation = super::team::context(&state, &headers).await.ok().flatten();
+            if member.is_none()
+                && invitation
+                    .as_ref()
+                    .is_none_or(|record| crate::db::team::invitation_live(record).is_err())
+            {
+                return Err(AppError::Forbidden);
+            }
+            crate::db::team::account(
+                &state,
+                &identity.sub,
+                identity.name.as_deref(),
+                identity.picture.as_deref(),
+                true,
+            )
+            .await?;
+            Ok::<(), AppError>(())
+        }
+        .await;
+        if let Err(error) = allowed {
+            return login_redirect(
+                &state,
+                if matches!(error, AppError::Forbidden) {
+                    "login_error=LINE_NOT_ALLOWED"
+                } else {
+                    "login_error=LINE_LOGIN_FAILED"
+                },
+            );
+        }
+    } else if !state
         .config
         .admin_line_user_ids
         .iter()
@@ -428,7 +532,11 @@ pub async fn line_callback(
         .take(100)
         .collect();
     let admin = Admin {
-        kind: "line".into(),
+        kind: if team_mode {
+            "team-line".into()
+        } else {
+            "line".into()
+        },
         id: identity.sub,
         name,
     };

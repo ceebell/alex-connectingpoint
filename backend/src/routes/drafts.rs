@@ -2,11 +2,10 @@ use crate::{
     db::drafts,
     error::AppError,
     models::draft::{CopyInput, PrepareInput, SummaryInput},
-    state::AppState,
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::Path,
     http::{HeaderMap, StatusCode},
 };
 use mongodb::bson::{Document, oid::ObjectId};
@@ -24,7 +23,7 @@ fn job_view(record: &Document) -> Result<Value, AppError> {
 }
 
 pub async fn prepare(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<PrepareInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
@@ -41,7 +40,7 @@ pub async fn prepare(
 }
 
 pub async fn upload_image(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<
         Json<crate::db::attachments::UploadInput>,
@@ -55,7 +54,7 @@ pub async fn upload_image(
 }
 
 pub async fn delete_image(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((inquiry, attachment)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(
@@ -64,7 +63,7 @@ pub async fn delete_image(
 }
 
 pub async fn extract_customer(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     Ok(Json(
@@ -73,7 +72,7 @@ pub async fn extract_customer(
 }
 
 pub async fn revise(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     input: Result<Json<PrepareInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
@@ -90,7 +89,7 @@ pub async fn revise(
 }
 
 pub async fn copy(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((inquiry, draft)): Path<(String, String)>,
     input: Result<Json<CopyInput>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
@@ -104,7 +103,7 @@ pub async fn copy(
 }
 
 pub async fn cancel(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path((inquiry, draft)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AppError> {
@@ -115,7 +114,7 @@ pub async fn cancel(
 }
 
 pub async fn job(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(job): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let mut filter = state.scope();
@@ -129,7 +128,7 @@ pub async fn job(
 }
 
 pub async fn list(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
 ) -> Result<Json<Value>, AppError> {
     let inquiry = drafts::inquiry(&state, id(&inquiry)?).await?;
@@ -157,7 +156,7 @@ pub async fn list(
 }
 
 pub async fn save_summary(
-    State(state): State<AppState>,
+    super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,
     headers: HeaderMap,
     input: Result<Json<SummaryInput>, axum::extract::rejection::JsonRejection>,

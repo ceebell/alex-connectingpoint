@@ -12,6 +12,8 @@ async fn oa_connector_auth_and_dto_checks_happen_before_database_access() {
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let path = "/api/connectors/line-oa/messages";
@@ -41,6 +43,8 @@ async fn disabled_oa_connector_is_hidden_and_rejected_before_database_access() {
         db: client.database(&cfg.mongodb_db),
         config: Arc::new(cfg),
         http: reqwest::Client::new(),
+        team_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        access: None,
         login_attempts: Arc::new(tokio::sync::Mutex::new((0, std::time::Instant::now()))),
     };
     let batch = json!({"bot_id":"test-destination","chat_id":"chat","anchor_message_ids":["known"],"messages":[{"id":"msg","text":"fixture","sent_at_ms":1000}]});
