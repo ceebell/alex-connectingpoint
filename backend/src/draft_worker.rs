@@ -200,11 +200,16 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             date_options: vec![],
         }
     } else {
+        let (customer_messages, customer_sources) = crate::customer_extract::chat_sources(
+            &snapshot,
+            inquiry.get_str("line_user_id").unwrap_or(""),
+        )?;
         let reference = *job.get_datetime("created_at").map_err(|_| AppError::Data)?;
         let mut parts = vec![json!({"type":"text","text":serde_json::to_string(&json!({
             "inquiry_ref":inquiry_id.to_hex(), "summary_ref":job_id.to_hex(), "admin_summary":input.summary,
             "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
-            "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_only",
+            "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_with_customer_chat",
+            "customer_messages":customer_messages,
             "selected_image_event_refs":input.image_event_ids,
             "source_texts":sources,
             "fields_schema_example":crate::models::draft::DraftFields::default()
@@ -245,6 +250,12 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         let mut result: DraftResult =
             serde_json::from_value(raw).map_err(|_| AppError::HermesFailed)?;
         result.drop_retired_evidence();
+        crate::customer_extract::validate_draft_contacts(&result, &customer_sources, &images)?;
+        sources.extend(
+            customer_sources
+                .into_iter()
+                .map(|(id, text)| (format!("line_event:{id}"), text)),
+        );
         result
     };
     validate_evidence(&result, &sources, &images)?;
@@ -342,7 +353,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         "workflow_status":workflow,"context_hash":snapshot.hash,"admin_summary":&input.summary,
         "result":bson::to_document(&result).map_err(|_|AppError::Data)?,"missing_fields":missing,
         "confirmed_fields":confirmed.into_iter().collect::<Vec<_>>(),"source":"admin_assisted",
-        "input_scope":"admin_inputs_only","catalog_lookup":catalog_lookup,
+        "input_scope":if input.fields.is_none(){"admin_inputs_with_customer_chat"}else{"admin_inputs_only"},"catalog_lookup":catalog_lookup,
         "summary_revision":drafts::summary_revision(&inquiry),
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
         "cart":cart,"created_at":now,"updated_at":now},

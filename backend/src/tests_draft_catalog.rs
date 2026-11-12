@@ -106,10 +106,11 @@ async fn colors(headers: axum::http::HeaderMap) -> Json<Value> {
 async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Value> {
     let data: Value =
         serde_json::from_str(body["messages"][1]["content"][0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(data["input_scope"], "admin_inputs_only");
+    assert_eq!(data["input_scope"], "admin_inputs_with_customer_chat");
     assert!(data.get("events").is_none());
     assert!(data.get("previous_draft").is_none());
-    assert!(!data.to_string().contains("CHAT-ONLY"));
+    assert!(!data["source_texts"].to_string().contains("CHAT-ONLY"));
+    assert!(data["customer_messages"].to_string().contains("CHAT-ONLY"));
     assert!(!data.to_string().contains("OLD-DRAFT"));
     let mut fields: DraftFields = serde_json::from_value(json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","quantity":1}],"amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000}})).unwrap();
     if flow.mode.load(Ordering::SeqCst) == 4 {

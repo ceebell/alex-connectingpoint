@@ -1,17 +1,17 @@
 use crate::{
-    db::drafts,
+    db::drafts::{self, Snapshot},
     draft_worker::ask_hermes_json,
     error::AppError,
     models::{
         customer::{ProfileInput, normalize_phone},
-        draft::Evidence,
+        draft::{DraftResult, Evidence},
     },
     state::AppState,
 };
 use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +106,95 @@ pub fn validate(result: &Extraction, sources: &BTreeMap<String, String>) -> Resu
     Ok(())
 }
 
+pub(crate) fn chat_sources(
+    snapshot: &Snapshot,
+    user: &str,
+) -> Result<(Vec<Value>, BTreeMap<String, String>), AppError> {
+    let mut sources = BTreeMap::new();
+    let mut messages = Vec::new();
+    for event in &snapshot.events {
+        if event.get_bool("withdrawn").unwrap_or(false)
+            || crate::db::oa_sync::source_type(event) != "line_event"
+            || event
+                .get_str("sender_role")
+                .is_ok_and(|role| role != "customer")
+        {
+            continue;
+        }
+        let Ok(payload) = event.get_document("payload") else {
+            continue;
+        };
+        if payload.get_str("type").ok() != Some("message")
+            || payload
+                .get_document("source")
+                .ok()
+                .and_then(|source| source.get_str("userId").ok())
+                != Some(user)
+        {
+            continue;
+        }
+        let Ok(message) = payload.get_document("message") else {
+            continue;
+        };
+        if message.get_str("type").ok() != Some("text") {
+            continue;
+        }
+        if let Ok(text) = message.get_str("text") {
+            let event_ref = event
+                .get_object_id("_id")
+                .map_err(|_| AppError::Data)?
+                .to_hex();
+            sources.insert(event_ref.clone(), text.to_string());
+            messages.push(json!({"event_ref":event_ref,"event_at":event.get_datetime("event_at").ok().map(|time|time.timestamp_millis()),"text":text}));
+        }
+    }
+    Ok((messages, sources))
+}
+
+// Chat may supply contact fields only; order data still needs a summary or selected image.
+pub(crate) fn validate_draft_contacts(
+    result: &DraftResult,
+    sources: &BTreeMap<String, String>,
+    images: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    let mut extraction = Extraction {
+        fields: Fields::default(),
+        evidence: vec![],
+        conflicts: vec![],
+        questions: vec![],
+    };
+    for evidence in &result.evidence {
+        if evidence.source_type != "line_event"
+            || images.contains(&format!("line_event:{}", evidence.source_ref))
+        {
+            continue;
+        }
+        let field = match evidence.field.as_str() {
+            "customer_name" => {
+                extraction.fields.display_name = result.fields.customer_name.clone();
+                "display_name"
+            }
+            "customer_phone" => {
+                extraction.fields.phone = result.fields.customer_phone.clone();
+                "phone"
+            }
+            "customer_address" => {
+                extraction.fields.address = result.fields.customer_address.clone();
+                "address"
+            }
+            _ => {
+                return Err(AppError::Validation(
+                    "Chat evidence is limited to customer contact fields",
+                ));
+            }
+        };
+        let mut evidence = evidence.clone();
+        evidence.field = field.into();
+        extraction.evidence.push(evidence);
+    }
+    validate(&extraction, sources)
+}
+
 pub async fn extract(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     let inquiry = drafts::inquiry(state, id).await?;
     let user = inquiry
@@ -115,38 +204,7 @@ pub async fn extract(state: &AppState, id: ObjectId) -> Result<Value, AppError> 
     if snapshot.pending {
         return Err(AppError::DraftWaiting);
     }
-    let mut sources = BTreeMap::new();
-    let mut messages = Vec::new();
-    for event in &snapshot.events {
-        if event.get_bool("withdrawn").unwrap_or(false)
-            || crate::db::oa_sync::source_type(event) != "line_event"
-        {
-            continue;
-        }
-        let Ok(payload) = event.get_document("payload") else {
-            continue;
-        };
-        if payload
-            .get_document("source")
-            .ok()
-            .and_then(|s| s.get_str("userId").ok())
-            != Some(user)
-        {
-            continue;
-        }
-        if let Some(text) = payload
-            .get_document("message")
-            .ok()
-            .and_then(|m| m.get_str("text").ok())
-        {
-            let event_ref = event
-                .get_object_id("_id")
-                .map_err(|_| AppError::Data)?
-                .to_hex();
-            sources.insert(event_ref.clone(), text.to_string());
-            messages.push(json!({"event_ref":event_ref,"text":text}));
-        }
-    }
+    let (messages, sources) = chat_sources(&snapshot, user)?;
     if messages.is_empty() {
         return Ok(
             json!({"fields":Fields::default(),"evidence":[],"conflicts":[],"questions":["ยังไม่พบข้อมูลลูกค้าในข้อความของเรื่องนี้"],"context_hash":snapshot.hash}),

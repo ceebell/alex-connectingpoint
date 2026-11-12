@@ -100,11 +100,13 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   const appRef = useRef<HTMLDivElement>(null);
   const [draftWidth, setDraftWidth] = useState<number | null>(storedDraftWidth);
   const [busy, setBusy] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const latest = drafts[0];
   const working = busy || job?.status === "PENDING" || job?.status === "PROCESSING";
+  const preparingAi = preparing || job?.status === "PENDING" || job?.status === "PROCESSING";
   const current = inquiries.find(inquiry => inquiry._id === selected);
   const submitAllowed = !access || canSubmitOrder(access);
   const manageTeam = !!access && canManageTeam(access);
@@ -118,16 +120,27 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
     const mobile = window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)");
     const editable = 'textarea, select, input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([readonly]), [contenteditable="true"]';
     let frame = 0;
-    const dismiss = (event: globalThis.PointerEvent) => {
-      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")?.querySelector(editable)) return;
+    let pressedEditor: HTMLElement | null = null;
+    const preserve = (event: globalThis.PointerEvent) => {
       const control = document.activeElement;
+      pressedEditor = control instanceof HTMLElement && control.matches(editable) ? control : null;
+      if (!mobile.matches || event.button !== 0 || !pressedEditor || !(event.target instanceof Element)
+        || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")) return;
+      // Preserve the form layout until the tapped action has received its click.
+      if (event.target.closest("button, a[href]")) event.preventDefault();
+    };
+    const dismiss = (event: globalThis.MouseEvent) => {
+      const control = pressedEditor;
+      pressedEditor = null;
+      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")?.querySelector(editable)) return;
       if (!(control instanceof HTMLElement) || !control.matches(editable)) return;
-      // Let the tapped button finish its click before restoring navigation and moving the layout.
+      // A touch click may arrive after pointerup; wait for the click before moving the layout.
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => { if (document.activeElement === control) control.blur(); });
     };
-    document.addEventListener("pointerup", dismiss);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerup", dismiss); };
+    document.addEventListener("pointerdown", preserve, true);
+    document.addEventListener("click", dismiss);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", preserve, true); document.removeEventListener("click", dismiss); };
   }, [session]);
   useEffect(() => {
     const app = appRef.current;
@@ -464,13 +477,13 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   }
 
   async function submit(manual?: Fields, confirm = false) {
-    if (!selected) return;
-    setBusy(true); setError("");
+    if (!selected || working) return;
+    setBusy(true); setPreparing(!manual); setError("");
     try {
       if (!manual) await persistSummary();
       const result = await api<Job>(`/api/inquiries/${selected}/${manual ? "draft" : "prepare"}`, { method: "POST", body: JSON.stringify({ request_id: crypto.randomUUID(), expected_version: version, context_hash: contextHash, summary, image_event_ids: manual ? [] : images, fields: manual ?? null, confirmed_fields: manual && confirm ? filledKeys(manual) : [] }) });
       setJob(result);
-    } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.code === "SUMMARY_CONFLICT") setSummaryConflict(true); if (cause instanceof ApiError && cause.status === 401) setSession(null); } finally { setBusy(false); }
+    } catch (cause) { setError(errorText(cause)); if (cause instanceof ApiError && cause.code === "SUMMARY_CONFLICT") setSummaryConflict(true); if (cause instanceof ApiError && cause.status === 401) setSession(null); } finally { setBusy(false); setPreparing(false); }
   }
 
   // Edit picks up a version that was never sent (the latest one is already the working draft);
@@ -525,7 +538,7 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   if (checking) return <main className="login-page"><p role="status">กำลังตรวจสอบการเข้าสู่ระบบ…</p></main>;
   if (!session) return <main className="login-page"><div className="login-intro"><div className="brand-mark">a<span>•</span></div><p className="eyebrow">ALEX CONNECTING POINT</p><h1>ทุกบทสนทนา<br />สู่ร่างออเดอร์ที่ชัดเจน</h1><p className="muted">พื้นที่ทำงานของแอดมินสำหรับอ่านแชท สรุปความต้องการ<br />และตรวจร่างออเดอร์ก่อนดำเนินการต่อ</p></div><form autoComplete="off" className="login-card" onSubmit={login}><span className="pill">สำหรับทีมแอดมิน</span><h2>เข้าสู่ระบบหลังบ้าน</h2><p className="muted">{loginOptions.line ? "ใช้บัญชี LINE ที่ผู้ดูแลระบบเพิ่มสิทธิ์ไว้" : "ใช้บัญชีที่ผู้ดูแลระบบกำหนดให้"}</p>
     {loginError && <div className="notice warning" role="alert">{loginError}{deniedLineId && <p>ส่ง LINE user ID นี้ให้ผู้ดูแลเพิ่มใน ADMIN_LINE_USER_IDS:<br /><code className="line-id">{deniedLineId}</code></p>}</div>}
-    {loginOptions.line && <a className="button primary full" href="/api/admin/line/start"><span aria-hidden="true">💬</span> เข้าสู่ระบบด้วย LINE</a>}
+    {loginOptions.line && <a className="button line-login full" href="/api/admin/line/start">เข้าสู่ระบบด้วย LINE</a>}
     {loginOptions.line && loginOptions.password && <p className="login-divider muted small">หรือใช้รหัสผ่านสำรอง</p>}
     {loginOptions.password && <><label>ชื่อผู้ใช้<input autoComplete="off" value={username} onChange={e => setUsername(e.target.value)} required /></label><label>รหัสผ่าน<input type="password" autoComplete="off" value={password} onChange={e => setPassword(e.target.value)} required /></label><button className={`button ${loginOptions.line ? "secondary" : "primary"} full`} disabled={loginBusy}>{loginBusy ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่พื้นที่ทำงาน →"}</button></>}
     {!loginOptions.line && !loginOptions.password && <p className="notice warning">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ กรุณาติดต่อผู้ดูแลระบบ</p>}
@@ -565,9 +578,9 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
             <p className="muted small">วันที่ที่ไม่ระบุปีจะใช้ปีปัจจุบันตามเวลาไทย ส่วนวันที่ที่อ่านได้หลายแบบ AI จะถามให้ยืนยัน</p>
             <p className="muted small" role="status">{summaryEdited ? "มีการแก้ไขที่ยังไม่ได้บันทึก" : savedSummary ? `บันทึกแล้ว · ${savedSummary.updated_by} · ${time(savedSummary.updated_at)}` : "ยังไม่ได้บันทึกสรุป"}</p>
             <button type="button" className="button secondary full" disabled={working || summaryConflict || (!!savedSummary && !summaryEdited && !savedSummary.stale && !savedSummary.redacted)} onClick={saveSummary}>บันทึกสรุป</button>
-            <div className="notice soft"><strong>AI ช่วยจัดข้อมูล แอดมินช่วยตรวจความถูกต้อง</strong><p>AI อ่านเฉพาะรูปที่เลือกและสรุปนี้ แล้วค้นสินค้าใน Alex เพื่อเติมข้อมูลให้ ไม่ดึงออเดอร์หรือสินค้าจากแชท ข้อมูลลูกค้าใช้ปุ่มค้นข้อมูลลูกค้าจากแชทแยกต่างหาก</p></div>
+            <div className="notice soft"><strong>AI ช่วยจัดข้อมูล แอดมินช่วยตรวจความถูกต้อง</strong><p>AI เตรียมรายการจากรูปที่เลือกและสรุปนี้ พร้อมเติมชื่อ เบอร์โทร และที่อยู่ที่ลูกค้าระบุล่าสุดในแชท กรุณาตรวจข้อมูลก่อนส่งออเดอร์</p></div>
             {!session.hermes_configured && <div className="notice warning">เซิร์ฟเวอร์ยังไม่ได้ตั้งค่าการเชื่อมต่อ Hermes จึงยังอ่านรูปด้วย AI ไม่ได้ คุณบันทึกสรุปและรูปไว้ก่อนได้</div>}
-            <button className="button primary full" disabled={working || summaryConflict || (!summary.trim() && !images.length) || !session.hermes_configured} onClick={() => submit()}><span aria-hidden="true">✦</span> เตรียมออเดอร์ด้วย AI</button><button className="text-button full" onClick={() => setTab("draft")}>หรือกรอกร่างด้วยมือ →</button>
+            <button className="button primary full" aria-busy={preparingAi} disabled={working || summaryConflict || (!summary.trim() && !images.length) || !session.hermes_configured} onClick={() => submit()}>{preparingAi ? <svg className="ai-loading-stars" viewBox="0 0 24 24" aria-hidden="true">{[[12,3],[20,7.5],[20,16.5],[12,21],[4,16.5],[4,7.5]].map(([x,y], index) => <path key={index} transform={`translate(${x} ${y})`} opacity={0.3 + index * 0.14} d="M0-2.5.7-.7 2.5 0 .7.7 0 2.5-.7.7-2.5 0-.7-.7Z" />)}</svg> : <span aria-hidden="true">✦</span>}<span aria-live="polite">{preparingAi ? "กำลังเตรียมออเดอร์และข้อมูลลูกค้า…" : "เตรียมออเดอร์ด้วย AI"}</span></button><button className="text-button full" onClick={() => setTab("draft")}>หรือกรอกร่างด้วยมือ →</button>
           </>}
           {tab === "draft" && !!latest?.catalog_lookup?.length && <div className="notice info"><p>ค้นสินค้าจากรูปหรือสรุปใน Alex แล้ว ตรงกัน {latest.catalog_lookup.filter(item => item.status === "MATCHED").length}/{latest.catalog_lookup.length} รายการ เลือกจากผลค้นหาแล้วกดเพิ่มลงตะกร้าด้านล่าง</p></div>}
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">แชทหรือสรุปแอดมินมีการเปลี่ยนแปลง ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}

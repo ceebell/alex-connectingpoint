@@ -174,6 +174,73 @@ fn customer_extraction_requires_verbatim_customer_evidence() {
     assert!(customer_extract::validate(&serde_json::from_value(shop).unwrap(), &sources).is_err());
 }
 
+#[test]
+fn draft_customer_context_uses_only_current_inbound_text_and_keeps_message_order() {
+    let message = |user: &str, text: &str, time: i64| {
+        doc! {
+            "_id":ObjectId::new(),"event_at":DateTime::from_millis(time),"sender_role":"customer",
+            "payload":{"type":"message","source":{"userId":user},"message":{"type":"text","text":text}}
+        }
+    };
+    let first = message("Ucurrent", "คุณเอ โทร 0812345678", 1);
+    let latest = message("Ucurrent", "เปลี่ยนเบอร์เป็น 0822222222", 2);
+    let other = message("Uother", "ANOTHER_CUSTOMER", 3);
+    let mut shop = message("Ucurrent", "SHOP_ONLY", 4);
+    shop.insert("source", "alex_push");
+    let mut withdrawn = message("Ucurrent", "WITHDRAWN", 5);
+    withdrawn.insert("withdrawn", true);
+    let mut admin = message("Ucurrent", "ADMIN_ONLY", 6);
+    admin.insert("sender_role", "admin");
+    let mut image = message("Ucurrent", "NOT_A_TEXT_MESSAGE", 7);
+    image
+        .get_document_mut("payload")
+        .unwrap()
+        .get_document_mut("message")
+        .unwrap()
+        .insert("type", "image");
+    let snapshot = drafts::Snapshot {
+        events: vec![first, latest, other, shop, withdrawn, admin, image],
+        hash: String::new(),
+        pending: false,
+    };
+    let (messages, sources) = customer_extract::chat_sources(&snapshot, "Ucurrent").unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(sources.len(), 2);
+    assert!(messages[1]["text"].as_str().unwrap().contains("0822222222"));
+    assert_eq!(messages[1]["event_at"], 2);
+    assert!(
+        customer_extract::chat_sources(&snapshot, "Uabsent")
+            .unwrap()
+            .0
+            .is_empty()
+    );
+}
+
+#[test]
+fn draft_customer_chat_fields_require_verbatim_evidence_and_cannot_supply_order_data() {
+    let sources = std::collections::BTreeMap::from([(
+        "latest".into(),
+        "คุณเอ โทร 0822222222 ที่อยู่ 99 ถนนสุขุมวิท กทม. 10110".into(),
+    )]);
+    let mut result: DraftResult = serde_json::from_value(json!({
+        "fields":{"customer_phone":"0822222222"},"evidence":[{"field":"customer_phone","source_type":"line_event","source_ref":"latest","quote":sources["latest"]}],"conflicts":[],"questions":[]
+    })).unwrap();
+    let images = std::collections::BTreeSet::new();
+    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_ok());
+    result.fields.customer_phone = Some("0899999999".into());
+    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    result.fields.customer_phone = Some("0822222222".into());
+    result.evidence[0].source_ref = "another-inquiry".into();
+    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    result.evidence[0].source_ref = "latest".into();
+    result.evidence[0].field = "items.0.product_code".into();
+    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    // Selected LINE images remain valid order sources; only inbound text is contact-only.
+    result.evidence[0].source_ref = "selected-image".into();
+    let images = std::collections::BTreeSet::from(["line_event:selected-image".into()]);
+    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_ok());
+}
+
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
 async fn abandoned_submission_locks_recover_without_sending_and_keep_history() {
@@ -292,21 +359,37 @@ async fn ai_mock(
         }
         result
     } else {
-        assert_eq!(data["input_scope"], "admin_inputs_only");
+        assert_eq!(data["input_scope"], "admin_inputs_with_customer_chat");
         assert!(data.get("events").is_none());
         assert!(data.get("previous_draft").is_none());
         assert!(!data.to_string().contains("SHOPONLY"));
-        assert!(!data.to_string().contains("0812345678"));
+        assert!(!data["source_texts"].to_string().contains("0812345678"));
+        let contacts = data["customer_messages"].as_array().unwrap();
+        let contact = contacts
+            .iter()
+            .find(|message| message["text"].as_str().unwrap().contains("0812345678"))
+            .unwrap();
+        let correction = contacts.last().unwrap();
+        assert!(correction["text"].as_str().unwrap().contains("0822222222"));
         let refs = data["selected_image_event_refs"].as_array().unwrap();
         let year = data["current_year"].as_u64().unwrap();
         // Items still carry an older prompt's per-item extras; only order-level values are kept.
-        let raw = json!({"items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")}},
+        let raw = json!({"customer_name":"คุณเอ","customer_phone":"0822222222","customer_address":"99 ถนนสุขุมวิท กทม. 10110","items":[{"product_name":"nina","color":"dark brown","size":"M","rental":{"dispatch_date":format!("{year}-11-04")}},
             {"product_name":"Haatiya","color":"Blush Pink","size":"M","notes":"ต้องยืนยันราคาที่ตกลง","rental":{"pickup_date":format!("{year}-11-12"),"return_date":format!("{year}-11-15")}}],
             "rental":{"return_date":format!("{year}-11-15"),"fulfillment_method":"delivery","delivery_provider":"Flash"},
             "amounts":{"rental_fee_satang":55000,"shipping_fee_satang":4000},"notes":"เข็มกลัดดอกไม้; รับชุด 5,6 ต้องยืนยันวันที่"});
         let fields: DraftFields = serde_json::from_value(raw.clone()).unwrap();
         let mut evidence = Vec::new();
         for key in fields.values().keys() {
+            if key.starts_with("customer_") {
+                let message = if key == "customer_phone" {
+                    correction
+                } else {
+                    contact
+                };
+                evidence.push(json!({"field":key,"source_type":"line_event","source_ref":message["event_ref"],"quote":message["text"]}));
+                continue;
+            }
             let index = if key.starts_with("items.1.") { 1 } else { 0 };
             evidence.push(json!({"field":key,"source_type":"admin_attachment","source_ref":refs[index],"quote":"ข้อความบนรูปสรุป"}));
         }
@@ -397,6 +480,13 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
         Err(crate::error::AppError::ContextChanged)
     ));
     mock.mode.store(0, Ordering::SeqCst);
+    text_event(
+        &state,
+        "latest-contact-phone",
+        "แก้เบอร์โทรเป็น 0822222222 ค่ะ ที่อยู่เดิม",
+        3,
+    )
+    .await;
     let png=STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yZf8AAAAASUVORK5CYII=").unwrap();
     let upload_path = format!("/api/inquiries/{id}/draft-images");
     let mut ids = Vec::new();
@@ -483,6 +573,23 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     .unwrap();
     let year = request["current_year"].as_u64().unwrap();
     let fields = &saved[0]["result"]["fields"];
+    assert_eq!(fields["customer_name"], "คุณเอ");
+    assert_eq!(fields["customer_phone"], "0822222222");
+    assert_eq!(fields["customer_address"], "99 ถนนสุขุมวิท กทม. 10110");
+    assert_eq!(saved[0]["input_scope"], "admin_inputs_with_customer_chat");
+    let contact_evidence = saved[0]["result"]["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["field"].as_str().unwrap().starts_with("customer_"))
+        .collect::<Vec<_>>();
+    assert_eq!(contact_evidence.len(), 3);
+    assert!(
+        contact_evidence
+            .iter()
+            .all(|item| item["source_type"] == "line_event")
+    );
+    assert!(all(&state, "customer_profiles").await.is_empty());
     assert!(fields["items"][0].get("rental").is_none());
     assert!(fields["items"][1].get("notes").is_none());
     // Unstated quantities default to one instead of becoming a question.

@@ -3,6 +3,35 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-12 18:55 — แสดงพวงดาวหมุนระหว่างเตรียมออเดอร์และเติมข้อมูลลูกค้าจากแชทล่าสุด
+- **คำอธิบาย:** ผู้ใช้ขอให้ปุ่มเตรียมออเดอร์ด้วย AI แสดงพวงดาวหมุนระหว่างโหลด และเติมข้อมูลลูกค้าจากแชทล่าสุดไปพร้อมกัน ระบบแสดงสถานะตั้งแต่บันทึกสรุปจนงาน AI สิ้นสุด พร้อมนำชื่อผู้รับ เบอร์โทร และที่อยู่จากข้อความลูกค้าใน inquiry ปัจจุบันมาใส่ร่างโดยมีข้อความอ้างอิงให้แอดมินตรวจ
+- **โฟลเดอร์ `frontend/src/components/`, `frontend/src/app/`**
+  - `admin-workspace.tsx` — แก้: เพิ่มพวงดาว SVG 6 ดวง ข้อความกำลังเตรียมออเดอร์และข้อมูลลูกค้า และ aria-busy/live ระหว่างส่งคำขอ/PENDING/PROCESSING ป้องกันกดซ้ำและหยุดแสดงเมื่อสำเร็จหรือล้มเหลว; อัปเดตคำอธิบายให้ตรงกับการอ่านข้อมูลลูกค้าอัตโนมัติ; รักษาโฟกัสช่องกรอกชั่วคราวระหว่าง pointerdown ของปุ่มบนมือถือ แล้วพับคีย์บอร์ดหลัง click เพื่อป้องกันการคืนเมนูจนปุ่มเลื่อนก่อนรับคลิก โดยไม่ blur ช่องใหม่ที่ action เพิ่งเปิด
+  - `globals.css` — เพิ่ม: animation หมุนพวงดาวด้วย currentColor ขนาด 24px และหยุด animation ตาม prefers-reduced-motion โดยคงข้อความสถานะไว้ คงปุ่ม LINE สีเขียวจากงานก่อน
+- **โฟลเดอร์ `backend/src/`**
+  - `customer_extract.rs` — แก้: แยกตัวคัดข้อความลูกค้าจาก snapshot ใช้ร่วมกับปุ่มค้นข้อมูลลูกค้าเดิมและการเตรียมร่าง เลือกเฉพาะข้อความ text ที่ส่งโดย LINE user ของ inquiry ไม่ใช้ข้อความร้าน/แอดมิน/คนอื่น/ข้อความที่ถูก unsend และคงลำดับเวลา; ตรวจ contact evidence ว่าค่าที่เติมอยู่ในข้อความอ้างอิงจริง ปฏิเสธการอ้างข้อความแชทเพื่อเติมข้อมูลสินค้า วันที่ ราคา หรือฟิลด์อื่น แต่ยังรับหลักฐานรูป LINE ที่แอดมินเลือกได้
+  - `draft_worker.rs`, `order_draft_prompt.txt` — แก้: ส่ง customer_messages ของ inquiry ปัจจุบันพร้อม event_ref/เวลาในคำขอ AI เดียวกับรูปและสรุป โดยกำหนดให้แชทใช้กับ customer_name/customer_phone/customer_address เท่านั้น เลือกค่าหรือคำแก้ไขล่าสุดของลูกค้า ไม่เดาชื่อจาก LINE display name หรือโปรไฟล์เก่า ไม่ให้คำแก้เบอร์ลบชื่อและที่อยู่เดิม; ตรวจหลักฐานก่อน normalize และเก็บในร่าง ใช้ input_scope admin_inputs_with_customer_chat สำหรับ AI ส่วนร่างกรอกมือยังใช้ admin_inputs_only; คงการตรวจ context/summary/สิทธิ์ก่อน commit ไม่เขียนทับโปรไฟล์ลูกค้าหรือสร้างออเดอร์ภายนอกอัตโนมัติ
+  - `tests_rental.rs` — เพิ่มและแก้: ทดสอบคัดข้อความเฉพาะลูกค้าที่เลือกตามลำดับเวลา ปฏิเสธค่าที่ไม่มีใน quote/คนละ source และข้อความที่ใช้กับข้อมูลออเดอร์ผิดขอบเขต; integration เตรียมร่างจากรูปพร้อมชื่อ/ที่อยู่เดิมและเบอร์ที่ลูกค้าแก้ล่าสุด โดยยืนยัน evidence ครบและไม่เขียน customer_profiles
+  - `tests_draft_catalog.rs` — แก้: fixtures ตรวจ scope ใหม่ โดยแยกข้อความลูกค้าสำหรับข้อมูลติดต่อออกจาก source ของการเลือกสินค้าและไม่ดึงข้อมูลร่างเก่า
+- **โฟลเดอร์ `docs/`**
+  - `image-rental-billing.md` — แก้: คู่มือพวงดาว สถานะโหลด การเติมข้อมูลลูกค้าอัตโนมัติ การใช้ค่าที่แก้ล่าสุด ข้อความอ้างอิง และปุ่มค้นข้อมูลซ้ำ
+- **โฟลเดอร์ `dist/`**
+  - `line-linux/` — build Linux/amd64 บน local: `rel-20261112114054-b5fb7834e06f` พร้อม binary/checksum/metadata
+  - `frontend-linux/` — build Linux/amd64 standalone บน local: `front-20261112115259-fb26d063a7e0` พร้อม static/runtime/public/checksum/metadata
+- **ผลตรวจสอบ:** cargo fmt --check และ cargo clippy --all-targets -- -D warnings ผ่าน; cargo test -- --include-ignored ผ่าน 57/57 ด้วย MongoDB ชั่วคราวและ mock LINE/Alex/Hermes; frontend lint/TypeScript/build ผ่าน และ npm test ผ่าน 24/24; Chrome/WebKit desktop และมือถือ 375x667 รวม 4 กรณีผ่าน ครอบคลุมแตะปุ่มขณะช่องสรุปยังโฟกัส พวงดาวระหว่างบันทึก/ส่ง/รอคิว/PROCESSING การหมุนจริง reduced motion ป้องกันส่งซ้ำ ฟิลด์ลูกค้าครบ การหยุดเมื่อ DONE/FAILED/HTTP error และกดใหม่ได้; regression การแจ้งเตือนกับ focus ทุกฟอร์มเดิมอีก 10 กรณีผ่าน; ตรวจ checksum frontend 2,110 ไฟล์และ backend ตรง metadata, build_location local/platform linux/amd64 และไม่มี .env ใน release; git diff --check เฉพาะไฟล์ที่แก้ผ่าน
+- **ขอบเขตและขั้นตอนถัดไป:** ไม่ได้เรียก AI/LINE/Alex จริงหรือทดสอบ iPhone เครื่องจริง; ลบ MongoDB ชั่วคราวที่ใช้ทดสอบแล้ว ภาพและตัวตรวจอยู่ใน data/ai-order-check/ ที่ถูก ignore; ไม่แก้ไฟล์ prompts ของผู้ใช้และคงรายการแก้จากงานก่อน; ยังไม่ commit/push/deploy ผู้ใช้รัน rungit.bat "Add AI loading stars and latest chat customer details" บน Windows แล้วบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main
+
+## 2026-11-12 17:47 — เปลี่ยนปุ่มเข้าสู่ระบบ LINE เป็นสีเขียวและเอาไอคอนออก
+- **คำอธิบาย:** ผู้ใช้ขอให้ปุ่มเข้าสู่ระบบด้วย LINE บนหน้าล็อกอินเป็นสีเขียวและมีเฉพาะข้อความตรงกลาง ปรับเฉพาะปุ่มนี้ตาม design system เดิม
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `admin-workspace.tsx` — แก้: ใช้ class line-login แทน primary และลบไอคอนหน้าข้อความ คงลิงก์ /api/admin/line/start และข้อความเดิม
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `globals.css` — เพิ่ม: ปุ่มสีเขียวจาก semantic token success-ink ข้อความสีขาว พร้อม hover สีเข้มขึ้นและ focus ring สำหรับการใช้คีย์บอร์ด
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone/static/runtime/checksum/metadata — build บน local ด้วย build-frontend.bat: `front-20261112104529-6b3ef15815ec`
+- **ผลตรวจสอบ:** npm run lint และ TypeScript ผ่าน; local Linux frontend lint/build ผ่าน; ตรวจ Chrome และ WebKit อย่างละ desktop/มือถือรวม 4 กรณีผ่าน สีปกติ/hover ข้อความไม่มีไอคอน การจัดกึ่งกลาง focus ring ขอบหน้าจอและ href ถูกต้อง; ตรวจ checksum ครบ 2,110 ไฟล์และ metadata build_location local/platform linux/amd64 ผ่าน; git diff --check ผ่าน ภาพตรวจอยู่ใน data/login-button-preview/ ที่ถูก ignore ไม่เพิ่ม automated test สำหรับการปรับหน้าตาขนาดเล็กนี้
+- **ขั้นตอนถัดไป:** ผู้ใช้รัน rungit.bat "Make LINE login button green without icon" จากนั้นบน Ubuntu รัน cd ~/alex-connectingpoint และ bash ./deploy-all.sh main; ยังไม่ commit/push/deploy และไม่มีการเปลี่ยน backend
+
 ## 2026-11-10 22:57 — เพิ่มระบบเชิญพนักงานและจัดการสิทธิ์ร้าน Arisa Rental
 - **คำอธิบาย:** ทำระบบตามแบบที่ผู้ใช้อนุมัติ เจ้าของร้านสร้างคำเชิญอายุ 24 ชั่วโมงเป็นลิงก์หรือ QR พนักงานยืนยัน LINE และรับคำเชิญก่อนรอเจ้าของร้านตรวจบัญชีแล้วอนุมัติ กำหนดบทบาท/สาขา แก้ชื่อทำงาน ระงับหรือคืนสิทธิ์ และดูประวัติผู้ดำเนินการพร้อมวันเวลาได้ ผู้ใช้ยืนยันให้ LINE user ID ที่เข้าได้ปัจจุบันเป็นเจ้าของร้าน จึงย้ายรายการ ADMIN_LINE_USER_IDS เดิมเพียงครั้งเดียว ไม่ให้ผู้สมัครใหม่หรือการเพิ่ม env ภายหลังกลายเป็นเจ้าของร้านอัตโนมัติ
 - **โฟลเดอร์ `backend/src/models/`, `backend/src/db/`**
