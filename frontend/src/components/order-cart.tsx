@@ -3,6 +3,8 @@
 import { KeyboardEvent, useEffect, useState } from "react";
 import { api, ApiError, Attachment, Availability, Candidate, CartItem, codeLabel, CodeName, Draft, DraftItem, errorText, findCode, LineEvent } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import { brandLabel, matchBrand } from "@/lib/brand-matching";
+import BrandCombobox from "./brand-combobox";
 
 type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
@@ -66,6 +68,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   const [size, setSize] = useState(items[0]?.size ?? "");
   // Alex stores the brand, e.g. "Haatiya", in its category code list.
   const [category, setCategory] = useState("");
+  const [categoryText, setCategoryText] = useState("");
   const [categories, setCategories] = useState<CodeName[]>([]);
   const [texture, setTexture] = useState("");
   const [image, setImage] = useState("");
@@ -81,7 +84,14 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   function keep(value: { items: CartItem[] }) { setCart(value.items); onCart(value.items); }
-  function show(search: Search) { setResult(search); setCategory(search.category ?? ""); setColor(search.color ?? ""); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
+  function show(search: Search) { setResult(search); setChoices(search.candidates.map(candidate => ({ ...candidate, search_id: search.search_id }))); }
+  function fillRequest(item: DraftItem | undefined, listed: CodeName[], shopColors: CodeName[], search?: Search) {
+    const brand = matchBrand(item?.category, listed) ?? listed.find(option => option.code === search?.category);
+    const code = item?.product_code?.trim(), name = item?.product_name?.trim();
+    setMode(code ? "code" : "text"); setQuery(code || name || search?.query || "");
+    setCategory(brand?.code ?? search?.category ?? ""); setCategoryText(brand ? brandLabel(brand) : item?.category?.trim() || search?.category || "");
+    setColor(findCode(item?.color, shopColors) || search?.color || ""); setSize(item?.size?.trim() || search?.size || ""); setTexture(""); setImage("");
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -94,10 +104,9 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
     ]).then(([settings, cart, found, listed, shopColors]) => {
       if (cancelled) return;
       setSettings(settings); setCart(cart.items); onCart(cart.items); setCategories(listed.categories); setColors(shopColors.colors);
-      setCategory(findCode(items[0]?.category, listed.categories)); setColor(findCode(items[0]?.color, shopColors.colors));
-      const usable = (found.suggestions ?? []).filter(suggestion => suggestion.search?.candidates.length);
       setSuggestions(found.suggestions ?? []);
-      const first = usable[0]?.search;
+      const first = (found.suggestions ?? []).find(suggestion => suggestion.item_index === 0)?.search;
+      fillRequest(items[0], listed.categories, shopColors.colors, first);
       setBranch(first?.branch_id ?? (settings.branches.length === 1 ? settings.branches[0].id : ""));
       if (first) show(first);
     }).catch(cause => { if (!cancelled) fail(cause); }).finally(() => { if (!cancelled) setLoading(false); });
@@ -105,8 +114,8 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   }, [inquiryId, draft?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function pickRequest(item: DraftItem, index: number) {
-    const suggestion = suggestions.find(value => value.item_index === index && value.search?.candidates.length);
-    setMode(item.product_code ? "code" : "text"); setQuery(item.product_code ?? item.product_name ?? ""); setCategory(findCode(item.category, categories)); setColor(findCode(item.color, colors)); setSize(item.size ?? ""); setError("");
+    const suggestion = suggestions.find(value => value.item_index === index);
+    fillRequest(item, categories, colors, suggestion?.search); setError("");
     if (suggestion?.search) { setBranch(suggestion.search.branch_id); show(suggestion.search); } else { setResult(null); setChoices([]); }
   }
 
@@ -153,7 +162,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
         <label>ค้นหาจาก<select autoComplete="off" value={mode} disabled={working} onChange={e => setMode(e.target.value as Mode)}><option value="text">ชื่อหรือคำบรรยาย</option><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้า</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากแชท/รูปแนบ</option></select></label>
         {mode === "image" ? <label>รูปอ้างอิง<select autoComplete="off" value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {formatDateTime(image.event_at)}</option>)}</select></label>
           : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input autoComplete="off" maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในแบรนด์/สาขา" : "เช่น 0291FRLDBRM"} /></label>}
-        <label className="span-2">แบรนด์<select autoComplete="off" value={category} disabled={working} onChange={e => setCategory(e.target.value)}><option value="">ทุกแบรนด์</option>{categories.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{category && !categories.some(value => value.code === category) && <option value={category}>{category}</option>}</select></label>
+        <BrandCombobox options={categories} value={category} query={categoryText} disabled={working} onQuery={text => { setCategoryText(text); setCategory(""); setResult(null); setChoices([]); }} onSelect={option => { setCategory(option?.code ?? ""); setCategoryText(option ? brandLabel(option) : ""); setResult(null); setChoices([]); }} />
         <label>สี<select autoComplete="off" value={color} disabled={working} onChange={e => setColor(e.target.value)}><option value="">ทุกสี</option>{colors.map(value => <option key={value.code} value={value.code}>{value.name} ({value.code})</option>)}{color && !colors.some(value => value.code === color) && <option value={color}>{color}</option>}</select></label>
         <label>ไซซ์<input autoComplete="off" maxLength={200} value={size} disabled={working} onKeyDown={enter} onChange={e => setSize(e.target.value)} placeholder="เช่น M" /></label>
       </div>

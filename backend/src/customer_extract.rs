@@ -151,10 +151,77 @@ pub(crate) fn chat_sources(
     Ok((messages, sources))
 }
 
-// Chat may supply contact fields only; order data still needs a summary or selected image.
-pub(crate) fn validate_draft_contacts(
+fn size_token(text: &str, size: &str) -> bool {
+    let (text, size) = (text.to_uppercase(), size.to_uppercase());
+    !size.is_empty()
+        && text.match_indices(&size).any(|(start, _)| {
+            text[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|character| !character.is_ascii_alphanumeric())
+                && text[start + size.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|character| !character.is_ascii_alphanumeric())
+        })
+}
+
+pub(crate) fn size_chat_sources(
+    snapshot: &Snapshot,
+    user: &str,
+) -> Result<(Vec<Value>, BTreeMap<String, String>), AppError> {
+    let (_, incoming) = chat_sources(snapshot, user)?;
+    let mut messages = vec![];
+    let mut sources = BTreeMap::new();
+    for event in &snapshot.events {
+        if event.get_bool("withdrawn").unwrap_or(false) {
+            continue;
+        }
+        let kind = crate::db::oa_sync::source_type(event);
+        let id = event
+            .get_object_id("_id")
+            .map_err(|_| AppError::Data)?
+            .to_hex();
+        if !(kind == "line_event" && incoming.contains_key(&id)
+            || ["oa_message", "admin_message"].contains(&kind))
+        {
+            continue;
+        }
+        let Some(message) = event
+            .get_document("payload")
+            .ok()
+            .and_then(|payload| payload.get_document("message").ok())
+        else {
+            continue;
+        };
+        if message.get_str("type").ok() != Some("text") {
+            continue;
+        }
+        let Ok(text) = message.get_str("text") else {
+            continue;
+        };
+        if !["size", "ไซซ์", "ไซส์", "ขนาด", "ฟรีไซ"]
+            .iter()
+            .any(|word| text.to_lowercase().contains(word))
+            && ![
+                "XS", "S", "M", "L", "XL", "XXL", "XXXL", "2XL", "3XL", "4XL", "FREESIZE",
+            ]
+            .iter()
+            .any(|size| size_token(text, size))
+        {
+            continue;
+        }
+        sources.insert(format!("{kind}:{id}"), text.to_string());
+        messages.push(json!({"event_ref":id,"source_type":kind,"sender_role":if kind=="line_event"{"customer"}else{"admin"},"event_at":event.get_datetime("event_at").ok().map(|time|time.timestamp_millis()),"text":text}));
+    }
+    Ok((messages, sources))
+}
+
+// Chat may supply contacts and agreed item sizes, while other order fields need admin inputs.
+pub(crate) fn validate_draft_chat(
     result: &DraftResult,
     sources: &BTreeMap<String, String>,
+    size_sources: &BTreeMap<String, String>,
     images: &BTreeSet<String>,
 ) -> Result<(), AppError> {
     let mut extraction = Extraction {
@@ -164,10 +231,40 @@ pub(crate) fn validate_draft_contacts(
         questions: vec![],
     };
     for evidence in &result.evidence {
-        if evidence.source_type != "line_event"
-            || images.contains(&format!("line_event:{}", evidence.source_ref))
+        let key = format!("{}:{}", evidence.source_type, evidence.source_ref);
+        if !["line_event", "oa_message", "admin_message"].contains(&evidence.source_type.as_str())
+            || images.contains(&key)
         {
             continue;
+        }
+        if let Some(index) = evidence
+            .field
+            .strip_prefix("items.")
+            .and_then(|field| field.strip_suffix(".size"))
+            .and_then(|index| index.parse::<usize>().ok())
+        {
+            let size = result
+                .fields
+                .items
+                .get(index)
+                .and_then(|item| item.size.as_deref())
+                .ok_or(AppError::Validation("Chat size needs an item value"))?;
+            if evidence.quote.is_empty()
+                || !size_sources
+                    .get(&key)
+                    .is_some_and(|source| normalized(source).contains(&normalized(&evidence.quote)))
+                || !size_token(&evidence.quote, size)
+            {
+                return Err(AppError::Validation(
+                    "Item size must quote a supplied size message",
+                ));
+            }
+            continue;
+        }
+        if evidence.source_type != "line_event" {
+            return Err(AppError::Validation(
+                "Admin chat may only supply an agreed size",
+            ));
         }
         let field = match evidence.field.as_str() {
             "customer_name" => {

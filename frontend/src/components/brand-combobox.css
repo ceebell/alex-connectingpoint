@@ -1,0 +1,16 @@
+.brand-field { min-width: 0; grid-column: 1 / -1; display: flex; flex-direction: column; gap: 5px; }
+.brand-combobox { position: relative; }
+.brand-combobox input { width: 100%; padding-right: 92px; }
+.brand-combobox button { position: absolute; top: 0; bottom: 0; width: 44px; min-height: 44px; border: 0; background: transparent; color: #475569; padding: 0; display: grid; place-items: center; }
+.brand-combobox .brand-toggle { right: 0; }
+.brand-combobox .brand-clear { right: 44px; font-size: 22px; }
+.brand-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.brand-hint { font-size: 12px; color: var(--muted); }
+.brand-options { z-index: 1000; overflow-y: auto; overscroll-behavior: contain; background: white; border: 1px solid #bfdbfe; border-radius: 10px; box-shadow: 0 8px 24px #0f172a20; padding: 4px; }
+.brand-options button { display: block; width: 100%; min-height: 44px; border: 0; padding: 10px 12px; border-radius: 6px; background: white; text-align: left; color: #0f172a; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.brand-options button:hover, .brand-options .is-highlighted, .brand-options button[aria-selected="true"] { background: #eff6ff; color: #1d4ed8; }
+.brand-options p { padding: 12px; color: #64748b; font-size: 12px; }
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
+  .brand-options button { font-size: 15px; }
+  .brand-hint, .brand-options p { font-size: 13px; }
+}

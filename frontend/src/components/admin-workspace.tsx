@@ -132,7 +132,9 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
     const dismiss = (event: globalThis.MouseEvent) => {
       const control = pressedEditor;
       pressedEditor = null;
-      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")?.querySelector(editable)) return;
+      if (!mobile.matches || !(event.target instanceof Element)
+        || event.composedPath().some(node => node instanceof Element && node.hasAttribute("data-editor-popup"))
+        || event.target.closest(`${editable}, .reply-box`) || event.target.closest("label")?.querySelector(editable)) return;
       if (!(control instanceof HTMLElement) || !control.matches(editable)) return;
       // A touch click may arrive after pointerup; wait for the click before moving the layout.
       cancelAnimationFrame(frame);
@@ -606,16 +608,16 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
         </>}{current?.line_user_id && <div hidden={tab !== "notes"}><CustomerNotes key={current.line_user_id} userId={current.line_user_id} active={tab === "notes"} onUnauthorized={() => setSession(null)} /></div>}{selected && !current?.line_user_id && tab === "notes" && <p className="muted small">ยังไม่พบลูกค้า LINE สำหรับบันทึกโน้ต</p>}</div>
       </section></div>
       <nav className="mobile-workspace-nav" aria-label="พื้นที่ทำงานบนมือถือ">
-        <button type="button" aria-controls="mobile-inquiries" aria-pressed={mobilePanel === "inquiries"} onClick={() => setMobilePanel("inquiries")}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m3 10v-2a6 6 0 0 0-3-5" /></svg>
-          <span>ลูกค้า <small>{inquiries.length}</small></span>
+        <button type="button" aria-label={`ลูกค้า ${inquiries.length} คน`} aria-controls="mobile-inquiries" aria-pressed={mobilePanel === "inquiries"} onClick={() => setMobilePanel("inquiries")}>
+          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" /><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m3 10v-2a6 6 0 0 0-3-5" /></svg><small className="mobile-nav-count">{inquiries.length > 99 ? "99+" : inquiries.length}</small></span>
+          <span>ลูกค้า</span>
         </button>
         <button type="button" aria-controls="mobile-chat" aria-pressed={mobilePanel === "chat"} disabled={!selected} onClick={() => setMobilePanel("chat")}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /><path d="M7 10h10M7 14h6" /></svg>
+          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" /><circle cx="8" cy="11.5" r=".6" /><circle cx="12.5" cy="11.5" r=".6" /><circle cx="17" cy="11.5" r=".6" /></svg></span>
           <span>แชท</span>
         </button>
         <button type="button" aria-controls="mobile-draft" aria-pressed={mobilePanel === "draft"} disabled={!selected} onClick={() => setMobilePanel("draft")}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg>
+          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg></span>
           <span>ออเดอร์</span>
         </button>
       </nav>

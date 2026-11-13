@@ -136,7 +136,6 @@ fn fill(result: &mut DraftResult, index: usize, candidate: &Candidate) -> Vec<(S
             Some(candidate.name.clone()),
         ),
         ("color", &mut item.color, catalog_color),
-        ("size", &mut item.size, candidate.size.clone()),
     ] {
         if let Some(value) = value {
             *target = Some(value.clone());
@@ -211,6 +210,12 @@ pub async fn enrich(
     let mut colors: Option<Vec<CodeName>> = None;
     for index in 0..result.fields.items.len() {
         let mut item = result.fields.items[index].clone();
+        if item.size.is_none() {
+            question(
+                result,
+                format!("ยังไม่พบไซซ์ที่ตกลงสำหรับรายการ {} กรุณายืนยันกับลูกค้า", index + 1),
+            );
+        }
         // A poster title names a brand: resolve its Alex category code before searching.
         let category = if let Some(name) = item.category.clone() {
             if categories.is_none() {

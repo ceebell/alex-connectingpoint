@@ -204,12 +204,18 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             &snapshot,
             inquiry.get_str("line_user_id").unwrap_or(""),
         )?;
+        let (size_messages, size_sources) = crate::customer_extract::size_chat_sources(
+            &snapshot,
+            inquiry.get_str("line_user_id").unwrap_or(""),
+        )?;
         let reference = *job.get_datetime("created_at").map_err(|_| AppError::Data)?;
         let mut parts = vec![json!({"type":"text","text":serde_json::to_string(&json!({
             "inquiry_ref":inquiry_id.to_hex(), "summary_ref":job_id.to_hex(), "admin_summary":input.summary,
             "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
             "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_with_customer_chat",
             "customer_messages":customer_messages,
+            "size_messages":size_messages,
+            "admin_summary_time_ms":inquiry.get_document("working_summary").ok().filter(|summary|summary.get_str("text").ok()==Some(input.summary.as_str())).and_then(|summary|summary.get_datetime("updated_at").ok()).copied().unwrap_or(reference).timestamp_millis(),
             "selected_image_event_refs":input.image_event_ids,
             "source_texts":sources,
             "fields_schema_example":crate::models::draft::DraftFields::default()
@@ -250,12 +256,18 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         let mut result: DraftResult =
             serde_json::from_value(raw).map_err(|_| AppError::HermesFailed)?;
         result.drop_retired_evidence();
-        crate::customer_extract::validate_draft_contacts(&result, &customer_sources, &images)?;
+        crate::customer_extract::validate_draft_chat(
+            &result,
+            &customer_sources,
+            &size_sources,
+            &images,
+        )?;
         sources.extend(
             customer_sources
                 .into_iter()
                 .map(|(id, text)| (format!("line_event:{id}"), text)),
         );
+        sources.extend(size_sources);
         result
     };
     validate_evidence(&result, &sources, &images)?;

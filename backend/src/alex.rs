@@ -345,19 +345,102 @@ pub fn find_color<'a>(colors: &'a [CodeName], wanted: &str) -> Option<&'a CodeNa
 
 // Matches a name read from an image or summary to a category, by name first and then by code.
 pub fn find_category<'a>(categories: &'a [CodeName], wanted: &str) -> Option<&'a CodeName> {
-    let wanted = wanted.split_whitespace().collect::<Vec<_>>().join(" ");
-    let same = |value: &str| {
-        value
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase()
-            == wanted.to_lowercase()
-    };
-    categories
+    let mut ranked: Vec<_> = categories
         .iter()
-        .find(|category| same(&category.name))
-        .or_else(|| categories.iter().find(|category| same(&category.code)))
+        .map(|category| (category, category_score(wanted, category)))
+        .filter(|(_, score)| *score >= 88.0)
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let (first, score) = ranked.first()?;
+    if ranked.get(1).is_some_and(|(_, next)| {
+        if *score == 100.0 {
+            *next == 100.0
+        } else {
+            score - next < 5.0
+        }
+    }) {
+        return None;
+    }
+    Some(first)
+}
+
+fn category_text(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || ('\u{0e00}'..='\u{0e7f}').contains(&character) {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn category_score(written: &str, category: &CodeName) -> f64 {
+    let (wanted, name, code) = (
+        category_text(written),
+        category_text(&category.name),
+        category_text(&category.code),
+    );
+    if wanted.is_empty() {
+        return 0.0;
+    }
+    let leading = written
+        .split(['-', '–', '—', '|', '/'])
+        .next()
+        .map(category_text)
+        .unwrap_or_default();
+    if wanted == name
+        || wanted == code
+        || wanted == category_text(&format!("{} {}", category.name, category.code))
+        || leading == name
+    {
+        return 100.0;
+    }
+    if name.chars().count() >= 3 && format!(" {wanted} ").contains(&format!(" {name} ")) {
+        return 88.0
+            + (6.0 * name.split_whitespace().count().saturating_sub(1) as f64).min(6.0)
+            + (3.0 * name.len() as f64 / wanted.len() as f64).min(3.0);
+    }
+    // A prefix alone is a suggestion, not a confident automatic selection.
+    if name.contains(&wanted) || code.starts_with(&wanted) {
+        return 0.0;
+    }
+    let prefix = wanted
+        .split_whitespace()
+        .take(name.split_whitespace().count())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let similarity = [&wanted, &leading, &prefix]
+        .into_iter()
+        .filter(|text| text.chars().count() >= 4)
+        .map(|text| {
+            let left: Vec<_> = text.chars().take(160).collect();
+            let right: Vec<_> = name.chars().collect();
+            let mut row: Vec<usize> = (0..=right.len()).collect();
+            for (i, a) in left.iter().enumerate() {
+                let mut next = vec![i + 1];
+                for (j, b) in right.iter().enumerate() {
+                    next.push(
+                        (next[j] + 1)
+                            .min(row[j + 1] + 1)
+                            .min(row[j] + usize::from(a != b)),
+                    );
+                }
+                row = next;
+            }
+            1.0 - row[right.len()] as f64 / left.len().max(right.len()).max(1) as f64
+        })
+        .fold(0.0, f64::max);
+    if similarity >= 0.78 {
+        90.0 + similarity * 8.0
+    } else {
+        0.0
+    }
 }
 
 pub async fn search_page(
@@ -557,6 +640,45 @@ mod tests {
         assert_eq!(find_category(&list, "nina dress").unwrap().code, "NN");
         assert_eq!(find_category(&list, "ht").unwrap().name, "Haatiya");
         assert!(find_category(&list, "Haati").is_none());
+    }
+
+    #[test]
+    fn brand_titles_and_minor_typos_resolve_without_guessing_ambiguous_names() {
+        let list = vec![
+            CodeName {
+                code: "BG".into(),
+                name: "Blush Garden".into(),
+            },
+            CodeName {
+                code: "B".into(),
+                name: "Blush".into(),
+            },
+            CodeName {
+                code: "HT".into(),
+                name: "Haatiya".into(),
+            },
+        ];
+        for written in [
+            "Blush Garden - Long Dress 20",
+            "Blush Gardem - Long Dress 20",
+            "Blush Garden (BG)",
+        ] {
+            assert_eq!(find_category(&list, written).unwrap().code, "BG");
+        }
+        assert_eq!(find_category(&list, "Hatiya").unwrap().code, "HT");
+        assert!(find_category(&list, "Haati").is_none());
+        assert!(find_category(&list, "zzzzzz").is_none());
+        let ambiguous = vec![
+            CodeName {
+                code: "A".into(),
+                name: "Garden".into(),
+            },
+            CodeName {
+                code: "B".into(),
+                name: "Gardan".into(),
+            },
+        ];
+        assert!(find_category(&ambiguous, "Gardun").is_none());
     }
 
     #[test]

@@ -36,6 +36,9 @@ async fn catalog(
     calls.push(json!({"operation":"catalog","body":body}));
     drop(calls);
     let mode = flow.mode.load(Ordering::SeqCst);
+    if mode >= 11 {
+        assert_eq!(body["category"], "HT");
+    }
     if mode == 7 {
         flow.started.notify_one();
         flow.resume.notified().await;
@@ -116,6 +119,20 @@ async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Valu
     if flow.mode.load(Ordering::SeqCst) == 4 {
         fields.amounts.rental_fee_satang = None;
     }
+    let mode = flow.mode.load(Ordering::SeqCst);
+    if mode >= 11 {
+        fields.items[0].category = Some(
+            if mode == 11 {
+                "Haatiya - Long Dress 20"
+            } else {
+                "Haatiyq"
+            }
+            .into(),
+        );
+        if mode == 14 {
+            fields.items[0].size = None;
+        }
+    }
     if [8, 9, 10].contains(&flow.mode.load(Ordering::SeqCst)) {
         fields.items[0].product_name =
             (flow.mode.load(Ordering::SeqCst) == 10).then(|| "Lyn Dress".into());
@@ -130,11 +147,22 @@ async fn extract(State(flow): State<Flow>, Json(body): Json<Value>) -> Json<Valu
         .as_array()
         .unwrap()
         .first();
-    let evidence: Vec<Value> = fields.values().keys().map(|field| json!({
+    let mut evidence: Vec<Value> = fields.values().keys().map(|field| json!({
         "field":field,"source_type":if image.is_some(){"admin_attachment"}else{"admin_summary"},
         "source_ref":image.unwrap_or(&data["summary_ref"]),
         "quote":if image.is_some(){json!("visible booking summary")}else{data["admin_summary"].clone()}
     })).collect();
+    if mode == 13 {
+        let final_size = data["size_messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["text"].as_str().unwrap().contains("ADMIN_FINAL"))
+            .unwrap();
+        assert_eq!(final_size["sender_role"], "admin");
+        evidence.retain(|entry| entry["field"] != "items.0.size");
+        evidence.push(json!({"field":"items.0.size","source_type":final_size["source_type"],"source_ref":final_size["event_ref"],"quote":final_size["text"]}));
+    }
     let content =
         json!({"fields":fields,"evidence":evidence,"conflicts":[],"questions":[]}).to_string();
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":content}}]}))
@@ -392,6 +420,55 @@ async fn poster_titles_are_searched_as_alex_categories_by_code() {
                         .contains("ไม่พบแบรนด์ Unknown line"))
             );
         }
+        state.db.drop().await.unwrap();
+        server.abort();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB; run cargo test -- --ignored"]
+async fn fuzzy_brands_and_confirmed_chat_sizes_reach_catalog_filters_without_size_defaults() {
+    for mode in [11, 12, 13, 14] {
+        let (state, flow, server, id) = fixture(mode).await;
+        if mode == 13 {
+            let now = DateTime::from_millis(2);
+            let mut message = state.scope();
+            message.extend(doc! {"_id":ObjectId::new(),"inquiry_id":id,"source":"alex_push","status":"DONE","event_id":"size-final","event_at":now,"created_at":now,"updated_at":now,"payload":{"type":"message","message":{"type":"text","text":"ADMIN_FINAL สรุป Nina ไซซ์ M ค่ะ"}}});
+            state
+                .collection("outbound_messages")
+                .insert_one(message)
+                .await
+                .unwrap();
+        }
+        let job = enqueue(&state, id, true).await;
+        draft_worker::process(&state, &job).await.unwrap();
+        let inquiry = drafts::inquiry(&state, id).await.unwrap();
+        let saved = drafts::safe_drafts(&state, &inquiry).await.unwrap();
+        let latest = &saved[0];
+        assert_eq!(latest["catalog_lookup"][0]["status"], "MATCHED");
+        let calls = flow.calls.lock().await;
+        let catalog = calls
+            .iter()
+            .find(|call| call["operation"] == "catalog")
+            .unwrap();
+        assert_eq!(catalog["body"]["category"], "HT");
+        assert_eq!(catalog["body"]["size"], if mode == 14 { "" } else { "M|" });
+        if mode == 14 {
+            assert!(latest["result"]["fields"]["items"][0]["size"].is_null());
+        } else {
+            assert_eq!(latest["result"]["fields"]["items"][0]["size"], "M");
+        }
+        if mode == 13 {
+            assert!(
+                latest["result"]["evidence"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["field"] == "items.0.size"
+                        && entry["source_type"] == "admin_message")
+            );
+        }
+        drop(calls);
         state.db.drop().await.unwrap();
         server.abort();
     }

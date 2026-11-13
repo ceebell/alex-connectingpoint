@@ -226,19 +226,119 @@ fn draft_customer_chat_fields_require_verbatim_evidence_and_cannot_supply_order_
         "fields":{"customer_phone":"0822222222"},"evidence":[{"field":"customer_phone","source_type":"line_event","source_ref":"latest","quote":sources["latest"]}],"conflicts":[],"questions":[]
     })).unwrap();
     let images = std::collections::BTreeSet::new();
-    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_ok());
+    assert!(
+        customer_extract::validate_draft_chat(&result, &sources, &Default::default(), &images)
+            .is_ok()
+    );
     result.fields.customer_phone = Some("0899999999".into());
-    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    assert!(
+        customer_extract::validate_draft_chat(&result, &sources, &Default::default(), &images)
+            .is_err()
+    );
     result.fields.customer_phone = Some("0822222222".into());
     result.evidence[0].source_ref = "another-inquiry".into();
-    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    assert!(
+        customer_extract::validate_draft_chat(&result, &sources, &Default::default(), &images)
+            .is_err()
+    );
     result.evidence[0].source_ref = "latest".into();
     result.evidence[0].field = "items.0.product_code".into();
-    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_err());
+    assert!(
+        customer_extract::validate_draft_chat(&result, &sources, &Default::default(), &images)
+            .is_err()
+    );
     // Selected LINE images remain valid order sources; only inbound text is contact-only.
     result.evidence[0].source_ref = "selected-image".into();
     let images = std::collections::BTreeSet::from(["line_event:selected-image".into()]);
-    assert!(customer_extract::validate_draft_contacts(&result, &sources, &images).is_ok());
+    assert!(
+        customer_extract::validate_draft_chat(&result, &sources, &Default::default(), &images)
+            .is_ok()
+    );
+}
+
+#[test]
+fn size_chat_context_excludes_other_customers_and_keeps_admin_confirmations() {
+    let message = |id: ObjectId, text: &str, source: &str, user: &str| doc! {"_id":id,"event_at":DateTime::from_millis(1),"source":source,"payload":{"type":"message","source":{"userId":user},"message":{"type":"text","text":text}}};
+    let customer = ObjectId::new();
+    let admin = ObjectId::new();
+    let mut withdrawn = message(ObjectId::new(), "สรุปไซซ์ XL", "alex_push", "");
+    withdrawn.insert("withdrawn", true);
+    let snapshot = drafts::Snapshot {
+        events: vec![
+            message(customer, "M หรือ L ได้ไหม", "line_webhook", "Ucurrent"),
+            message(admin, "สรุป Haatiya ไซซ์ M ค่ะ", "alex_push", ""),
+            message(ObjectId::new(), "size XL", "line_webhook", "Uother"),
+            message(ObjectId::new(), "เลขบัญชีร้าน 12345", "alex_push", ""),
+            withdrawn,
+        ],
+        hash: String::new(),
+        pending: false,
+    };
+    let (messages, sources) = customer_extract::size_chat_sources(&snapshot, "Ucurrent").unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1]["sender_role"], "admin");
+    assert!(sources.contains_key(&format!("line_event:{customer}")));
+    assert!(sources.contains_key(&format!("admin_message:{admin}")));
+}
+
+#[test]
+fn agreed_size_evidence_is_bound_to_item_and_cannot_change_other_fields() {
+    let sources = std::collections::BTreeMap::from([(
+        "admin_message:final".into(),
+        "สรุปชุด Haatiya ไซซ์ XL ค่ะ".into(),
+    )]);
+    let mut result:DraftResult = serde_json::from_value(json!({"fields":{"items":[{"product_name":"Haatiya","size":"XL"}]},"evidence":[{"field":"items.0.size","source_type":"admin_message","source_ref":"final","quote":"ไซซ์ XL"}],"conflicts":[],"questions":[]})).unwrap();
+    assert!(
+        customer_extract::validate_draft_chat(
+            &result,
+            &Default::default(),
+            &sources,
+            &Default::default()
+        )
+        .is_ok()
+    );
+    result.fields.items[0].size = Some("L".into());
+    assert!(
+        customer_extract::validate_draft_chat(
+            &result,
+            &Default::default(),
+            &sources,
+            &Default::default()
+        )
+        .is_err()
+    );
+    result.fields.items[0].size = Some("XL".into());
+    result.evidence[0].source_ref = "another-inquiry".into();
+    assert!(
+        customer_extract::validate_draft_chat(
+            &result,
+            &Default::default(),
+            &sources,
+            &Default::default()
+        )
+        .is_err()
+    );
+    result.evidence[0].source_ref = "final".into();
+    result.evidence[0].field = "items.1.size".into();
+    assert!(
+        customer_extract::validate_draft_chat(
+            &result,
+            &Default::default(),
+            &sources,
+            &Default::default()
+        )
+        .is_err()
+    );
+    result.evidence[0].field = "items.0.product_name".into();
+    assert!(
+        customer_extract::validate_draft_chat(
+            &result,
+            &Default::default(),
+            &sources,
+            &Default::default()
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test]
