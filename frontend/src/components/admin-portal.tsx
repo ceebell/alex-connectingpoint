@@ -5,13 +5,14 @@ import { AdminSession, canManageTeam, canUseWorkspace, invitationToken, lineLogi
 import AdminWorkspace from "./admin-workspace";
 import TeamWorkspace from "./team-workspace";
 import TeamWelcome from "./team-welcome";
+import { workspaceRoute } from "@/lib/workspace-navigation";
 
 export default function AdminPortal() {
   const [session, setSession] = useState<AdminSession | null>(null);
   const [invitation, setInvitation] = useState<TeamInvitation | null>(null);
   const [inviteError, setInviteError] = useState("");
   const [checking, setChecking] = useState(true);
-  const [teamView, setTeamView] = useState(false);
+  const [route, setRoute] = useState(() => workspaceRoute(""));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [initialHash] = useState(() => typeof window === "undefined" ? "" : window.location.hash);
@@ -31,7 +32,7 @@ export default function AdminPortal() {
     async function start() {
       const rawHash = initialHash;
       const token = invitationToken(rawHash);
-      setTeamView(rawHash === "#team");
+      setRoute(workspaceRoute(rawHash, window.location.search));
       // Invitation secrets stay in the fragment, never in HTTP URLs, query logs or referrers.
       if (rawHash.includes("invite=")) window.history.replaceState(null, "", window.location.pathname + window.location.search);
       if (rawHash.includes("invite=") && !token) {
@@ -51,7 +52,7 @@ export default function AdminPortal() {
     void start();
     const navigate = () => {
       const hash = window.location.hash;
-      setTeamView(hash === "#team");
+      setRoute(workspaceRoute(hash, window.location.search));
       if (hash.includes("invite=")) {
         const token = invitationToken(hash);
         window.history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -100,9 +101,9 @@ export default function AdminPortal() {
   }
   if (checking) return <main className="login-page"><p role="status">กำลังตรวจสอบบัญชี…</p></main>;
   if (invitation || inviteError || (session?.team_enabled && !canUseWorkspace(session))) return <TeamWelcome session={session} invitation={invitation} error={error || inviteError || loginError} busy={busy} onAccept={accept} onClear={clearInvitation} onRefresh={refreshSession} onLogout={logout} />;
-  if (teamView && session) {
-    if (!canManageTeam(session)) return <main className="team-access-message"><h1>บัญชีนี้ไม่มีสิทธิ์จัดการทีม</h1><a className="button secondary" href="#">กลับพื้นที่ทำงาน</a></main>;
+  if (route.page === "team" && session) {
+    if (!canManageTeam(session)) return <main className="team-access-message"><h1>บัญชีนี้ไม่มีสิทธิ์จัดการทีม</h1><a className="button secondary" href="#home">กลับหน้าหลัก</a><a className="button secondary" href="#chats">เปิดรายการแชท</a></main>;
     return <TeamWorkspace session={session} onLogout={() => logout()} onSessionChange={refreshSession} />;
   }
-  return <AdminWorkspace key={session?.membership ? `${session.membership.id}:${session.membership.version}` : "legacy"} access={session} />;
+  return <AdminWorkspace key={session?.membership ? `${session.membership.id}:${session.membership.version}` : "legacy"} access={session} route={route} />;
 }

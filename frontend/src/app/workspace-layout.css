@@ -14,7 +14,11 @@
 }
 
 /* Fill the desktop viewport; each workspace panel owns its scrolling. */
-.app-shell .workspace .message-bubble,
+.app-shell .workspace .message-bubble {
+  font-size: calc(13px + var(--mobile-text-increment, 0px));
+  color: #0f172a;
+}
+
 .app-shell .workspace .reply-row textarea {
   font-size: calc(12px + var(--mobile-text-increment, 0px));
 }

@@ -7,6 +7,8 @@ import { formatDateTime } from "@/lib/dates";
 import WorkspaceSidebar from "./workspace-sidebar";
 import { useChatNotifications } from "@/lib/use-chat-notifications";
 import type { Inquiry } from "@/lib/api";
+import WorkspaceNavigation from "./workspace-navigation";
+import { navigateWorkspace } from "@/lib/workspace-navigation";
 
 type Props = { session: AdminSession; onLogout: () => Promise<void>; onSessionChange: () => Promise<void> };
 type Audit = { action: string; actor_name: string; actor_id: string; at: string; version: number; changes: { name?: string; role?: TeamRole; status?: TeamStatus; branches?: TeamBranch[]; note?: string } };
@@ -127,9 +129,7 @@ function History({ member, onClose }: { member: TeamMember; onClose: () => void 
 export default function TeamWorkspace({ session, onLogout, onSessionChange }: Props) {
   useTeamViewport();
   const { observeInbox, pollInBackground } = useChatNotifications(true, id => {
-    const url = new URL(window.location.href); url.hash = ""; url.searchParams.set("inquiry", id);
-    window.history.replaceState(null, "", url.pathname + url.search);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    navigateWorkspace("chats", id);
   }, () => false);
   useEffect(() => {
     let cancelled = false, polling = false;
@@ -205,9 +205,9 @@ export default function TeamWorkspace({ session, onLogout, onSessionChange }: Pr
     finally { setBusy(""); }
   }
   const shown = members.filter(member => (filter === "ALL" || member.status === filter) && `${member.name} ${member.line_name || ""} ${member.branches.map(branch => branch.name).join(" ")}`.toLowerCase().includes(query.toLowerCase()));
-  const navigate = () => { window.location.hash = ""; };
-  return <div className="app-shell team-shell"><WorkspaceSidebar username={session.username} login={session.login} activePanel="inquiries" onNavigate={navigate} onLogout={onLogout} onManageTeam={() => {}} teamActive />
-    <main className="main-content"><header className="page-header"><div><p className="eyebrow">Arisa Rental</p><h1>จัดการทีม</h1><p className="muted">เพิ่มพนักงาน ตรวจคำขอ และกำหนดสิทธิ์ของแต่ละคน</p></div><div className="header-actions"><button className="button secondary" onClick={navigate}>กลับแชท</button><button className="button primary" disabled={!branchesReady || !!busy} onClick={() => { setNotice(""); setEditor("new"); }}>＋ เพิ่มพนักงาน</button></div></header>
+  const navigate = () => navigateWorkspace("chats");
+  return <div className="app-shell team-shell"><WorkspaceSidebar username={session.username} login={session.login} activePanel="inquiries" onHome={() => navigateWorkspace("home")} onNavigate={navigate} onLogout={onLogout} onManageTeam={() => {}} teamActive />
+    <main className="main-content"><header className="page-header"><div><p className="eyebrow">Arisa Rental</p><h1>จัดการทีม</h1><p className="muted">เพิ่มพนักงาน ตรวจคำขอ และกำหนดสิทธิ์ของแต่ละคน</p></div><div className="header-actions"><button className="button secondary team-back-link" onClick={navigate}>กลับแชท</button><button className="button primary" disabled={!branchesReady || !!busy} onClick={() => { setNotice(""); setEditor("new"); }}>＋ เพิ่มพนักงาน</button></div></header>
       <section className="team-content" aria-label="รายชื่อทีมงาน">
         {error && <p className="notice warning" role="alert">{error}</p>}{notice && <p className="team-feedback" role="status">{notice}</p>}
         <div className="team-toolbar"><label className="team-search">ค้นหาพนักงาน<input autoComplete="off" type="search" value={query} placeholder="ชื่อพนักงานหรือชื่อ LINE" onChange={event => setQuery(event.target.value)} /></label><button className="button secondary" disabled={loading} onClick={() => void reload()}>{loading ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</button></div>
@@ -219,6 +219,7 @@ export default function TeamWorkspace({ session, onLogout, onSessionChange }: Pr
         </article>)}</div>
         {!shown.length && !loading && <div className="empty compact"><h2>ไม่พบพนักงานในรายการนี้</h2><p>เปลี่ยนตัวกรองหรือเพิ่มพนักงานใหม่</p></div>}{loading && <p className="muted" role="status">กำลังโหลดรายชื่อ…</p>}{next && <button className="button secondary full" disabled={loading} onClick={() => void reload(true)}>โหลดรายชื่อก่อนหน้า</button>}
       </section>
+      <WorkspaceNavigation activePage="team" manageTeam />
     </main>
     {editor && <MemberEditor member={editor === "new" ? null : editor} branches={branches} branchesError={branchesError} onClose={() => setEditor(null)} onSaved={(member, token) => { setMembers(current => merge(current,[member])); setEditor(null); if (token) setInvitation({ member, token }); else setNotice(`บันทึกข้อมูล ${member.name} แล้ว`); }} />}
     {invitation && <InvitationLink {...invitation} onClose={() => setInvitation(null)} />}

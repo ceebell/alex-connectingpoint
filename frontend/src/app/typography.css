@@ -11,10 +11,14 @@
 .app-shell .chat-footer,
 .app-shell .draft-footer,
 .app-shell .step-caption p,
-.app-shell .form-heading > span:not([aria-hidden]),
-.app-shell .inquiry-card .inquiry-preview {
+.app-shell .form-heading > span:not([aria-hidden]) {
   font-size: calc(12px + var(--mobile-text-increment, 0px));
   color: var(--color-description);
+}
+
+.app-shell .inquiry-card .inquiry-preview {
+  font-size: calc(13px + var(--mobile-text-increment, 0px));
+  color: #475569;
 }
 
 :is(.app-shell, .invoice-dialog, .login-page) .notice p {

@@ -15,6 +15,8 @@ type Props = {
   onLogout: () => Promise<void>;
   onManageTeam?: () => void;
   teamActive?: boolean;
+  homeActive?: boolean;
+  onHome?: () => void;
 };
 
 function RailIcon({ name }: { name: Icon }) {
@@ -35,7 +37,7 @@ const destinations: { panel: Panel; label: string }[] = [
   { panel: "draft", label: "ร่างออเดอร์" },
 ];
 
-export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout, onManageTeam, teamActive }: Props) {
+export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout, onManageTeam, teamActive, homeActive, onHome }: Props) {
   const [open, setOpen] = useState<Menu | null>(null);
   const sidebar = useRef<HTMLElement>(null);
 
@@ -84,8 +86,9 @@ export default function WorkspaceSidebar({ inquiryCount, username, login, active
   return <aside className="sidebar sidebar-rail" ref={sidebar} aria-label="แถบเมนูหลัก">
     <div className="rail-brand" role="img" aria-label="Alex"><div className="brand-mark" aria-hidden="true">a<span>•</span></div></div>
     <nav className="rail-navigation" aria-label="พื้นที่ทำงาน">
+      {onHome && <button type="button" className={`rail-button ${homeActive ? "is-active" : ""}`} aria-label="หน้าหลัก" aria-current={homeActive ? "page" : undefined} onClick={onHome}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" /><path d="M9 21v-7h6v7" /></svg></button>}
       <div className="rail-group" {...groupEvents("chat")}>
-        <button type="button" className={`rail-button ${teamActive ? "" : "is-active"}`} aria-label={inquiryCount === undefined ? "แชทและ inquiry" : `แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
+        <button type="button" className={`rail-button ${teamActive || homeActive ? "" : "is-active"}`} aria-label={inquiryCount === undefined ? "แชทและ inquiry" : `แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
           <RailIcon name="chat" />{inquiryCount !== undefined && <span className="rail-count" aria-hidden="true">{inquiryCount > 99 ? "99+" : inquiryCount}</span>}
         </button>
         {open === "chat" && <div className="rail-flyout" id="rail-chat-menu" role="region" aria-labelledby="rail-chat-heading">

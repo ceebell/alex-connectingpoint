@@ -30,6 +30,11 @@ const base64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
+// Same breakpoint as mobile.css, plus touch-first devices: there Enter inserts a new line
+// (on-screen keyboards have no Shift+Enter) and the send button submits.
+const COMPACT_INPUT = "(max-width: 767px), (max-width: 1024px) and (max-height: 600px), (pointer: coarse)";
+const sendOnEnter = () => !window.matchMedia(COMPACT_INPUT).matches;
+
 export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthorized }: Props) {
   const [text, setText] = useState("");
   const [textId, setTextId] = useState<string | null>(null);
@@ -151,7 +156,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     <div className="reply-row">
       <button type="button" className="reply-add" aria-label={attachmentsOpen ? "ปิดเครื่องมือแนบข้อความ" : "เปิดเครื่องมือแนบข้อความ"} aria-expanded={attachmentsOpen} aria-controls={`reply-attachments-${inquiryId}`} disabled={!canReply || working} onClick={toggleTools}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16" /></svg></button>
       <label className="sr-only" htmlFor="reply-text">ข้อความตอบลูกค้า</label>
-      <textarea ref={textRef} id="reply-text" name="chat-message" autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า…" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); }} onChange={e => { setText(e.target.value); setTextId(null); setError(""); setFailed(null); }} onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void sendText(); } }} />
+      <textarea ref={textRef} id="reply-text" name="chat-message" autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า…" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); }} onChange={e => { setText(e.target.value); setTextId(null); setError(""); setFailed(null); }} onKeyDown={e => { if (e.key !== "Enter" || e.shiftKey || e.altKey || e.nativeEvent.isComposing) return; if (e.ctrlKey || e.metaKey || sendOnEnter()) { e.preventDefault(); void sendText(); } }} />
       <button className="button primary reply-send" aria-label={busy ? "กำลังส่งข้อความ" : textId ? "ส่งอีกครั้ง" : "ส่งข้อความ"} disabled={working || !text.trim() || !canReply}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>
     </div>
   </form>;

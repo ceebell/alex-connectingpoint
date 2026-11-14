@@ -1,5 +1,5 @@
 "use client";
-import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order, VersionState } from "@/lib/api";
 import DraftEditor from "./draft-editor";
 import SummaryImages from "./summary-images";
@@ -13,13 +13,15 @@ import CustomerNotes from "./customer-notes";
 import { formatDate, formatDateTime as time } from "@/lib/dates";
 import { useChatNotifications } from "@/lib/use-chat-notifications";
 import { AdminSession, canManageTeam, canSubmitOrder, lineLoginErrors as loginErrors } from "@/lib/team-api";
+import WorkspaceNavigation, { WorkspaceIcon } from "./workspace-navigation";
+import ShopDashboard from "./shop-dashboard";
+import { navigateWorkspace, type WorkspaceRoute } from "@/lib/workspace-navigation";
 
 type Session = AdminSession;
 type LoginOptions = { line: boolean; password: boolean };
 // The login screen renders only after the session check, so reading the URL here cannot cause a hydration mismatch.
 const loginParams = () => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
 type OaStatus = { state: string; synced?: number; pending?: number };
-const oaStates: Record<string, string> = { NOT_CONFIGURED: "รอเปิดตัวเชื่อม OA บน Ubuntu", NEEDS_LOGIN: "ตัวเชื่อมรอล็อกอิน LINE กรุณาติดต่อผู้ดูแลระบบ", READY: "อ่าน OA ได้ ยังไม่มีข้อความแอดมินใหม่ที่จับคู่ได้", SYNCING: "กำลังรับข้อความแอดมินจาก OA อัตโนมัติ", UNLINKED: "มีข้อความ OA รอจับคู่กับบทสนทนาลูกค้า", UNSUPPORTED_SCHEMA: "รูปแบบข้อมูล OA ยังไม่รองรับ กรุณาติดต่อผู้พัฒนา", OFFLINE: "ตัวเชื่อม OA ขาดการติดต่อ", LINE_UNAVAILABLE: "ตัวเชื่อมติดต่อ LINE ไม่สำเร็จ", BACKEND_UNAVAILABLE: "backend ของตัวเชื่อมยังไม่พร้อม", BACKEND_UPDATE_REQUIRED: "ต้องอัปเดต backend เพื่อเปิดตัวเชื่อม OA", STOPPED: "ตัวเชื่อม OA หยุดทำงาน" };
 // The admin can drag the chat/draft divider; the width is a per-browser convenience only.
 const draftWidthKey = "workspace.draft-width";
 function storedDraftWidth() { try { const value = Number(window.localStorage.getItem(draftWidthKey)); return value >= 320 ? value : null; } catch { return null; } }
@@ -61,7 +63,7 @@ function DraftReadOnly({ draft }: { draft: Draft }) {
   })}</dl><EvidenceList evidence={draft.result.evidence} /></div>;
 }
 
-export default function AdminWorkspace({ access }: { access?: AdminSession | null }) {
+export default function AdminWorkspace({ access, route }: { access?: AdminSession | null; route: WorkspaceRoute }) {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [loginError, setLoginError] = useState(() => { const code = loginParams().get("login_error"); return code ? loginErrors[code] ?? "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่" : ""; });
@@ -76,7 +78,7 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<Inquiry | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [mobilePanel, setMobilePanel] = useState<"inquiries" | "chat" | "draft">("inquiries");
+  const mobilePanel = route.page === "chats" ? route.panel : "inquiries";
   const [messages, setMessages] = useState<LineEvent[]>([]);
   const messagesRef = useRef<LineEvent[]>([]);
   const readPending = useRef(new Set<string>());
@@ -101,18 +103,23 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   const [draftWidth, setDraftWidth] = useState<number | null>(storedDraftWidth);
   const [busy, setBusy] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingData, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const latest = drafts[0];
+  const loading = loadingData || !!(route.inquiryId && route.inquiryId !== selected);
   const working = busy || job?.status === "PENDING" || job?.status === "PROCESSING";
   const preparingAi = preparing || job?.status === "PENDING" || job?.status === "PROCESSING";
   const current = inquiries.find(inquiry => inquiry._id === selected);
   const submitAllowed = !access || canSubmitOrder(access);
   const manageTeam = !!access && canManageTeam(access);
   const canApprove = submitAllowed && !summaryEdited && !order && !!latest?.result && latest.workflow_status === "READY_FOR_REVIEW" && !latest.stale && !latest.redacted && latest.draft_version === version;
-  const notifications = useChatNotifications(!!session, openNotificationInquiry, id => !document.hidden && document.hasFocus() && selected === id && (!window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)").matches || mobilePanel === "chat"));
+  const notifications = useChatNotifications(!!session, openNotificationInquiry, id => route.page === "chats" && !document.hidden && document.hasFocus() && selected === id && (!window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)").matches || mobilePanel === "chat"));
   const { observeInbox, pollInBackground } = notifications;
+  useEffect(() => {
+    const control = document.activeElement;
+    if (mobilePanel !== "chat" && control instanceof HTMLElement && control.closest(".chat-panel")) control.blur();
+  }, [mobilePanel]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { inquiriesRef.current = inquiries; }, [inquiries]);
   useEffect(() => {
@@ -215,7 +222,7 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
 
   useEffect(() => {
     // Show the LINE Login result once, then drop it from the address bar.
-    if (window.location.search) window.history.replaceState(null, "", window.location.pathname);
+    if (window.location.search) window.history.replaceState(null, "", window.location.pathname + window.location.hash);
     api<LoginOptions>("/api/admin/login-options").then(setLoginOptions).catch(() => {});
   }, []);
 
@@ -241,13 +248,9 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
               if (cancelled) return;
               state = (await api<{ state: string }>(`/api/line/oa-sync/refresh/${request.request_id}`)).state;
             }
-            if (!cancelled && state !== "DONE") {
-              const reason = state === "NOT_CONFIGURED" ? "ยังไม่ได้เชื่อม LINE OA" : state === "PENDING" ? "ซิงก์ LINE OA ไม่ทัน กรุณาลองโหลดข้อมูลอีกครั้ง" : oaStates[state] ?? "ซิงก์ LINE OA ไม่สำเร็จ";
-              setError(`${reason} ชื่อและสถานะอ่านที่แสดงอาจยังเป็นข้อมูลเดิม`);
-            }
+            // Connector status does not interrupt the inbox with a page-wide banner.
           } catch (cause) {
             if (cause instanceof ApiError && cause.status === 401) throw cause;
-            if (!cancelled) setError("ซิงก์ชื่อและสถานะอ่านจาก LINE OA ไม่สำเร็จ ข้อมูลที่แสดงอาจยังเป็นข้อมูลเดิม");
           } finally { if (!cancelled) setSyncingInbox(false); }
         }
         if (cancelled) return;
@@ -367,7 +370,7 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
   }, [selected, session]);
 
   useEffect(() => {
-    if (!selected || !session || loading || document.hidden) return;
+    if (route.page !== "chats" || !selected || !session || loading || document.hidden) return;
     const mobile = window.matchMedia("(max-width: 767px), (max-width: 1024px) and (max-height: 600px)");
     if (mobile.matches && mobilePanel !== "chat") return;
     const seen = [...messages].reverse().find(message => !message.withdrawn && message.sender_role !== "admin" && message.direction !== "outbound" && ["message", "postback"].includes(message.payload?.type ?? ""));
@@ -388,7 +391,7 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
       }
     }).finally(() => { readPending.current.delete(key); });
     return () => { cancelled = true; };
-  }, [selected, session, messages, mobilePanel, loading]);
+  }, [selected, session, messages, mobilePanel, loading, route.page]);
 
   async function login(event: FormEvent) {
     event.preventDefault(); setLoginBusy(true); setLoginError("");
@@ -398,18 +401,14 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
     } catch (cause) { setLoginError(errorText(cause)); } finally { setLoginBusy(false); }
   }
 
-  function selectInquiry(id: string) {
-    setMobilePanel("chat");
+  const selectInquiry = useCallback((id: string) => {
     // Re-selecting the open inquiry must not reset it: the load effect only reruns when the ID changes.
-    if (id === selected) {
-      if (current?.unread) { lastReadMessage.current = ""; setMessages(previous => [...previous]); }
-      return;
-    }
+    if (id === selected) return;
     lastReadMessage.current = "";
     summaryDirty.current = false; setSummaryEdited(false); setSavedSummary(null); setSummaryConflict(false);
     setAttachments([]);
     setSelected(id); setSummary(""); setImages([]); setMessages([]); setDrafts([]); setVersion(0); setJob(null); setOrder(null); setApproveChecked(false); setError(""); setLoading(true); setTab("summary");
-  }
+  }, [selected]);
 
   async function openNotificationInquiry(id: string) {
     try {
@@ -420,12 +419,24 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
         setInquiries(previous => mergeInquiries(previous, records));
       }
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      setQuery(""); setRenaming(null); selectInquiry(id);
+      setQuery(""); setRenaming(null); navigateWorkspace("chats", id);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) setSession(null);
       else setError(errorText(cause));
     }
   }
+  useEffect(() => {
+    if (!session) return;
+    if (route.page !== "chats" || !route.inquiryId || route.inquiryId === selected) return;
+    const id = route.inquiryId;
+    let cancelled = false;
+    void api<Inquiry[]>(`/api/inquiries?id=${encodeURIComponent(id)}`).then(records => {
+      if (cancelled) return;
+      if (!records.some(inquiry => inquiry._id === id)) { setError("ไม่พบแชทนี้ กรุณากลับไปเลือกรายการแชท"); return; }
+      setInquiries(previous => mergeInquiries(previous, records)); selectInquiry(id);
+    }).catch(cause => { if (!cancelled) { if (cause instanceof ApiError && cause.status === 401) setSession(null); else setError(errorText(cause)); } });
+    return () => { cancelled = true; };
+  }, [route.page, route.inquiryId, session, selected, selectInquiry]);
 
   function editSummary(text: string) {
     summaryDirty.current = true; setSummaryEdited(true); setSummary(text);
@@ -546,13 +557,15 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
     {!loginOptions.line && !loginOptions.password && <p className="notice warning">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ กรุณาติดต่อผู้ดูแลระบบ</p>}
   </form></main>;
 
-  return <div className="app-shell" ref={appRef}>
-    <WorkspaceSidebar inquiryCount={inquiries.length} username={session.username} login={session.login} activePanel={mobilePanel} onNavigate={panel => { setMobilePanel(panel); requestAnimationFrame(() => document.getElementById(`mobile-${panel}`)?.focus({ preventScroll: true })); }} onLogout={logout} onManageTeam={manageTeam ? () => { window.location.hash = "team"; } : undefined} />
-    <main className="main-content"><header className="page-header"><div><p className="eyebrow">จัดการความต้องการลูกค้า</p><h1>แชทและร่างออเดอร์</h1><p className="muted">เลือกเรื่องที่รับเข้ามา แล้วเปลี่ยนรายละเอียดเป็นร่างที่ตรวจสอบได้</p></div><div className="header-actions">{manageTeam && <button type="button" className="button secondary mobile-manage-team" aria-label="จัดการทีม" title="จัดการทีม" onClick={() => { window.location.hash = "team"; }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 4v2" /></svg></button>}<button type="button" className="button secondary notification-button" aria-label={notifications.enabled ? "ปิดแจ้งเตือนข้อความใหม่" : "เปิดแจ้งเตือนข้อความใหม่"} title={notifications.enabled ? "ปิดแจ้งเตือนข้อความใหม่" : "เปิดแจ้งเตือนข้อความใหม่"} aria-pressed={notifications.enabled} disabled={notifications.busy} onClick={() => void notifications.toggle()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />{notifications.enabled && <path d="m16 4 2 2 4-4" />}</svg></button><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
+  return <div className="app-shell" data-page={route.page} data-mobile-detail={route.page === "chats" && !!route.inquiryId} ref={appRef}>
+    <WorkspaceSidebar inquiryCount={inquiries.length} username={session.username} login={session.login} activePanel={mobilePanel} homeActive={route.page === "home"} onHome={() => navigateWorkspace("home")} onNavigate={panel => { if (panel === "inquiries" || !selected) navigateWorkspace("chats"); else navigateWorkspace("chats", selected, panel); requestAnimationFrame(() => document.getElementById(`mobile-${panel}`)?.focus({ preventScroll: true })); }} onLogout={logout} onManageTeam={manageTeam ? () => navigateWorkspace("team") : undefined} />
+    <main className="main-content"><header className="page-header"><div><p className="eyebrow">Arisa Rental</p><h1>{route.page === "home" ? "Arisa Rental" : "รายการแชท"}</h1><p className="muted">{route.page === "home" ? "ภาพรวมร้านและงานของทีม" : "เลือกบทสนทนาเพื่ออ่านแชทและจัดการออเดอร์"}</p></div><div className="header-actions"><button className="mobile-logout text-button" onClick={logout}>ออกจากระบบ</button><button className="button secondary" disabled={working || syncingInbox} aria-busy={syncingInbox} aria-label="โหลดข้อมูลล่าสุด" title="โหลดข้อมูลล่าสุด" onClick={() => { setError(""); setRefresh(n => n + 1); }}><span aria-hidden="true">↻</span><span className="refresh-label">{syncingInbox ? "กำลังซิงก์ LINE OA…" : "โหลดข้อมูลล่าสุด"}</span></button></div></header>
+      {route.page === "chats" && route.inquiryId && <header className="conversation-toolbar" aria-label="เมนูบทสนทนา"><button type="button" aria-label="กลับไปรายการแชท" title="กลับไปรายการแชท" onClick={() => navigateWorkspace("chats")}><WorkspaceIcon name="back" /></button><strong>{current?.customer?.display_name || "ลูกค้า LINE"}</strong><button type="button" aria-label="แชทของลูกค้าคนนี้" title="แชท" aria-pressed={mobilePanel === "chat"} onClick={() => navigateWorkspace("chats", route.inquiryId ?? undefined)}><WorkspaceIcon name="chats" /></button><button type="button" aria-label="จัดการออเดอร์ของลูกค้าคนนี้" title="จัดการออเดอร์" aria-pressed={mobilePanel === "draft"} onClick={() => navigateWorkspace("chats", route.inquiryId ?? undefined, "draft")}><WorkspaceIcon name="order" /></button></header>}
       {notifications.message && <div className="notice page-notice" role="status">{notifications.message}<button className="text-button" aria-label="ปิดคำแนะนำการแจ้งเตือน" onClick={notifications.dismissMessage}>ปิด</button></div>}
       {error && <div className="notice warning page-notice" role="alert">{error}<button className="text-button" aria-label="ปิดข้อความแจ้งเตือน" onClick={() => setError("")}>ปิด</button></div>}
-      <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="search-box"><span aria-hidden="true">⌕</span><input autoComplete="off" aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหา inquiry / ผู้ใช้…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
-        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.customer?.line_display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <div className="inquiry-row" key={inquiry._id}><button className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => selectInquiry(inquiry._id)}>
+      {route.page === "home" && <ShopDashboard inquiries={inquiries} session={access ?? session} loading={syncingInbox} notifications={notifications} />}
+      {route.page === "chats" && <div className="workspace" data-mobile-panel={mobilePanel} ref={workspaceRef} style={draftWidth ? { "--draft-width": `${draftWidth}px` } as CSSProperties : undefined}><section tabIndex={-1} id="mobile-inquiries" aria-label="รายชื่อลูกค้า" className="inquiry-panel"><div className="search-box"><span aria-hidden="true">⌕</span><input autoComplete="off" aria-label="ค้นหา inquiry หรือ LINE user ID" placeholder="ค้นหาแชท / ลูกค้า…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="inquiry-list">
+        {inquiries.filter(inquiry => `${inquiry._id} ${inquiry.line_user_id ?? ""} ${inquiry.customer?.display_name ?? ""} ${inquiry.customer?.line_display_name ?? ""} ${inquiry.last_message_preview ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(inquiry => <div className="inquiry-row" key={inquiry._id}><button className={`inquiry-card ${selected === inquiry._id ? "selected" : ""}`} disabled={working} onClick={() => navigateWorkspace("chats", inquiry._id)}>
           <div className="section-caption"><span className="line-badge">LINE</span><time>{time(inquiry.last_activity_at ?? inquiry.created_at)}</time></div>
           <div className="customer-row"><CustomerAvatar customer={inquiry.customer} /><div className="customer-copy"><strong>{inquiry.customer?.display_name || "ลูกค้า LINE"}</strong><p className="inquiry-preview">{inquiry.last_message_preview || "ยังไม่มีข้อความ"}</p></div>{inquiry.unread && <span className="inquiry-unread-dot" title={inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}><span className="sr-only">{inquiry.unread_source === "line_oa" ? "ยังไม่ได้อ่านใน LINE OA" : "ยังไม่ได้อ่านใน Alex"}</span></span>}</div>
         </button>{inquiry.line_user_id && <button type="button" className="inquiry-rename" aria-label={`เปลี่ยนชื่อลูกค้า ${inquiry.customer?.display_name || "LINE"}`} title="เปลี่ยนชื่อลูกค้า" disabled={working} onClick={() => setRenaming(inquiry)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15l-1 6Z" /></svg></button>}</div>)}
@@ -606,21 +619,8 @@ export default function AdminWorkspace({ access }: { access?: AdminSession | nul
             </article>;
           })}<p className="muted small">แก้ไข: หยิบเวอร์ชันที่ยังไม่ส่งขึ้นมาเป็นร่างล่าสุด · โคลน: คัดลอกเป็นเวอร์ชันใหม่ได้ทุกสถานะ · ทั้งสองแบบคืนตะกร้าของเวอร์ชันนั้น</p></>}
         </>}{current?.line_user_id && <div hidden={tab !== "notes"}><CustomerNotes key={current.line_user_id} userId={current.line_user_id} active={tab === "notes"} onUnauthorized={() => setSession(null)} /></div>}{selected && !current?.line_user_id && tab === "notes" && <p className="muted small">ยังไม่พบลูกค้า LINE สำหรับบันทึกโน้ต</p>}</div>
-      </section></div>
-      <nav className="mobile-workspace-nav" aria-label="พื้นที่ทำงานบนมือถือ">
-        <button type="button" aria-label={`ลูกค้า ${inquiries.length} คน`} aria-controls="mobile-inquiries" aria-pressed={mobilePanel === "inquiries"} onClick={() => setMobilePanel("inquiries")}>
-          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3" /><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m3 10v-2a6 6 0 0 0-3-5" /></svg><small className="mobile-nav-count">{inquiries.length > 99 ? "99+" : inquiries.length}</small></span>
-          <span>ลูกค้า</span>
-        </button>
-        <button type="button" aria-controls="mobile-chat" aria-pressed={mobilePanel === "chat"} disabled={!selected} onClick={() => setMobilePanel("chat")}>
-          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" /><circle cx="8" cy="11.5" r=".6" /><circle cx="12.5" cy="11.5" r=".6" /><circle cx="17" cy="11.5" r=".6" /></svg></span>
-          <span>แชท</span>
-        </button>
-        <button type="button" aria-controls="mobile-draft" aria-pressed={mobilePanel === "draft"} disabled={!selected} onClick={() => setMobilePanel("draft")}>
-          <span className="mobile-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></svg></span>
-          <span>ออเดอร์</span>
-        </button>
-      </nav>
+      </section></div>}
+      {!route.inquiryId && <WorkspaceNavigation activePage={route.page} manageTeam={manageTeam} />}
     </main>
     {renaming?.line_user_id && <CustomerNameDialog userId={renaming.line_user_id} customer={renaming.customer} onClose={() => setRenaming(null)} onUnauthorized={() => setSession(null)} onSaved={(alias, lineName) => setInquiries(previous => previous.map(inquiry => inquiry.line_user_id === renaming.line_user_id ? { ...inquiry, customer: { ...inquiry.customer, display_name: alias.custom_name ?? lineName, line_display_name: lineName, custom_name: alias.custom_name, name_version: alias.version } } : inquiry))} />}
   </div>;
