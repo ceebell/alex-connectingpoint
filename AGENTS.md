@@ -183,3 +183,43 @@ emoji ที่เป็นแค่การตกแต่งให้ใส�
 - [ ] ถ้าแก้ Dockerfile/stack: `docker build` ผ่าน
 - [ ] อัปเดต `revising-log.md` แล้ว
 - [ ] สรุปให้ผู้ใช้สั้น ๆ: แก้อะไร, ไฟล์ไหน, ต้องรันอะไรต่อ (ถ้าต้อง deploy ให้แนบขั้นตอน 1–2 ในข้อ 8 พร้อม release tag ที่ build แล้ว)
+
+
+## 12. การทำงานร่วมกับ Developer
+
+- ทุกคำสั่ง prompt ที่ให้ไปจะเขียนอยู่ในไฟล์  `prompt\...requirements... .md` อาจมีชื่อต่างๆ มากกว่า 1 ไฟล์ (เรียกว่า requirement files)
+- prompt ที่ให้ไปจะมีเขียนอยู่ในไฟล์ requirement files เป็น items หากไม่มีให้เขียนขึ้นมาใหม่ภายใต้หัวข้อที่เหมาะสม อย่าให้กฎซ้ำกัน
+- สถานะของแต่ละ item จะมี `Not started`, `Done`, `Reviewed`
+โดยให้ใส่ข้อมูลบนหัว item เช่น 
+
+``` Example
+
+[Done][12Nov2026 12:30]
+- มี quick message สามารถบันทึก message ที่ใช้บ่อยๆ ใช้สำหรับ reply เป็น text
+
+[Not started]
+- สำหรับในช่อง chatbox ถ้าผู้ใช้งานใส่ slash `/` นำคือให้เอา quick message มาตอบ เช่น ถ้ามี quick message `สวัสดีค่ะ ยินดีต้อนรับสู่ Arisa Rental ค่ะ` . . . หากลูกค้าพิมพ์ `/สวัสดี . . . ` ให้มี dropdown เด้งขึ้น น่าจะต้องขึ้นด้านบน suggest quick message ที่ match กับสิ่งที่ user พิมพ์
+
+[Reviewed][15Nov2026 12:27]
+- มีบันทึก card-based message เป็นรูปสามารถบันทึกได้ ใช้สำหรับ reply เป็นรูปภาพ
+
+```
+
+- ความหมายแต่สถานะ
+
+`Not started` >>> ยังไม่ได้เริ่ม Develop (คุณใส่)
+`Done` >>> Develop และ Test เสร็จแล้วรอผมตรวจ (คุณใส่)
+`Reviewed` >>> ผมตรวจเรียบร้อยแล้ว (ผมใส่ หรือผมอาจ prompt ให้คุณใส่ให้ใช้ current datetime ได้เลย)
+
+- หลัง agents ทำงานเสร็จให้บอกด้วยว่าให้ Developer ทำอะไรต่อ บน Windows และ บน Server เช่น  
+
+บน Windows:
+``` bash
+rungit.bat "Add quick replies slash suggestions and reusable image cards"
+``` 
+
+บน Ubuntu:
+``` bash
+cd ~/alex-connectingpoint
+bash ./deploy-all.sh main
+``` s

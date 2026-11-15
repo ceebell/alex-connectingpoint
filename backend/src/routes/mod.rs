@@ -10,6 +10,7 @@ mod mcp;
 mod oa_inbox;
 mod oa_sync;
 mod products;
+mod quick_replies;
 mod session;
 mod shop_settings;
 mod team;
@@ -27,6 +28,28 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub fn router(state: AppState) -> Result<Router, AppError> {
     let admin = Router::new()
+        .route(
+            "/api/admin/quick-replies",
+            get(quick_replies::list)
+                .post(quick_replies::create)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/api/admin/quick-replies/{reply}",
+            post(quick_replies::edit).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/api/admin/quick-replies/{reply}/delete",
+            post(quick_replies::delete),
+        )
+        .route(
+            "/api/admin/quick-replies/{reply}/image/{variant}",
+            get(quick_replies::image),
+        )
+        .route(
+            "/api/inquiries/{id}/quick-replies/{reply}/media",
+            post(quick_replies::prepare_image),
+        )
         .route(
             "/api/admin/shop-settings",
             get(shop_settings::get).post(shop_settings::save),

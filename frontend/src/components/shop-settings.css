@@ -5,6 +5,9 @@
 .shop-settings-card textarea { width: 100%; min-height: 180px; line-height: 1.8; }
 .shop-settings-card > .text-button { justify-self: start; text-align: left; }
 .settings-description { color: #64748b; font-size: 12px; line-height: 1.8; }
+.settings-guidance { display: grid; gap: 10px; }
+.settings-guidance h3 { font-size: 15px; }
+.settings-guidance p { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
   .shop-settings-content { padding: 0; }
   .shop-settings-card { gap: 14px; padding: 16px; margin-bottom: 12px; }

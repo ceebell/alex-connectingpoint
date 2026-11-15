@@ -48,6 +48,16 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     }
     for (collection, keys, unique) in [
         (
+            "quick_replies",
+            doc! {"shop_id":1,"channel_id":1,"created_by_id":1,"request_id":1},
+            true,
+        ),
+        (
+            "quick_replies",
+            doc! {"shop_id":1,"channel_id":1,"_id":-1},
+            false,
+        ),
+        (
             "team_memberships",
             doc! {"shop_id":1,"channel_id":1,"_id":-1},
             false,

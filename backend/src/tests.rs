@@ -18,6 +18,8 @@ use sha2::Sha256;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+#[path = "tests_billing_guidance.rs"]
+mod billing_guidance_tests;
 #[path = "tests_customer_notes.rs"]
 mod customer_notes_tests;
 #[path = "tests_customers.rs"]
@@ -30,6 +32,8 @@ mod line_tests;
 mod oa_sync_tests;
 #[path = "tests_products.rs"]
 mod product_tests;
+#[path = "tests_quick_replies.rs"]
+mod quick_reply_tests;
 #[path = "tests_rental.rs"]
 mod rental_tests;
 #[path = "tests_shop_settings.rs"]

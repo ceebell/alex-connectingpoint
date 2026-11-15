@@ -8,7 +8,7 @@ import BrandCombobox from "./brand-combobox";
 
 type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
-type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean };
+type Settings = { configured: boolean; branches: { id: string; name: string }[]; image_search_configured: boolean; product_url_configured: boolean; billing_searches?: { mode: "text" | "code"; query: string }[]; billing_settings_version?: number };
 type Mode = "code" | "text" | "product_url" | "image";
 // Alex shows catalog prices as plain baht, e.g. 600 or 1,500.
 export const price = (value: number | null) => value === null ? "ไม่ระบุ" : (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
@@ -58,6 +58,8 @@ function CandidateTile({ candidate, inCart, colorName, disabled, onAdd }: { cand
 export default function OrderCart({ inquiryId, draft, items, messages, attachments, availability, disabled, onCart, onUnauthorized }: { inquiryId: string; draft: Draft | undefined; items: DraftItem[]; messages: LineEvent[]; attachments: Attachment[]; availability: Availability | null; disabled: boolean; onCart: (items: CartItem[]) => void; onUnauthorized: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [policyResult, setPolicyResult] = useState<{ key: string; searches: Search[]; loading: boolean; error: string }>({ key: "", searches: [], loading: false, error: "" });
+  const [policyRetry, setPolicyRetry] = useState(0);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [branch, setBranch] = useState("");
   const [mode, setMode] = useState<Mode>(items[0]?.product_code ? "code" : "text");
@@ -81,6 +83,22 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   const images = [...messages.filter(message => !message.withdrawn && message.payload?.message?.type === "image" && message.media_id), ...attachments.map(attachment => ({ _id: attachment.id, event_at: attachment.created_at }))];
   const rentalTotal = cart.reduce((sum, item) => sum + (item.candidate.rental_fee_satang ?? 0) * item.quantity, 0);
   const depositTotal = cart.reduce((sum, item) => sum + (item.candidate.deposit_satang ?? 0) * item.quantity, 0);
+  const policyKey = JSON.stringify([inquiryId, branch, settings?.configured, settings?.billing_settings_version, settings?.billing_searches, policyRetry]);
+  useEffect(() => {
+    if (!settings?.configured || !branch || !settings.billing_searches?.length) return;
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setPolicyResult({ key: policyKey, searches: [], loading: true, error: "" });
+      try {
+        const searches = await Promise.all(settings.billing_searches!.map(hint => api<Search>(`/api/inquiries/${inquiryId}/products/search`, { method: "POST", body: JSON.stringify({ branch_id: branch, mode: hint.mode, query: hint.query, page: 1 }) })));
+        if (!cancelled) setPolicyResult({ key: policyKey, searches, loading: false, error: "" });
+      } catch (cause) {
+        if (!cancelled) { setPolicyResult({ key: policyKey, searches: [], loading: false, error: errorText(cause) }); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
+      }
+    });
+    return () => { cancelled = true; };
+  }, [policyKey]); // eslint-disable-line react-hooks/exhaustive-deps -- The key includes the complete shop policy, conversation and selected branch.
 
   function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   function keep(value: { items: CartItem[] }) { setCart(value.items); onCart(value.items); }
@@ -151,6 +169,15 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
 
   const enter = (e: KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); void search(); } };
   return <div className="order-cart">
+    {!!settings?.billing_searches?.length && <section className="order-section policy-catalog-suggestions" aria-label="สินค้าที่แนะนำตามเงื่อนไขร้าน">
+      <h3 className="form-heading">สินค้าที่แนะนำตามเงื่อนไขร้าน</h3><p className="muted small">ตรวจสินค้าและราคา แล้วกดเพิ่มลงตะกร้าด้วยตัวเอง</p>
+      {!branch && <p className="muted small">เลือกสาขา Alex เพื่อดูสินค้าที่แนะนำ</p>}
+      {policyResult.key === policyKey && <>
+        {policyResult.loading && <p className="muted small" role="status">กำลังค้นหาสินค้าของร้าน…</p>}
+        {policyResult.error && <p className="notice warning" role="alert">{policyResult.error}<button type="button" className="text-button" onClick={() => setPolicyRetry(value => value + 1)}>ค้นหาอีกครั้ง</button></p>}
+        {policyResult.searches.map((search, index) => <div key={search.search_id}><p className="muted small">{settings.billing_searches?.[index]?.query}</p>{!search.candidates.length && <p className="muted small">ยังไม่พบสินค้า ลองค้นหาชื่อหรือรหัสด้านล่าง</p>}<div className="candidate-grid">{search.candidates.map(candidate => <CandidateTile key={candidate.product_item_id} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add({ ...candidate, search_id: search.search_id })} />)}</div></div>)}
+      </>}
+    </section>}
     <section className="order-section section-search">
       <h3 className="form-heading"><span aria-hidden="true">🔎</span> ค้นหาชุดจาก Alex</h3>
       {loading && <p role="status" className="muted small">กำลังโหลดตะกร้าและสาขา…</p>}

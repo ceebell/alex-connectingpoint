@@ -9,6 +9,57 @@ pub struct BillingRules {
     // Rent and deposit are billed exactly as the admin's bill summary states them, never recomputed from the cart.
     #[serde(default)]
     pub summary_amounts: bool,
+    #[serde(default)]
+    pub guidance: Vec<String>,
+    #[serde(default)]
+    pub catalog_searches: Vec<CatalogSearch>,
+    #[serde(default)]
+    pub manual_shipping: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogSearch {
+    pub mode: String,
+    pub query: String,
+}
+
+pub fn validate_searches(searches: &[CatalogSearch], text: &str) -> Result<(), AppError> {
+    let compact: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase();
+    if searches.len() > 3 {
+        return Err(invalid());
+    }
+    for search in searches {
+        let query = search.query.trim();
+        let needle: String = query
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase();
+        if query.is_empty()
+            || query.chars().count() > 100
+            || !["text", "code"].contains(&search.mode.as_str())
+            || !query.chars().all(|c| {
+                c.is_alphanumeric()
+                    || matches!(c, '\u{0e00}'..='\u{0e7f}')
+                    || c.is_whitespace()
+                    || matches!(c, '.' | '-' | '_' | '&' | '/' | '+')
+            })
+            || (search.mode == "code"
+                && (query.len() > 60
+                    || !query
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))))
+            || !compact.contains(&needle)
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -59,6 +110,10 @@ fn strip_any<'a>(text: &'a str, options: &[&str]) -> Option<&'a str> {
 // "แอดมินสรุปบิลให้เอาค่าเช่า ค่าประกันตรงหน้าสรุปบิลเป็นหลัก ไม่คำนวณจากตะกร้าเอง" and its close
 // variants, matched on whitespace-free text. Every part is fixed wording and nothing may follow it.
 fn summary_amounts_clause(compact: &str) -> bool {
+    if compact == "หากแอดมินพิมพ์สรุปยอดค่าเช่าค่าประกันให้ใช้ยอดค่าเช่าค่าประกันที่แอดมินสรุปแล้วเป็นหลัก"
+    {
+        return true;
+    }
     let rest = strip_any(compact, &["แอดมินสรุปบิลให้", "แอดมินสรุปบิล", "ให้", ""])
         .and_then(|rest| strip_any(rest, &["เอา", "ใช้"]))
         .and_then(|rest| rest.strip_prefix("ค่าเช่า"))
@@ -77,11 +132,51 @@ fn summary_amounts_clause(compact: &str) -> bool {
             .is_some_and(|tail| tail.is_empty() || tail == "เอง")
 }
 
-// Parse a closed billing language. Raw text is never a prompt, program, URL or tool argument.
-// Unknown clauses fail closed rather than trusting a model or a blacklist to identify scripts.
+// Known financial operations remain typed. Other prose needs a separate, tool-free scope check.
+// Lexical checks are defense in depth: text is never evaluated as code or a database query.
 pub fn compile(text: &str) -> Result<BillingRules, AppError> {
     if text.chars().count() > 4000 || text.chars().any(|c| (c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
         || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) { return Err(invalid()); }
+    let compact: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if [
+        "```",
+        "<script",
+        "<iframe",
+        "<img",
+        "<?php",
+        "javascript:",
+        "vbscript:",
+        "data:text/",
+        "$(",
+        "${",
+        "eval(",
+        "exec(",
+        "require(",
+        "process.",
+        "subprocess",
+        "os.system",
+        "db.",
+        "insertone(",
+        "insertmany(",
+        "updatemany(",
+        "updateone(",
+        "insertinto",
+        "droptable",
+        "deletefrom",
+        "mongodb://",
+        "ignoreallprevious",
+        "ignorepreviousinstructions",
+        "ignoretherules",
+    ]
+    .iter()
+    .any(|token| compact.contains(token))
+    {
+        return Err(invalid());
+    }
     let mut rules = BillingRules::default();
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
@@ -112,7 +207,9 @@ pub fn compile(text: &str) -> Result<BillingRules, AppError> {
         let condition = ["หากค่าเช่าในออเดอร์นั้นต่ำกว่า", "หากค่าเช่าต่ำกว่า", "ถ้าค่าเช่าต่ำกว่า"]
             .iter()
             .find_map(|start| compact.strip_prefix(start));
-        if let Some(condition) = condition {
+        if let Some(condition) =
+            condition.filter(|_| compact.to_ascii_lowercase().contains("stockproductcode:"))
+        {
             let (threshold, rest) = condition.split_once("บาท").ok_or_else(invalid)?;
             let rest = rest
                 .trim_start_matches(',')
@@ -141,7 +238,7 @@ pub fn compile(text: &str) -> Result<BillingRules, AppError> {
             });
             continue;
         }
-        return Err(invalid());
+        rules.guidance.push(line.to_string());
     }
     Ok(rules)
 }
@@ -161,4 +258,25 @@ impl BillingRules {
             .as_ref()
             .is_some_and(|rule| net_rental >= 0 && net_rental < rule.rental_below_satang)
     }
+}
+
+pub fn validate_guidance_evidence(
+    result: &crate::models::draft::DraftResult,
+) -> Result<(), AppError> {
+    for evidence in &result.evidence {
+        if evidence.source_type == "shop_billing_guidance"
+            && ![
+                "notes",
+                "amounts.rental_discount_satang",
+                "amounts.deposit_discount_satang",
+                "amounts.shipping_fee_satang",
+            ]
+            .contains(&evidence.field.as_str())
+        {
+            return Err(AppError::Validation(
+                "Shop guidance cannot fabricate customer, product or source order facts",
+            ));
+        }
+    }
+    Ok(())
 }

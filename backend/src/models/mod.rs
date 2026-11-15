@@ -9,5 +9,6 @@ pub mod oa_inbox;
 pub mod oa_sync;
 pub mod outbound;
 pub mod product;
+pub mod quick_replies;
 pub mod shop_settings;
 pub mod team;

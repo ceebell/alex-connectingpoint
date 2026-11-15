@@ -3,32 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, errorText, LineEvent } from "@/lib/api";
 import { stickerIds, stickerPackages, stickerUrl } from "@/lib/stickers";
+import { matchingQuickReplies, slashQuery, type QuickReply } from "@/lib/quick-replies";
+import { prepareReplyImage } from "@/lib/reply-images";
+import QuickRepliesDialog from "./quick-replies-dialog";
 
 type Body = { text: string } | { sticker: { package_id: string; sticker_id: string } } | { image_id: string };
 type Failed = { requestId: string; body: Body; label: string };
 type Upload = { id: string; preview: string; requestId: string };
 type Props = { inquiryId: string; canReply: boolean; onSent: (message: LineEvent) => void; onUnauthorized: () => void };
-
-// LINE limits: original JPEG/PNG up to 10 MB, preview up to 1 MB.
-const ORIGINAL_MAX = 10 * 1024 * 1024;
-async function encode(bitmap: ImageBitmap, maxEdge: number, quality: number): Promise<Blob> {
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("canvas");
-  context.fillStyle = "#ffffff"; // JPEG has no transparency.
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("encode")), "image/jpeg", quality));
-}
-const base64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(blob);
-});
 
 // Same breakpoint as mobile.css, plus touch-first devices: there Enter inserts a new line
 // (on-screen keyboards have no Shift+Enter) and the send button submits.
@@ -48,6 +30,12 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const [pack, setPack] = useState(stickerPackages[0]);
   const [image, setImage] = useState<Upload | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [quickItems, setQuickItems] = useState<QuickReply[]>([]);
+  const [quickLoading, setQuickLoading] = useState(false);
+  const [quickError, setQuickError] = useState("");
+  const [quickLibrary, setQuickLibrary] = useState(false);
+  const [quickDismissed, setQuickDismissed] = useState(false);
+  const [quickActive, setQuickActive] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -55,6 +43,49 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const working = busy || preparing;
   const attachmentsOpen = toolsOpen || stickersOpen || imageOpen;
   const active = focused || attachmentsOpen;
+  const query = slashQuery(text);
+  const quickMatches = matchingQuickReplies(quickItems, query ?? "", "text").slice(0, 8);
+  const quickVisible = focused && query !== null && !quickDismissed && !working && !quickLibrary;
+  const quickIndex = Math.max(0, Math.min(quickActive, quickMatches.length - 1));
+  const quickListId = `quick-replies-${inquiryId}`;
+
+  useEffect(() => {
+    if (quickVisible) document.getElementById(`${quickListId}-${quickIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [quickVisible, quickIndex, quickListId, query]);
+
+  async function loadQuickReplies() {
+    if (quickLoading) return;
+    setQuickLoading(true); setQuickError("");
+    try {
+      const items = new Map<string, QuickReply>(); let before: string | null = null;
+      do {
+        const page: { items: QuickReply[]; next: string | null } = await api(`/api/admin/quick-replies${before ? `?before=${encodeURIComponent(before)}` : ""}`);
+        for (const item of page.items) items.set(item._id, item);
+        if (page.next === before) break;
+        before = page.next;
+      } while (before);
+      setQuickItems([...items.values()]);
+    } catch (cause) { setQuickError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
+    finally { setQuickLoading(false); }
+  }
+  function openQuickLibrary() { collapse(); setQuickLibrary(true); void loadQuickReplies(); }
+  function chooseQuickText(item: QuickReply) {
+    setText(item.text); setTextId(null); setError(""); setFailed(null); setQuickLibrary(false); setQuickDismissed(true); setQuickActive(0);
+    setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setFocused(true);
+    requestAnimationFrame(() => textRef.current?.focus({ preventScroll: true }));
+  }
+  async function chooseQuickReply(item: QuickReply) {
+    if (working) return;
+    if (item.kind === "text") { chooseQuickText(item); return; }
+    collapse(); setQuickLibrary(false); setPreparing(true); setImageOpen(true); setError(""); setFailed(null);
+    try {
+      const result = await api<{ media: { _id: string; preview_url: string } }>(`/api/inquiries/${inquiryId}/quick-replies/${item._id}/media`, { method: "POST", body: JSON.stringify({ expected_version: item.version }) });
+      setImage({ id: result.media._id, preview: result.media.preview_url, requestId: crypto.randomUUID() });
+    } catch (cause) {
+      setImageOpen(false); setError(cause instanceof ApiError && cause.code === "RECORD_CONFLICT" ? "การ์ดนี้ถูกแก้แล้ว กรุณาเปิดคลังแล้วเลือกรูปล่าสุด" : errorText(cause));
+      if (cause instanceof ApiError && cause.status === 401) onUnauthorized();
+    } finally { setPreparing(false); }
+  }
 
   // Dismiss only the presentation: unsent text and a prepared photo remain available.
   function collapse() {
@@ -98,6 +129,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   }
 
   async function sendText() {
+    if (quickVisible) { if (quickMatches[quickIndex]) chooseQuickText(quickMatches[quickIndex]); return; }
     if (!text.trim() || working) return;
     const requestId = textId ?? crypto.randomUUID();
     setTextId(requestId);
@@ -122,13 +154,8 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type) || file.size > 40 * 1024 * 1024) { setError("รองรับไฟล์ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 40 MB"); return; }
     setPreparing(true); setImageOpen(true); setError(""); setFailed(null); setStickersOpen(false); setToolsOpen(false);
     try {
-      const bitmap = await createImageBitmap(file);
-      let original = await encode(bitmap, 2048, 0.85);
-      if (original.size > ORIGINAL_MAX) original = await encode(bitmap, 1600, 0.7);
-      const preview = await encode(bitmap, 240, 0.8);
-      bitmap.close();
-      if (original.size > ORIGINAL_MAX) throw new Error("too large");
-      const result = await api<{ media: { _id: string; preview_url: string } }>(`/api/inquiries/${inquiryId}/media`, { method: "POST", body: JSON.stringify({ original: await base64(original), preview: await base64(preview) }) });
+      const prepared = await prepareReplyImage(file);
+      const result = await api<{ media: { _id: string; preview_url: string } }>(`/api/inquiries/${inquiryId}/media`, { method: "POST", body: JSON.stringify(prepared) });
       setImage({ id: result.media._id, preview: result.media.preview_url, requestId: crypto.randomUUID() });
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) onUnauthorized();
@@ -150,14 +177,35 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     {toolsOpen && <div className="reply-tools" role="group" aria-label="เครื่องมือแนบข้อความ">
         <button type="button" className="tool-button" aria-label="สติกเกอร์" disabled={!canReply || working} onClick={() => { collapse(); setStickersOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 3 4 3 4-3 4-3M8 9h.01M16 9h.01" /></svg><span>สติกเกอร์</span></button>
         <button type="button" className="tool-button" aria-label="แนบรูป" disabled={!canReply || working} onClick={chooseImage}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></svg><span>{image ? "รูปที่เลือก" : "รูปภาพ"}</span></button>
+        <button type="button" className="tool-button" aria-label="คลังข้อความตอบกลับ" disabled={!canReply || working} onClick={openQuickLibrary}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16v15H9l-5 4Z" /><path d="M8 7h8M8 11h6" /></svg><span>ข้อความด่วน / การ์ด</span></button>
     </div>}
     </div>}
     <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={e => void pickImage(e.target.files?.[0])} />
     <div className="reply-row">
       <button type="button" className="reply-add" aria-label={attachmentsOpen ? "ปิดเครื่องมือแนบข้อความ" : "เปิดเครื่องมือแนบข้อความ"} aria-expanded={attachmentsOpen} aria-controls={`reply-attachments-${inquiryId}`} disabled={!canReply || working} onClick={toggleTools}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16" /></svg></button>
       <label className="sr-only" htmlFor="reply-text">ข้อความตอบลูกค้า</label>
-      <textarea ref={textRef} id="reply-text" name="chat-message" autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า…" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); }} onChange={e => { setText(e.target.value); setTextId(null); setError(""); setFailed(null); }} onKeyDown={e => { if (e.key !== "Enter" || e.shiftKey || e.altKey || e.nativeEvent.isComposing) return; if (e.ctrlKey || e.metaKey || sendOnEnter()) { e.preventDefault(); void sendText(); } }} />
+      <textarea ref={textRef} id="reply-text" name="chat-message" role="combobox" aria-autocomplete="list" aria-expanded={quickVisible} aria-controls={quickVisible ? quickListId : undefined} aria-activedescendant={quickVisible && quickMatches.length ? `${quickListId}-${quickIndex}` : undefined} autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… หรือ / ข้อความด่วน" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); if (query !== null) void loadQuickReplies(); }} onChange={e => { if (e.target.value.startsWith("/") && !text.startsWith("/")) void loadQuickReplies(); setText(e.target.value); setTextId(null); setQuickDismissed(false); setQuickActive(0); setError(""); setFailed(null); }} onKeyDown={e => {
+        if (e.nativeEvent.isComposing) return;
+        if (quickVisible && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(e.key)) {
+          e.preventDefault(); e.stopPropagation();
+          if (e.key === "Escape") setQuickDismissed(true);
+          else if (e.key === "Enter") { if (quickMatches[quickIndex]) chooseQuickText(quickMatches[quickIndex]); }
+          else setQuickActive(e.key === "ArrowDown" ? (quickIndex + 1) % Math.max(1, quickMatches.length) : (quickIndex - 1 + quickMatches.length) % Math.max(1, quickMatches.length));
+          return;
+        }
+        if (e.key !== "Enter" || e.shiftKey || e.altKey) return;
+        if (e.ctrlKey || e.metaKey || sendOnEnter()) { e.preventDefault(); void sendText(); }
+      }} />
       <button className="button primary reply-send" aria-label={busy ? "กำลังส่งข้อความ" : textId ? "ส่งอีกครั้ง" : "ส่งข้อความ"} disabled={working || !text.trim() || !canReply}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v15" /></svg></button>
     </div>
+    {quickVisible && <div className="reply-quick-suggestions" data-editor-popup>
+      <div className="reply-quick-heading"><strong>ข้อความด่วน</strong><button type="button" className="text-button" onPointerDown={event => event.preventDefault()} onClick={openQuickLibrary}>จัดการข้อความ</button></div>
+      {quickLoading && <p role="status">กำลังโหลดข้อความด่วน…</p>}
+      {quickError && <p role="alert">{quickError}<button type="button" className="text-button" onPointerDown={event => event.preventDefault()} onClick={() => void loadQuickReplies()}>ลองใหม่</button></p>}
+      <div id={quickListId} role="listbox" aria-label="ข้อความด่วนที่ตรงคำค้น">{quickMatches.map((item, index) => <button key={item._id} id={`${quickListId}-${index}`} type="button" role="option" aria-selected={index === quickIndex} className={`reply-quick-option ${index === quickIndex ? "is-active" : ""}`} onPointerDown={event => event.preventDefault()} onClick={() => chooseQuickText(item)}><strong>/{item.title}</strong><span>{item.text}</span></button>)}</div>
+      {!quickLoading && !quickError && !quickMatches.length && <p role="status">ไม่พบข้อความด่วนที่ตรงคำค้น กดจัดการข้อความเพื่อเพิ่มรายการ</p>}
+      <p>เลือกเพื่อเติมข้อความก่อนส่ง · Enter เลือก · Esc ปิด</p>
+    </div>}
+    {quickLibrary && <QuickRepliesDialog items={quickItems} loading={quickLoading} loadError={quickError} initialText={text} onReload={loadQuickReplies} onSaved={item => { setQuickItems(previous => [item, ...previous.filter(row => row._id !== item._id)]); setQuickError(""); }} onDeleted={id => setQuickItems(previous => previous.filter(item => item._id !== id))} onSelect={item => void chooseQuickReply(item)} onClose={() => setQuickLibrary(false)} onUnauthorized={onUnauthorized} />}
   </form>;
 }

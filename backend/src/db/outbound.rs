@@ -3,7 +3,7 @@ use crate::{
     error::AppError,
     models::{
         customer::Actor,
-        outbound::{Outgoing, SendInput, UploadInput},
+        outbound::{Outgoing, SendInput, UploadInput, UploadedImage},
     },
     state::AppState,
 };
@@ -249,7 +249,19 @@ pub async fn upload(
     if state.config.public_base_url.is_none() {
         return Err(AppError::ImageUnavailable);
     }
-    let (original, preview) = input.validate()?;
+    upload_images(state, inquiry_id, input.validate()?, actor).await
+}
+
+pub async fn upload_images(
+    state: &AppState,
+    inquiry_id: ObjectId,
+    images: (UploadedImage, UploadedImage),
+    actor: &Actor,
+) -> Result<Document, AppError> {
+    if state.config.public_base_url.is_none() {
+        return Err(AppError::ImageUnavailable);
+    }
+    let (original, preview) = images;
     let inquiry = drafts::inquiry(state, inquiry_id).await?;
     recipient(state, &inquiry).await?;
     let id = ObjectId::new();

@@ -7,6 +7,7 @@ import "./typography.css";
 import "../components/workspace-sidebar.css";
 import "../components/date-input.css";
 import "../components/reply-composer.css";
+import "../components/quick-replies.css";
 import "../components/chat-linked-content.css";
 import "../components/customer-notes.css";
 import "../components/team.css";

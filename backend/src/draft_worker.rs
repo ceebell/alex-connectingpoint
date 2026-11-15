@@ -175,6 +175,12 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     let mut sources = BTreeMap::new();
     let mut images = BTreeSet::new();
     sources.insert(format!("admin_summary:{job_id}"), input.summary.clone());
+    for (index, clause) in billing_settings.rules.guidance.iter().enumerate() {
+        sources.insert(
+            format!("shop_billing_guidance:{}-{index}", billing_settings.version),
+            clause.clone(),
+        );
+    }
     let now = DateTime::now();
     let mut summary = state.scope();
     summary.extend(doc! {"_id":job_id,"inquiry_id":inquiry_id,"text":&input.summary,"created_at":now,"updated_at":now});
@@ -276,6 +282,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         sources.extend(size_sources);
         result
     };
+    crate::models::shop_settings::validate_guidance_evidence(&result)?;
     validate_evidence(&result, &sources, &images)?;
     let catalog_lookup = if input.fields.is_none() {
         crate::draft_catalog::enrich(

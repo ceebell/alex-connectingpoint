@@ -24,10 +24,21 @@
 - chatbox ในคอมพิวเตอร์ laptop หน้าจอใหญ่ เมื่อกด Enter ให้ submit ข้อความเลย แต่ถ้ากด Shift + Enter ให้ขึ้นบรรทัดใหม่
 - chatbox ให้ mobile หรือ หน้าจอเล็ก เมื่อกด Enter อย่างเดียวให้ขึ้นบรรทัดใหม่ 
 
+## Requirements related to AI
+-
+
 
 ### add-on requirements
+[Done][15Nov2026 12:38]
 - มี quick message สามารถบันทึก message ที่ใช้บ่อยๆ ใช้สำหรับ reply เป็น text 
 
+[Done][15Nov2026 12:38]
 - สำหรับในช่อง chatbox ถ้าผู้ใช้งานใส่ slash `/` นำคือให้เอา quick message มาตอบ เช่น ถ้ามี quick message `สวัสดีค่ะ ยินดีต้อนรับสู่ Arisa Rental ค่ะ` . . . หากลูกค้าพิมพ์ `/สวัสดี . . . ` ให้มี dropdown เด้งขึ้น น่าจะต้องขึ้นด้านบน suggest quick message ที่ match กับสิ่งที่ user พิมพ์
 
+[Done][15Nov2026 12:38]
 - มีบันทึก card-based message เป็นรูปสามารถบันทึกได้ ใช้สำหรับ reply เป็นรูปภาพ
+
+## การตรวจสอบระบบบน Server
+
+[Done][15Nov2026 17:03]
+- ตรวจสอบสาเหตุที่ https://hermes.salepie.online/ ใช้งานไม่ได้ — ตรวจพบ Nginx จับพอร์ต 80 ทำให้ Caddy failed และไม่มี listener 443; frontend ตอบ 200 และ backend health เป็น ok เตรียมคำสั่งแก้ให้ผู้ดูแลรันด้วย sudo แล้ว ยังไม่ได้เปลี่ยนสถานะบริการบน server

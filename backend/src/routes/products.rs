@@ -19,9 +19,12 @@ pub async fn settings(
     } else {
         vec![]
     };
-    Ok(Json(json!({"configured":configured,"branches":branches,
+    let billing = crate::db::shop_settings::load(&state).await?;
+    Ok(Json(
+        json!({"configured":configured,"branches":branches,"billing_searches":billing.rules.catalog_searches,"billing_settings_version":billing.version,
         "image_search_configured":state.config.hermes_url.is_some() && state.config.hermes_api_key.is_some(),
-        "product_url_configured":state.config.alex.as_ref().is_some_and(|cfg| cfg.product_url_prefix.is_some())})))
+        "product_url_configured":state.config.alex.as_ref().is_some_and(|cfg| cfg.product_url_prefix.is_some())}),
+    ))
 }
 
 pub async fn categories(
