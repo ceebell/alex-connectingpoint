@@ -130,7 +130,12 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         branches,
     } = cart_lines(&records)?;
     // Policy-owned fee lines are regenerated from the exact current catalog item, never duplicated from the cart.
-    if let Some(rule) = &policy.rules.shipping_product {
+    if let Some(rule) = policy
+        .rules
+        .shipping_product
+        .as_ref()
+        .filter(|_| !policy.rules.manual_shipping)
+    {
         lines.retain(|line| !line.code.eq_ignore_ascii_case(&rule.product_code));
         if lines.is_empty() && !missing.iter().any(|item| item["field"] == "cart") {
             missing.push(json!({"field":"cart"}));
@@ -147,6 +152,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     }
     let catalog_rental: i64 = lines
         .iter()
+        .filter(|line| !line.is_shipping)
         .map(|line| line.rental_fee_satang * line.quantity)
         .sum();
     let catalog_deposit: i64 = lines
@@ -154,6 +160,17 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         .map(|line| line.deposit_satang * line.quantity)
         .sum();
     let summary = policy.rules.summary_amounts;
+    let summary_rental = summary && fields.amounts.rental_fee_satang.is_some();
+    let summary_deposit = summary && fields.amounts.deposit_satang.is_some();
+    // Missing quotes use verified catalog prices. An explicit quote still takes priority,
+    // while an admin discount can be applied to a catalog default without rerunning AI.
+    if summary && cart_complete {
+        fields
+            .amounts
+            .rental_fee_satang
+            .get_or_insert(catalog_rental);
+        fields.amounts.deposit_satang.get_or_insert(catalog_deposit);
+    }
     if summary {
         missing.extend(summary_issues(
             &fields.amounts,
@@ -162,15 +179,15 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             cart_complete,
         ));
     }
-    // Under the summary-amounts rule a discount typed or auto-filled in the draft is ignored: the
-    // discount is always catalog − summary total, so the bill lands exactly on the summary amounts.
-    let (written_rental_discount, written_deposit_discount) = if summary {
-        (None, None)
+    let written_rental_discount = if summary_rental {
+        None
     } else {
-        (
-            fields.amounts.rental_discount_satang,
-            fields.amounts.deposit_discount_satang,
-        )
+        fields.amounts.rental_discount_satang
+    };
+    let written_deposit_discount = if summary_deposit {
+        None
+    } else {
+        fields.amounts.deposit_discount_satang
     };
     let mut groups = Vec::new();
     if let (true, Some(branch), Some(pickup), Some(returned), Some(method)) = (
@@ -201,7 +218,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             notes: String::new(),
             quoted_rental_fee_satang: fields.amounts.rental_fee_satang,
             quoted_deposit_satang: fields.amounts.deposit_satang,
-            quoted_shipping_fee_satang: fields.amounts.shipping_fee_satang,
+            quoted_shipping_fee_satang: Some(0),
             rental_discount_satang: discount(
                 written_rental_discount,
                 fields.amounts.rental_fee_satang,
@@ -212,10 +229,13 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
                 fields.amounts.deposit_satang,
                 catalog_deposit,
             ),
-            amounts_from_summary: summary,
+            amounts_from_summary: summary_rental,
         });
         if let Some(group) = groups.last_mut() {
             super::shop_settings::apply_shipping(state, &policy, group).await?;
+            if group.lines.iter().any(|line| line.is_shipping) {
+                group.quoted_shipping_fee_satang = Some(0);
+            }
         }
     }
     let has_conflicts = draft
@@ -227,7 +247,8 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     let closed = closed(&draft, &version_bills(state, id, &versions).await?);
     let source_hash = drafts::hash(
         &json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"cart":records,
-        "billing_settings_version":policy.version,"billing_rules":policy.rules,"groups":groups}),
+        "billing_settings_version":policy.version,"billing_rules":policy.rules,"groups":groups,
+        "remark_policy":"explicit_admin_notes_v1","pricing_policy":"final_review_discounts_v1"}),
     )?;
     Ok(Source {
         inquiry,
@@ -308,6 +329,7 @@ fn cart_lines(records: &[Document]) -> Result<CartLines, AppError> {
             quantity: record.get_i64("quantity").unwrap_or(1),
             rental_fee_satang: rental_fee,
             deposit_satang: deposit,
+            is_shipping: record.get_bool("is_shipping").unwrap_or(false),
             image_url: candidate.image_url,
         });
     }
@@ -340,8 +362,87 @@ fn scoped_id(state: &AppState, inquiry: ObjectId, id: ObjectId) -> Document {
     filter
 }
 
+async fn adjusted_group(
+    state: &AppState,
+    source: &Source,
+    key: &str,
+    rental_discount: Option<i64>,
+    deposit_discount: Option<i64>,
+) -> Result<Group, AppError> {
+    let mut group = choose(source, key)?;
+    if rental_discount.is_none() && deposit_discount.is_none() {
+        return Ok(group);
+    }
+    // Discounts apply to the rented products. Regenerate the policy-owned shipping item
+    // afterwards, using the edited net rent, so a fee is neither discounted nor duplicated.
+    if let Some(rule) = source
+        .policy
+        .rules
+        .shipping_product
+        .as_ref()
+        .filter(|_| !source.policy.rules.manual_shipping)
+    {
+        group
+            .lines
+            .retain(|line| !line.code.eq_ignore_ascii_case(&rule.product_code));
+        group.notes.clear();
+    }
+    let rental: i64 = group
+        .lines
+        .iter()
+        .filter(|line| !line.is_shipping)
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum();
+    let deposit: i64 = group
+        .lines
+        .iter()
+        .map(|line| line.deposit_satang * line.quantity)
+        .sum();
+    group.rental_discount_satang = rental_discount.unwrap_or(group.rental_discount_satang);
+    group.deposit_discount_satang = deposit_discount.unwrap_or(group.deposit_discount_satang);
+    if !(0..=rental).contains(&group.rental_discount_satang)
+        || !(0..=deposit).contains(&group.deposit_discount_satang)
+    {
+        return Err(AppError::Validation(
+            "Discounts must be between zero and the catalog totals",
+        ));
+    }
+    group.quoted_rental_fee_satang = Some(rental - group.rental_discount_satang);
+    group.quoted_deposit_satang = Some(deposit - group.deposit_discount_satang);
+    super::shop_settings::apply_shipping(state, &source.policy, &mut group).await?;
+    if group.lines.iter().any(|line| line.is_shipping) {
+        group.quoted_shipping_fee_satang = Some(0);
+    }
+    Ok(group)
+}
+
+// Preview only: no bill, reservation or order is written until the admin presses send.
+pub async fn amounts(state: &AppState, id: ObjectId, input: CheckInput) -> Result<Value, AppError> {
+    let source = source(state, id).await?;
+    if input.source_hash != source.source_hash {
+        return Err(AppError::ContextChanged);
+    }
+    let group = adjusted_group(
+        state,
+        &source,
+        &input.group_key,
+        input.rental_discount_satang,
+        input.deposit_discount_satang,
+    )
+    .await?;
+    Ok(
+        json!({"group":group,"amounts_hash":drafts::hash(&json!(group))?,"source_hash":source.source_hash}),
+    )
+}
+
 fn safe_submission(mut record: Document) -> Result<Value, AppError> {
-    for key in ["payload", "alex_response", "submitted_by_id", "source_hash"] {
+    for key in [
+        "payload",
+        "alex_response",
+        "submitted_by_id",
+        "source_hash",
+        "review_input",
+    ] {
         record.remove(key);
     }
     serde_json::to_value(record).map_err(|_| AppError::Data)
@@ -411,7 +512,9 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     Ok(
         json!({"source_hash":source.source_hash,"draft_version":drafts::version(&source.inquiry),"closed":source.closed,"groups":source.groups,"missing":source.missing,
         "has_conflicts":source.has_conflicts,"submissions":submissions,"customer":{"name":source.fields.customer_name,"phone":source.fields.customer_phone,"address":source.fields.customer_address},
-        "notes":source.fields.notes,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
+        // Draft notes can contain AI questions, shop workflow instructions and chat timestamps.
+        // The final bill starts with an empty remark; only the admin's review input supplies notes.
+        "notes":Value::Null,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
     )
 }
 
@@ -463,7 +566,14 @@ pub async fn availability(
     if input.source_hash != source.source_hash {
         return Err(AppError::ContextChanged);
     }
-    let group = choose(&source, &input.group_key)?;
+    let group = adjusted_group(
+        state,
+        &source,
+        &input.group_key,
+        input.rental_discount_satang,
+        input.deposit_discount_satang,
+    )
+    .await?;
     let session = alex::login(state).await?;
     let results = check(state, &session, &group).await?;
     if self::source(state, id).await?.source_hash != source.source_hash {
@@ -584,10 +694,42 @@ pub async fn review(
         return Err(AppError::ContextChanged);
     }
     input.customer_name = source.policy.rules.customer_name(&input.customer_name);
-    if source.policy.rules.shipping_product.is_some() {
-        input.shipping_fee_satang = 0;
+    // Shipping is a verified catalog item in this order, never an extra browser-supplied charge.
+    input.shipping_fee_satang = 0;
+    let discounts_finalized =
+        input.rental_discount_satang.is_some() || input.deposit_discount_satang.is_some();
+    if discounts_finalized {
+        // The final admin amounts replace defaults and cannot stack an automatic Alex discount.
+        input.use_discount_promotion = false;
     }
-    let group = choose(&source, &input.group_key)?;
+    let group = adjusted_group(
+        state,
+        &source,
+        &input.group_key,
+        input.rental_discount_satang,
+        input.deposit_discount_satang,
+    )
+    .await?;
+    if let Some(expected) = &input.amounts_hash
+        && *expected != drafts::hash(&json!(group))?
+    {
+        return Err(AppError::ContextChanged);
+    }
+    if source.policy.rules.shipping_product.is_some() {
+        let original = choose(&source, &input.group_key)?;
+        input.notes = input
+            .notes
+            .lines()
+            .filter(|line| *line != original.notes && *line != group.notes)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !group.notes.is_empty() {
+            if !input.notes.trim().is_empty() {
+                input.notes.push('\n');
+            }
+            input.notes.push_str(&group.notes);
+        }
+    }
     validate_input(&input, &group)?;
     let session = alex::login(state).await?;
     // A booked or unreadable queue does not stop the review; the admin confirms it before sending.
@@ -603,24 +745,22 @@ pub async fn review(
         .iter()
         .map(|line| line.deposit_satang * line.quantity)
         .sum();
-    if group.rental_discount_satang > rental || group.deposit_discount_satang > deposit {
+    let discountable: i64 = group
+        .lines
+        .iter()
+        .filter(|line| !line.is_shipping)
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum();
+    if !(0..=discountable).contains(&group.rental_discount_satang)
+        || !(0..=deposit).contains(&group.deposit_discount_satang)
+    {
         return Err(AppError::Validation(
             "Discounts cannot exceed the catalog rental or deposit totals",
         ));
     }
     let rental_fee = rental - group.rental_discount_satang;
     let deposit_fee = deposit - group.deposit_discount_satang;
-    // Alex has no shipping field, so a shipping fee always goes into the order note.
-    let mut notes = input.notes.trim().to_string();
-    if input.shipping_fee_satang > 0 {
-        if !notes.is_empty() {
-            notes.push('\n');
-        }
-        notes.push_str(&format!(
-            "ค่าจัดส่ง {} บาท (ไม่รวมในยอดค่าเช่า)",
-            baht(input.shipping_fee_satang)
-        ));
-    }
+    let notes = input.notes.trim();
     let mut detail = json!({"branchId":group.branch_id,"customerId":"","customerName":input.customer_name,"customerAddress":input.customer_address,"customerPhone":input.customer_phone,
         "lineId":"","howToKnowShop":"","accountNumber":"","accountName":"","bankName":"","startDate":group.pickup_date,"endDate":group.return_date,
         "receivingMethod":input.receiving_method,"remark1":notes,"rentalPaymentMethod":input.rental_payment_method,"bailPaymentMethod":input.bail_payment_method,
@@ -653,6 +793,7 @@ pub async fn review(
         "queue":bson::to_bson(&queue).map_err(|_|AppError::Data)?,
         "created_at":now,"updated_at":now,"expires_at":DateTime::from_millis(now.timestamp_millis()+300_000)});
     record.insert("billing_settings_version", source.policy.version);
+    record.insert("discounts_finalized", discounts_finalized);
     record.insert(
         "billing_rules",
         bson::to_bson(&source.policy.rules).map_err(|_| AppError::Data)?,
@@ -661,7 +802,7 @@ pub async fn review(
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"queue":queue,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
         "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
-        "rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,
+        "rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,"discounts_finalized":discounts_finalized,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
     )
 }
@@ -670,24 +811,100 @@ fn record_expiry(now: DateTime) -> DateTime {
     DateTime::from_millis(now.timestamp_millis() + 300_000)
 }
 
-fn order_id(state: &AppState, status: u16, value: &Value) -> Option<String> {
-    if !(200..300).contains(&status) || value.get("success") == Some(&json!(false)) {
-        return None;
-    }
-    let pointer = state.config.alex.as_ref()?.order_id_pointer.as_ref()?;
-    let id = if pointer == "$" {
+fn reference_value(value: &Value) -> Option<String> {
+    let text = value.as_str().map(str::to_string).or_else(|| {
         value
+            .as_u64()
+            .filter(|value| *value > 0)
+            .map(|value| value.to_string())
+    })?;
+    (!text.trim().is_empty()
+        && text.trim() != "0"
+        && text.len() <= 200
+        && !text.chars().any(char::is_control))
+    .then(|| text.trim().to_string())
+}
+
+fn reference_field(value: &Value, names: &[&str]) -> Option<String> {
+    let values: BTreeSet<_> = names
+        .iter()
+        .filter_map(|name| value.get(*name).and_then(reference_value))
+        .collect();
+    (values.len() == 1)
+        .then(|| values.into_iter().next())
+        .flatten()
+}
+
+// Read explicit order fields only, never an unrelated customer/product ID or a guessed number.
+// Without configured paths, both references must come from the same response object.
+fn order_reference(
+    status: u16,
+    value: &Value,
+    id_path: Option<&str>,
+    number_path: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    if !(200..300).contains(&status) || value.get("success") == Some(&json!(false)) {
+        return (None, None);
+    }
+    let id_names = ["orderId", "OrderId", "orderID", "OrderID", "order_id"];
+    let number_names = [
+        "orderNumber",
+        "OrderNumber",
+        "orderNo",
+        "OrderNo",
+        "order_number",
+    ];
+    let (id, container) = if let Some(path) = id_path {
+        let container = if path == "$" {
+            value
+        } else {
+            value
+                .pointer(path.rsplit_once('/').map_or("", |(parent, _)| parent))
+                .unwrap_or(&Value::Null)
+        };
+        let id = if path == "$" {
+            reference_value(value)
+        } else {
+            value.pointer(path).and_then(reference_value)
+        };
+        (id, container)
     } else {
-        value.pointer(pointer)?
+        let candidates: Vec<_> = [
+            "",
+            "/data",
+            "/result",
+            "/order",
+            "/orderDetail",
+            "/data/order",
+            "/data/orderDetail",
+        ]
+        .iter()
+        .filter_map(|path| value.pointer(path))
+        .filter(|object| object.get("success") != Some(&json!(false)))
+        .filter(|object| {
+            reference_field(object, &id_names).is_some()
+                || reference_field(object, &number_names).is_some()
+        })
+        .collect();
+        if candidates.len() != 1 {
+            return (None, None);
+        }
+        (reference_field(candidates[0], &id_names), candidates[0])
     };
-    let id = if let Some(value) = id.as_str() {
-        value.to_string()
-    } else if let Some(value) = id.as_u64().filter(|n| *n > 0) {
-        value.to_string()
-    } else {
-        return None;
-    };
-    (!id.trim().is_empty() && id.len() <= 200 && !id.chars().any(char::is_control)).then_some(id)
+    if container.get("success") == Some(&json!(false)) {
+        return (None, None);
+    }
+    let number = number_path.map_or_else(
+        || reference_field(container, &number_names),
+        |path| {
+            if path == "$" {
+                reference_value(value)
+            } else {
+                value.pointer(path).and_then(reference_value)
+            }
+        },
+    );
+    (id, number)
 }
 
 fn sanitize(value: &mut Value) {
@@ -864,6 +1081,32 @@ pub async fn submit(
         "billing_rules",
         bson::to_bson(&source.policy.rules).map_err(|_| AppError::Data)?,
     );
+    record.insert(
+        "review_input",
+        review.get("input").cloned().ok_or(AppError::Data)?,
+    );
+    record.insert(
+        "discounts_finalized",
+        review.get_bool("discounts_finalized").unwrap_or(false),
+    );
+    record.insert(
+        "line_user_id",
+        source
+            .inquiry
+            .get("line_user_id")
+            .cloned()
+            .unwrap_or(bson::Bson::Null),
+    );
+    record.insert(
+        "conversation_key",
+        source
+            .inquiry
+            .get("conversation_key")
+            .cloned()
+            .unwrap_or(bson::Bson::Null),
+    );
+    let reviewed_input = review.get_document("input").map_err(|_| AppError::Data)?;
+    record.insert("customer", doc! {"name":reviewed_input.get_str("customer_name").map_err(|_|AppError::Data)?,"phone":reviewed_input.get_str("customer_phone").map_err(|_|AppError::Data)?,"address":reviewed_input.get_str("customer_address").map_err(|_|AppError::Data)?});
     if let Err(error) = state
         .collection("alex_submissions")
         .insert_one(record.clone())
@@ -923,10 +1166,20 @@ pub async fn submit(
     let outcome = alex::create_order(state, &session, &payload).await;
     let mut updates = doc! {"status":"SUBMIT_UNKNOWN","active":false,"updated_at":DateTime::now()};
     if let Ok((status, mut response)) = outcome {
-        if let Some(order) = order_id(state, status, &response) {
+        let config = state.config.alex.as_ref().ok_or(AppError::Data)?;
+        let (order, number) = order_reference(
+            status,
+            &response,
+            config.order_id_pointer.as_deref(),
+            config.order_number_pointer.as_deref(),
+        );
+        if let Some(order) = order {
             updates.insert("status", "CONFIRMED");
             updates.insert("alex_order_id", order);
             updates.insert("verification", "api_response");
+        }
+        if let Some(number) = number {
+            updates.insert("alex_order_number", number);
         }
         sanitize(&mut response);
         updates.insert("http_status", i32::from(status));
@@ -991,6 +1244,12 @@ pub async fn resolve(
             .ok_or(AppError::BadRequest)?;
         updates.insert("status", "CONFIRMED");
         updates.insert("alex_order_id", order);
+        if let Some(number) = input.order_number {
+            updates.insert(
+                "alex_order_number",
+                reference_value(&json!(number)).ok_or(AppError::BadRequest)?,
+            );
+        }
     }
     filter.insert(
         "status",
@@ -1026,5 +1285,73 @@ mod tests {
         assert_eq!(discount(Some(0), Some(50_000), 70_000), 0);
         assert_eq!(discount(None, Some(80_000), 70_000), 0);
         assert_eq!(discount(None, None, 70_000), 0);
+    }
+
+    #[test]
+    fn order_references_are_distinct_and_bound_to_one_response_object() {
+        let id = Some("id-123".into());
+        let number = Some("AR-2026-001".into());
+        assert_eq!(
+            order_reference(
+                200,
+                &json!({"orderId":"id-123","orderNumber":"AR-2026-001","customerId":"customer"}),
+                None,
+                None
+            ),
+            (id.clone(), number.clone())
+        );
+        assert_eq!(
+            order_reference(
+                201,
+                &json!({"data":{"OrderId":"id-123","OrderNumber":"AR-2026-001"}}),
+                None,
+                None
+            ),
+            (id.clone(), number.clone())
+        );
+        assert_eq!(
+            order_reference(
+                200,
+                &json!({"data":{"id":"id-123","number":"AR-2026-001"}}),
+                Some("/data/id"),
+                Some("/data/number")
+            ),
+            (id.clone(), number)
+        );
+        assert_eq!(
+            order_reference(
+                200,
+                &json!({"orderId":"id-123","data":{"orderNumber":"unrelated"}}),
+                Some("/orderId"),
+                None
+            ),
+            (id, None)
+        );
+        assert_eq!(
+            order_reference(
+                200,
+                &json!({"orderId":42,"orderNumber":"0000819"}),
+                None,
+                None
+            ),
+            (Some("42".into()), Some("0000819".into()))
+        );
+        for (status, value) in [
+            (500, json!({"orderId":"id-123","orderNumber":"failed"})),
+            (200, json!({"success":false,"orderId":"id-123"})),
+            (200, json!({"data":{"success":false,"orderId":"id-123"}})),
+            (
+                200,
+                json!({"customer":{"id":"customer"},"productItemId":"product","number":"not-order"}),
+            ),
+            (200, json!({"orderId":"a","data":{"orderId":"b"}})),
+            (200, json!({"orderId":0,"orderNumber":"bad\nvalue"})),
+        ] {
+            assert_eq!(
+                order_reference(status, &value, None, None),
+                (None, None),
+                "{value}"
+            );
+        }
     }
 }

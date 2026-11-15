@@ -143,6 +143,7 @@ pub fn net_rental(group: &crate::models::checkout::Group) -> Result<i64, AppErro
     Ok(group
         .lines
         .iter()
+        .filter(|line| !line.is_shipping)
         .map(|line| line.rental_fee_satang * line.quantity)
         .sum::<i64>()
         - group.rental_discount_satang)
@@ -213,6 +214,7 @@ pub async fn apply_shipping(
         quantity: 1,
         rental_fee_satang: rule.fee_satang,
         deposit_satang: 0,
+        is_shipping: true,
         image_url: product.image_url,
     });
     group.notes = format!(

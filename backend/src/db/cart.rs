@@ -19,7 +19,7 @@ const MAX_LINES: usize = 20;
 pub async fn items(state: &AppState, inquiry_id: ObjectId) -> Result<Vec<Document>, AppError> {
     let mut filter = state.scope();
     filter.insert("inquiry_id", inquiry_id);
-    let records: Vec<Document> = state
+    let mut records: Vec<Document> = state
         .collection("cart_items")
         .find(filter)
         .sort(doc! {"created_at":1,"_id":1})
@@ -27,11 +27,17 @@ pub async fn items(state: &AppState, inquiry_id: ObjectId) -> Result<Vec<Documen
         .await?
         .try_collect()
         .await?;
-    for record in &records {
+    let policy = super::shop_settings::load(state).await?;
+    for record in &mut records {
         super::team::check_branch(
             state,
             record.get_str("branch_id").map_err(|_| AppError::Data)?,
         )?;
+        let product = candidate(record)?;
+        let shipping = record
+            .get_bool("is_shipping")
+            .unwrap_or_else(|_| policy.rules.shipping_item(&product.code, &product.name));
+        record.insert("is_shipping", shipping);
     }
     Ok(records)
 }
@@ -52,7 +58,13 @@ pub fn snapshot(records: &[Document]) -> Vec<Document> {
         .iter()
         .map(|record| {
             let mut line = Document::new();
-            for key in ["product_item_id", "branch_id", "candidate", "quantity"] {
+            for key in [
+                "product_item_id",
+                "branch_id",
+                "candidate",
+                "quantity",
+                "is_shipping",
+            ] {
                 if let Some(value) = record.get(key) {
                     line.insert(key, value.clone());
                 }
@@ -79,10 +91,11 @@ pub fn from_bill(group: &Group) -> Result<Vec<Document>, AppError> {
                 image_url: line.image_url.clone(),
                 score: None,
             };
-            Ok(
-                doc! {"product_item_id":&line.product_item_id,"branch_id":&group.branch_id,
-                "candidate":bson::to_document(&candidate).map_err(|_| AppError::Data)?,"quantity":line.quantity},
-            )
+            let mut record = doc! {"product_item_id":&line.product_item_id,"branch_id":&group.branch_id,
+                "candidate":bson::to_document(&candidate).map_err(|_| AppError::Data)?,"quantity":line.quantity};
+            // Bills predating this marker can still infer the shipping type from catalog identity.
+            if line.is_shipping { record.insert("is_shipping", true); }
+            Ok(record)
         })
         .collect()
 }
@@ -257,11 +270,12 @@ pub async fn update(
     let changed = match input.quantity {
         None => collection.delete_one(filter).await?.deleted_count,
         Some(quantity) => {
+            let mut changes = doc! {"quantity":quantity,"updated_at":DateTime::now()};
+            if let Some(shipping) = input.is_shipping {
+                changes.insert("is_shipping", shipping);
+            }
             collection
-                .update_one(
-                    filter,
-                    doc! {"$set":{"quantity":quantity,"updated_at":DateTime::now()},"$inc":{"revision":1_i64}},
-                )
+                .update_one(filter, doc! {"$set":changes,"$inc":{"revision":1_i64}})
                 .await?
                 .matched_count
         }

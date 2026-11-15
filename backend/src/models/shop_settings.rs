@@ -24,6 +24,24 @@ pub struct CatalogSearch {
     pub query: String,
 }
 
+impl BillingRules {
+    pub fn shipping_item(&self, code: &str, name: &str) -> bool {
+        self.shipping_product
+            .as_ref()
+            .is_some_and(|rule| rule.product_code.eq_ignore_ascii_case(code))
+            || [
+                "ค่าขนส่ง",
+                "ค่าส่ง",
+                "shipping fee",
+                "shipping charge",
+                "delivery fee",
+                "delivery charge",
+            ]
+            .iter()
+            .any(|prefix| name.trim().to_lowercase().starts_with(prefix))
+    }
+}
+
 pub fn validate_searches(searches: &[CatalogSearch], text: &str) -> Result<(), AppError> {
     let compact: String = text
         .chars()

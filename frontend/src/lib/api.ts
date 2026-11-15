@@ -99,13 +99,13 @@ export type Candidate = { product_item_id: string; code: string; name: string; c
 export type CodeName = { code: string; name: string };
 export const findCode = (written: string | null | undefined, list: CodeName[]) => { const wanted = written?.trim().toLowerCase(); return wanted ? list.find(value => value.name.toLowerCase() === wanted || value.code.toLowerCase() === wanted)?.code ?? "" : ""; };
 export const codeLabel = (code: string | null | undefined, list: CodeName[]) => { if (!code) return "ไม่ระบุ"; const found = list.find(value => value.code === code); return found ? `${found.name} (${code})` : code; };
-export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string };
+export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string; is_shipping?: boolean };
 export type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };
 // OPEN versions can be edited and sent; SENT (a bill reached Alex or may have) and CANCELLED ones are only cloned.
 export type VersionState = "OPEN" | "SENT" | "CANCELLED";
-export type VersionBill = { status: string; alex_order_id: string | null; submitted_by: string | null; created_at: number | null };
+export type VersionBill = { status: string; alex_order_id: string | null; alex_order_number?: string | null; submission_id?: string | null; submitted_by: string | null; created_at: number | null };
 export type Draft = { _id: string; draft_version: number; workflow_status: string; admin_summary?: string; stale: boolean; redacted: boolean; missing_fields: string[]; confirmed_fields?: string[]; catalog_lookup?: { item_index: number; status: string; search_id?: string; selected_product_item_id?: string }[]; created_at: string; result?: { fields: Fields; evidence: Evidence[]; conflicts: string[]; questions: string[]; date_options?: DateOption[] }; state?: VersionState; bill?: VersionBill | null; cancelled_at?: string; cancelled_by?: string; copied_from?: string; cart?: { product_item_id: string; candidate: Candidate; quantity: number }[] };
 // Pickup/return pairs the AI read from images; the admin picks one for the order.
 export type DateOption = { pickup_date: string | null; return_date: string | null; label: string };

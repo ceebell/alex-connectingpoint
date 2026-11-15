@@ -7,6 +7,7 @@ import OrderCart, { price, QueueCheck } from "./order-cart";
 import RentalCheckout from "./rental-checkout";
 import DateInput from "./date-input";
 import { formatDate as day } from "@/lib/dates";
+import { discountableRental } from "@/lib/cart-amounts";
 
 const rentalKeys = Object.keys(emptyRental()) as (keyof Rental)[];
 const quotedKeys = ["rental_fee_satang", "deposit_satang", "shipping_fee_satang"] as const;
@@ -100,7 +101,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const queueKey = `${fields.rental.pickup_date}|${fields.rental.return_date}|${cart.map(item => `${item._id}:${item.quantity}`).join(",")}`;
   const availability = queue?.key === queueKey ? queue.result : null;
   const receiving = fields.rental.fulfillment_method === "store_pickup" ? STORE_PICKUP : fields.rental.delivery_provider ?? "Flash";
-  const rentalTotal = cart.reduce((sum, item) => sum + (item.candidate.rental_fee_satang ?? 0) * item.quantity, 0);
+  const rentalTotal = discountableRental(cart);
   const depositTotal = cart.reduce((sum, item) => sum + (item.candidate.deposit_satang ?? 0) * item.quantity, 0);
   const amount = (key: keyof Amounts) => fields.amounts[key] ?? null;
   const setRental = (key: keyof Rental, value: string) => setFields(current => ({ ...current, rental: { ...current.rental, [key]: value || null } }));
@@ -119,7 +120,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       const amounts = { ...current.amounts };
       for (const [key, fee] of [["rental_discount_satang", "rental_fee_satang"], ["deposit_discount_satang", "deposit_satang"]] as const) {
         const quoted = current.amounts[fee] ?? null;
-        const auto = (list: CartItem[]) => !list.length || quoted === null ? 0 : Math.max(0, list.reduce((sum, item) => sum + (item.candidate[fee] ?? 0) * item.quantity, 0) - quoted);
+        const auto = (list: CartItem[]) => !list.length || quoted === null ? 0 : Math.max(0, (fee === "rental_fee_satang" ? discountableRental(list) : list.reduce((sum, item) => sum + (item.candidate[fee] ?? 0) * item.quantity, 0)) - quoted);
         const now = current.amounts[key] ?? null;
         if (now === null || (first ? initial.amounts?.[key] == null : now === auto(previous))) amounts[key] = auto(items);
       }
@@ -140,7 +141,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
 
   return <div ref={form} className="draft-form">
     {closed && draft && <div className={`notice ${draft.state === "SENT" ? "success" : "warning"}`} role="status">
-      <strong>{draft.state === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชัน {draft.draft_version} ส่งเข้า Alex แล้ว{draft.bill?.alex_order_id && ` · เลขออเดอร์ ${draft.bill.alex_order_id}`}</> : `ร่างเวอร์ชัน ${draft.draft_version} ถูกยกเลิกแล้ว`}</strong>
+      <strong>{draft.state === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชัน {draft.draft_version} ส่งเข้า Alex แล้ว{draft.bill?.alex_order_number && ` · Order Number: ${draft.bill.alex_order_number}`}{draft.bill?.alex_order_id && ` · Order ID: ${draft.bill.alex_order_id}`}</> : `ร่างเวอร์ชัน ${draft.draft_version} ถูกยกเลิกแล้ว`}</strong>
       <p>{draft.state === "SENT" ? "งานนี้ปิดแล้ว แก้ไขหรือส่งซ้ำไม่ได้" : "แก้ไขหรือส่งเข้า Alex ไม่ได้อีก"} — ถ้าต้องการใช้ข้อมูลนี้ต่อ ให้โคลนเป็นเวอร์ชันใหม่ (ตะกร้าของเวอร์ชันนี้จะกลับมาด้วย)</p>
       <button type="button" className="button secondary" disabled={busy} onClick={onClone}><span aria-hidden="true">⧉</span> โคลนเป็นเวอร์ชันใหม่</button>
     </div>}
@@ -164,12 +165,11 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <QueueCheck inquiryId={inquiryId} pickup={fields.rental.pickup_date} returned={fields.rental.return_date} count={cart.length} result={availability} disabled={busy} onResult={result => setQueue({ key: queueKey, result })} onUnauthorized={onUnauthorized} />
     </section>
     <section className="order-section section-amounts">
-      <h3 className="form-heading"><span aria-hidden="true">🏷️</span> ส่วนลดและค่าจัดส่ง <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
+      <h3 className="form-heading"><span aria-hidden="true">🏷️</span> ส่วนลดของออเดอร์ <span className="muted small">ใช้กับทั้งออเดอร์</span></h3>
       <p className="muted small">ตามแค็ตตาล็อก: ค่าเช่า {price(rentalTotal)} บาท · ค่าประกัน {price(depositTotal)} บาท{amount("rental_fee_satang") != null && <><br />ราคาที่แจ้งลูกค้า: ค่าเช่า {price(amount("rental_fee_satang"))} บาท{amount("deposit_satang") != null && ` · ค่าประกัน ${price(amount("deposit_satang"))} บาท`}</>}</p>
       <div className="field-grid">
         {money("rental_discount_satang", "ส่วนลดค่าเช่า", cart.length ? rentalTotal : undefined, autoRental)}
         {money("deposit_discount_satang", "ส่วนลดค่าประกัน", cart.length ? depositTotal : undefined, autoDeposit)}
-        {money("shipping_fee_satang", "ค่าจัดส่ง")}
       </div>
       {usesAuto && <p className="notice info">ใส่ส่วนลดอัตโนมัติจากราคาที่แจ้งลูกค้าเทียบกับราคาใน Alex{autoRental > 0 && rentalDiscount === autoRental && ` · ค่าเช่า ${price(autoRental)} บาท`}{autoDeposit > 0 && depositDiscount === autoDeposit && ` · ค่าประกัน ${price(autoDeposit)} บาท`} — แก้ตัวเลขได้ หรือกรอก 0 ถ้าไม่ให้ส่วนลด แล้วกดบันทึกร่าง</p>}
       {aboveCatalog && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex กรุณาตรวจสินค้าในตะกร้า</p>}

@@ -12,6 +12,7 @@ pub struct AlexConfig {
     pub product_url_prefix: Option<String>,
     pub image_origins: Vec<String>,
     pub order_id_pointer: Option<String>,
+    pub order_number_pointer: Option<String>,
 }
 
 #[derive(Clone)]
@@ -159,6 +160,7 @@ fn alex_config() -> Result<Option<AlexConfig>, AppError> {
             .map(String::from)
             .collect(),
         order_id_pointer: optional("ALEX_ORDER_ID_POINTER"),
+        order_number_pointer: optional("ALEX_ORDER_NUMBER_POINTER"),
     }))
 }
 

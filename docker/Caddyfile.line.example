@@ -7,7 +7,7 @@ hermes.salepie.online {
 
     # Alex admin workspace: Next.js frontend, which proxies /api to the backend.
     @alex {
-        path / /favicon.ico /_next/* /api/health /api/admin/* /api/inquiries /api/inquiries/* /api/conversations/* /api/line/* /api/draft-requests/* /api/media/*
+        path / /favicon.ico /alex-notifications-sw.js /_next/* /api/health /api/admin/* /api/inquiries /api/inquiries/* /api/conversations/* /api/line/* /api/draft-requests/* /api/media/*
         not path /api/line/webhook
     }
     handle @alex {

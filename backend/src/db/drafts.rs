@@ -559,6 +559,7 @@ pub async fn safe_drafts(state: &AppState, inquiry: &Document) -> Result<Vec<Val
             .ok()
             .and_then(|id| bills.get(&id))
             .map(|bill| json!({"status":bill.get_str("status").ok(),"alex_order_id":bill.get_str("alex_order_id").ok(),
+                "alex_order_number":bill.get_str("alex_order_number").ok(),"submission_id":bill.get_object_id("_id").ok().map(|id|id.to_hex()),
                 "submitted_by":bill.get_str("submitted_by").ok(),"created_at":bill.get_datetime("created_at").ok().map(|at| at.timestamp_millis())}));
         record.remove("cancelled_by_id");
         let stale = record.get_str("context_hash").ok() != Some(&snapshot.hash)

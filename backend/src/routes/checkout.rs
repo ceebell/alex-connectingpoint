@@ -37,6 +37,14 @@ pub async fn review(
     let Json(input) = input.map_err(|_| AppError::BadRequest)?;
     Ok(Json(checkout::review(&state, id(&inquiry)?, input).await?))
 }
+pub async fn amounts(
+    super::access::ScopedState(state): super::access::ScopedState,
+    Path(inquiry): Path<String>,
+    input: Result<Json<CheckInput>, JsonRejection>,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    Ok(Json(checkout::amounts(&state, id(&inquiry)?, input).await?))
+}
 pub async fn submit(
     super::access::ScopedState(state): super::access::ScopedState,
     Path(inquiry): Path<String>,

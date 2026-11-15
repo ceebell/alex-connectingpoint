@@ -1,6 +1,7 @@
 /* Invoice-style order summary, used in the คิว/บิล tab and as a modal from ร่างล่าสุด. */
 .invoice{display:flex;flex-direction:column;gap:16px;min-width:0}
 .invoice .notice{margin:0}
+.invoice code{overflow-wrap:anywhere}
 .invoice-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px 20px;padding:18px 20px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#f0f9ff);border:1px solid #bfdbfe}
 .invoice-eyebrow{font-size:calc(12px + var(--mobile-text-increment, 0px));letter-spacing:1.4px;font-weight:500;color:var(--color-primary-ink);margin-bottom:2px}
 .invoice-head h3{font-size:calc(19px + var(--mobile-text-increment, 0px));color:#0f172a}
@@ -32,6 +33,11 @@
 .invoice-totals dl>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:calc(15px + var(--mobile-text-increment, 0px));color:#334155}
 .invoice-totals dd{margin:0;font-variant-numeric:tabular-nums}
 .invoice-totals .discount{color:#be185d}
+.invoice-totals .invoice-discount{align-items:center}
+.invoice-discount dt{min-width:0}.invoice-discount label{display:block;color:inherit}
+.invoice-discount dd{flex:0 1 140px;min-width:80px}
+.invoice-discount input{width:100%;min-height:44px;text-align:right;font-size:16px;font-variant-numeric:tabular-nums}
+.invoice-discount input[aria-invalid="true"]{border-color:var(--color-accent-ink)}
 .invoice-totals .subtotal{font-weight:500;color:#0f172a;border-bottom:1px dashed #cbd5e1;padding-bottom:10px;margin-bottom:4px}
 .invoice-grand{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--color-primary-ink);color:white}
 .invoice-grand span{font-size:calc(15px + var(--mobile-text-increment, 0px))}.invoice-grand strong{font-size:calc(24px + var(--mobile-text-increment, 0px));font-weight:600;font-variant-numeric:tabular-nums}.invoice-grand small{font-size:calc(14px + var(--mobile-text-increment, 0px));font-weight:400}

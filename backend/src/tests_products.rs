@@ -17,6 +17,7 @@ pub(super) fn catalog_config(base: &str) -> AlexConfig {
         product_url_prefix: Some("https://catalog.test/products/".into()),
         image_origins: vec![],
         order_id_pointer: Some("/orderId".into()),
+        order_number_pointer: None,
     }
 }
 

@@ -44,6 +44,8 @@ prompts\img-ex2.jpg
 
 - ค่าส่งถ้ามี ให้บันทึกไว้ที่  note
 
+- ระบบต้องเก็บ OrderId และ เลข Order Number จากระบบ Alex ที่ตอบกลับมา แล้ว match ให่ตรงกันกับลูกค้า และ ร่าง Order ที่ส่งเข้าไป
+
 ### Recognize link and location
 
 - ในหน้า chat ให้ recognize URL link หาก user กดจะ redirect ออกไปเป็น external link ให้ pop up ขึ้นเตือนว่ากำลังจะเปิด notification บน default browser หาก user OK ก็เปิดได้ 
@@ -52,7 +54,7 @@ prompts\img-ex2.jpg
 
 ## Functional Requirements related to AI
 
-[Done][15Nov2026 17:46]
+[Reviewed][15Nov2026 17:46]
 - มี Textbox สำหรับ AI instruction เพื่อ AI ซึ่งเป็นเงื่อนไขของแต่ละร้าน เช่น อาจจะกำหนดว่า `ชื่อลูกค้าทุกคนต้องมี K.นำหน้า`,
 `หากแอดมิน พิมพ์สรุปยอด ค่าเช่า ค่าประกัน ให้ใช้ยอดค่าเช่า ค่าประกันที่แอดมินสรุปแล้วเป็นหลัก`,
 `ให้หาสินค้าค่าขนส่งเป็นปุ่มเตรียมใส่ตะกร้าไว้เลย เมื่อแอดมินกดให้ใส่ลงตะกร้า ไม่ add ลงเอง`

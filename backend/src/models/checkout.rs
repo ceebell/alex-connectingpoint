@@ -23,6 +23,8 @@ pub struct Line {
     pub rental_fee_satang: i64,
     pub deposit_satang: i64,
     #[serde(default)]
+    pub is_shipping: bool,
+    #[serde(default)]
     pub image_url: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +54,8 @@ pub struct Group {
 pub struct CheckInput {
     pub group_key: String,
     pub source_hash: String,
+    pub rental_discount_satang: Option<i64>,
+    pub deposit_discount_satang: Option<i64>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -67,8 +71,12 @@ pub struct ReviewInput {
     pub rental_payment_method: String,
     #[serde(default)]
     pub bail_payment_method: String,
-    // Alex has no shipping field, so a shipping fee is always written into the order note.
+    // Legacy input, ignored: shipping is charged only through catalog order items.
     pub shipping_fee_satang: i64,
+    // Explicit admin edits override draft defaults, including the summary-amounts policy.
+    pub rental_discount_satang: Option<i64>,
+    pub deposit_discount_satang: Option<i64>,
+    pub amounts_hash: Option<String>,
     pub birth_date: Option<String>,
     #[serde(default)]
     pub use_free_item_promotion: bool,
@@ -92,5 +100,6 @@ pub struct ResolveInput {
     pub submission_id: String,
     pub outcome: String,
     pub order_id: Option<String>,
+    pub order_number: Option<String>,
     pub verified_in_alex: bool,
 }

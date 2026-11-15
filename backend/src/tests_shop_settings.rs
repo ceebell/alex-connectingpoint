@@ -13,6 +13,15 @@ const INSTRUCTIONS: &str = "ชื่อลูกค้าทุกคนต้�
 const SUMMARY_RULE: &str = "แอดมินสรุปบิลให้เอาค่าเช่า ค่าประกันตรงหน้าสรุปบิลเป็นหลักไม่คำนวณจากตะกร้าเอง";
 
 #[test]
+fn shipping_markers_use_catalog_identity_not_price_or_generic_suggestions() {
+    let rules = compile(INSTRUCTIONS).unwrap();
+    assert!(rules.shipping_item("0053MNANANA", "Service"));
+    assert!(rules.shipping_item("other", "ค่าขนส่ง Flash"));
+    assert!(!rules.shipping_item("dress", "Dress 40"));
+    assert!(!rules.shipping_item("dress", "Shipping Dress"));
+}
+
+#[test]
 fn summary_amounts_rule_keeps_known_wording_and_other_billing_prose() {
     for text in [
         SUMMARY_RULE,
@@ -220,7 +229,7 @@ struct Catalog(Arc<AtomicUsize>);
 async fn catalog(State(mock): State<Catalog>, Json(body): Json<Value>) -> Json<Value> {
     if body["keyword"] == "DRESS" {
         return Json(
-            json!({"itemList":[{"productItemId":"dress","code":"DRESS","name":"Dress","color":null,"size":null,"rentalPrice":550,"bail":300}]}),
+            json!({"itemList":[{"productItemId":"dress","code":"DRESS","name":"Dress","color":null,"size":null,"rentalPrice":if mock.0.load(Ordering::SeqCst)==4 {650} else {550},"bail":300}]}),
         );
     }
     assert_eq!(body["keyword"], "0053MNANANA");
@@ -406,8 +415,10 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
     )
     .await;
     let checkout = crate::db::checkout::list(&base, id).await.unwrap();
-    assert!(checkout["groups"].as_array().unwrap().is_empty());
-    assert_eq!(checkout["missing"], json!([{"field":"summary_deposit"}]));
+    assert_eq!(checkout["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(checkout["missing"], json!([]));
+    assert_eq!(checkout["groups"][0]["quoted_deposit_satang"], 30000);
+    assert_eq!(checkout["groups"][0]["deposit_discount_satang"], 0);
     super::product_tests::manual(&base, id, 3, summary_fields(json!({"rental_fee_satang":50000,"deposit_satang":20000,"rental_discount_satang":0,"deposit_discount_satang":0}))).await;
     let checkout = crate::db::checkout::list(&base, id).await.unwrap();
     let group = &checkout["groups"][0];
@@ -432,6 +443,57 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
         .clone();
     assert_eq!(detail.get_str("rentalDiscount").unwrap(), "50.00");
     assert_eq!(detail.get_str("bailDiscount").unwrap(), "100.00");
+    // Human edits in the final bill override summary defaults and recalculate the fee
+    // across the threshold in both directions. Previewing never sends an order.
+    mock.0.store(4, Ordering::SeqCst);
+    base.collection("cart_items")
+        .update_one(
+            doc! {"inquiry_id":id},
+            doc! {"$set":{"candidate.rental_fee_satang":65000_i64}},
+        )
+        .await
+        .unwrap();
+    let current = crate::db::checkout::list(&base, id).await.unwrap();
+    let mut edited = json!({"source_hash":current["source_hash"],"group_key":current["groups"][0]["key"],"rental_discount_satang":0,"deposit_discount_satang":5025});
+    let without_fee =
+        crate::db::checkout::amounts(&base, id, serde_json::from_value(edited.clone()).unwrap())
+            .await
+            .unwrap();
+    assert_eq!(without_fee["group"]["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(without_fee["group"]["quoted_rental_fee_satang"], 65000);
+    assert_eq!(without_fee["group"]["notes"], "");
+    let review_input = json!({"source_hash":current["source_hash"],"group_key":current["groups"][0]["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":0,"rental_discount_satang":0,"deposit_discount_satang":5025,"amounts_hash":without_fee["amounts_hash"],"notes":format!("Admin note\n{}", current["groups"][0]["notes"].as_str().unwrap())});
+    let reviewed =
+        crate::db::checkout::review(&base, id, serde_json::from_value(review_input).unwrap())
+            .await
+            .unwrap();
+    assert_eq!(reviewed["rental_fee_satang"], 65000);
+    assert_eq!(reviewed["deposit_satang"], 24975);
+    assert_eq!(reviewed["notes"], "Admin note");
+    for discount in [10000, 0, 10000] {
+        edited["rental_discount_satang"] = json!(discount);
+        let preview = crate::db::checkout::amounts(
+            &base,
+            id,
+            serde_json::from_value(edited.clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            preview["group"]["lines"].as_array().unwrap().len(),
+            if discount == 0 { 1 } else { 2 }
+        );
+        assert_eq!(preview["group"]["rental_discount_satang"], discount);
+    }
+    // Restore the original catalog total for the remaining summary validation cases.
+    mock.0.store(0, Ordering::SeqCst);
+    base.collection("cart_items")
+        .update_one(
+            doc! {"inquiry_id":id},
+            doc! {"$set":{"candidate.rental_fee_satang":55000_i64}},
+        )
+        .await
+        .unwrap();
     // Alex can only discount, so a summary total above the catalog stops the bill instead of billing the cart.
     super::product_tests::manual(
         &base,
@@ -445,6 +507,92 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
     assert_eq!(
         checkout["missing"],
         json!([{"field":"summary_rental_above_catalog"}])
+    );
+    // A manually added shipping SKU remains in the same cart, even when the policy
+    // also knows its code. Only rent, never the shipping item, contributes to a discount.
+    let text = format!("{INSTRUCTIONS}\n{SUMMARY_RULE}\nสินค้าค่าขนส่งให้แอดมินเลือกเพิ่มเอง ไม่เพิ่มอัตโนมัติ");
+    let mut rules = compile(&text).unwrap();
+    rules.manual_shipping = true;
+    base.collection("shop_settings").update_one(base.scope(), doc! {"$set":{"instruction_text":&text,"rules":mongodb::bson::to_document(&rules).unwrap(),"policy_schema":2_i32,"version":4_i64}}).await.unwrap();
+    let mut fee = base.scope();
+    fee.extend(doc! {"_id":ObjectId::new(),"inquiry_id":id,"branch_id":"branch-a","product_item_id":"fee-a","quantity":1_i64,"revision":1_i64,"candidate":{"product_item_id":"fee-a","code":"0053MNANANA","name":"ค่าขนส่ง","color":mongodb::bson::Bson::Null,"size":mongodb::bson::Bson::Null,"rental_fee_satang":4000_i64,"deposit_satang":0_i64},"created_at":DateTime::now(),"updated_at":DateTime::now()});
+    base.collection("cart_items").insert_one(fee).await.unwrap();
+    super::product_tests::manual(
+        &base,
+        id,
+        5,
+        summary_fields(
+            json!({"rental_fee_satang":50000,"deposit_satang":20000,"shipping_fee_satang":4000}),
+        ),
+    )
+    .await;
+    let manual_bill = crate::db::checkout::list(&base, id).await.unwrap();
+    let manual_group = &manual_bill["groups"][0];
+    assert_eq!(manual_group["lines"].as_array().unwrap().len(), 2);
+    assert_eq!(manual_group["lines"][1]["is_shipping"], true);
+    assert_eq!(manual_group["rental_discount_satang"], 5000);
+    assert_eq!(manual_group["quoted_shipping_fee_satang"], 0);
+    let input = json!({"source_hash":manual_bill["source_hash"],"group_key":manual_group["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":4000});
+    let manual_review =
+        crate::db::checkout::review(&base, id, serde_json::from_value(input).unwrap())
+            .await
+            .unwrap();
+    assert_eq!(manual_review["catalog_rental_satang"], 59000);
+    assert_eq!(manual_review["rental_fee_satang"], 54000);
+    assert_eq!(manual_review["shipping_fee_satang"], 0);
+    assert_eq!(manual_review["notes"], "");
+    let over = json!({"source_hash":manual_bill["source_hash"],"group_key":manual_group["key"],"rental_discount_satang":55001});
+    assert!(matches!(
+        crate::db::checkout::amounts(&base, id, serde_json::from_value(over).unwrap()).await,
+        Err(crate::error::AppError::Validation(_))
+    ));
+    let cart = crate::db::cart::items(&base, id).await.unwrap();
+    super::product_tests::manual(
+        &base,
+        id,
+        6,
+        summary_fields(
+            json!({"rental_fee_satang":55000,"deposit_satang":20000,"shipping_fee_satang":4000}),
+        ),
+    )
+    .await;
+    let no_discount = crate::db::checkout::list(&base, id).await.unwrap();
+    assert_eq!(no_discount["groups"][0]["rental_discount_satang"], 0);
+    let input = json!({"source_hash":no_discount["source_hash"],"group_key":no_discount["groups"][0]["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":4000});
+    let review = crate::db::checkout::review(&base, id, serde_json::from_value(input).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(review["rental_fee_satang"], 59000);
+    assert_eq!(review["shipping_fee_satang"], 0);
+    super::product_tests::manual(&base, id, 7, summary_fields(json!({}))).await;
+    let fallback = crate::db::checkout::list(&base, id).await.unwrap();
+    assert_eq!(fallback["groups"][0]["quoted_rental_fee_satang"], 55000);
+    assert_eq!(fallback["groups"][0]["quoted_deposit_satang"], 30000);
+    assert_eq!(fallback["groups"][0]["rental_discount_satang"], 0);
+    super::product_tests::manual(
+        &base,
+        id,
+        8,
+        summary_fields(json!({"rental_discount_satang":2500,"deposit_discount_satang":10000})),
+    )
+    .await;
+    let discounted = crate::db::checkout::list(&base, id).await.unwrap();
+    let input = json!({"source_hash":discounted["source_hash"],"group_key":discounted["groups"][0]["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":0});
+    let reviewed = crate::db::checkout::review(&base, id, serde_json::from_value(input).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(reviewed["rental_fee_satang"], 56500);
+    assert_eq!(reviewed["deposit_satang"], 20000);
+    assert!(
+        crate::db::cart::snapshot(&cart)[1]
+            .get_bool("is_shipping")
+            .unwrap()
+    );
+    assert!(
+        crate::db::cart::from_bill(&serde_json::from_value(manual_group.clone()).unwrap()).unwrap()
+            [1]
+        .get_bool("is_shipping")
+        .unwrap()
     );
     base.db.drop().await.unwrap();
     server.abort();

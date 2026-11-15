@@ -3,6 +3,74 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-15 21:50 — ใช้ส่วนลดที่แอดมินแก้เป็น final และเอาช่องค่าส่งแยกออก
+- **คำอธิบาย:** ผู้ใช้ชี้แจงว่าต้องซ่อน field ค่าส่ง ไม่ใช่ค่าเช่า และส่วนลดค่าเช่า/ค่าประกันที่แก้ใน confirm modal ต้องเป็นยอดสุดท้าย ใช้แทนค่าคำนวณเดิม รวมถึง 0 โดยไม่บวกส่วนลดเก่าหรือโปรโมชั่นส่วนลดอัตโนมัติเพิ่ม ค่าส่งคิดจากสินค้าที่เลือกในออเดอร์เดียวกันเท่านั้น คงการเก็บ Order ID/Number ผูกลูกค้าและร่างที่ส่งเดิม
+- **โฟลเดอร์ `backend/src/`**
+  - `db/checkout.rs`, `models/checkout.rs` — แก้: checkout groups ใช้ quoted shipping=0 และไม่รับยอดจาก shipping_fee_satang รุ่นเก่ามาบวก/เขียนหมายเหตุแยก เมื่อมี explicit rental/deposit discount ถือว่า final บังคับ useDiscountPromotion=false เก็บ discounts_finalized กับ review/ผลส่ง และเพิ่ม pricing policy ใน source hash เพื่อให้ review เก่าต้องตรวจใหม่ ส่วนลดส่งตามค่าที่แก้โดยตรง ไม่ใช้ส่วนต่างราคาหรือส่วนลดเดิมบวกซ้อน
+  - `tests_rental.rs` — แก้: ทดสอบการเปลี่ยนส่วนลดที่เดิมคำนวณไว้เป็น 0 และจำนวนใหม่ ตรวจยอดสุทธิ/flag final ใน review และประวัติ รวมถึง payload ที่ส่งเข้า Alex ต้องปิดโปรโมชั่นส่วนลดแม้ client ส่ง true และไม่เพิ่มค่าค้างจากช่องค่าส่งเดิม คง tests การจับคู่ Order ID/Number กับลูกค้า/ร่างและป้องกันส่งซ้ำ
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `draft-editor.tsx` — แก้: เอาช่องค่าจัดส่งแยกออก ปรับหัวข้อเป็นส่วนลดของออเดอร์
+  - `rental-checkout.tsx` — แก้: คืนราคาเช่ารายสินค้าให้ตรวจได้ ซ่อนยอด/คำอธิบายค่าส่งแยกนอกตะกร้า ส่ง legacy shipping=0 ใช้ส่วนลดที่แก้เป็น final พร้อมข้อความอธิบาย ปิด/ล้าง checkbox โปรโมชั่นส่วนลดเมื่อแก้ตัวเลข และส่ง promo=false ไม่ให้ส่วนลดอัตโนมัติซ้อนกับยอดที่แก้
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shop-billing-instructions.md`, `requirements-v0.2.md` — แก้: อธิบาย final discount/ช่องค่าส่งที่เลิกใช้และการคิดผ่านสินค้า ปรับ requirement ตามคำชี้แจงล่าสุดเป็น Done รอผู้ใช้ตรวจ
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - Linux backend/frontend release — แก้: build-all.bat บน local ผ่าน backend `rel-20261115144557-2f6b7638fed3`, frontend `front-20261115144729-01b52d0e801b`; ตรวจ SHA256 binary และ frontend 2,111 ไฟล์ผ่าน
+- **ตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 75/75 (Windows linker ล็อก executable ชั่วคราว รันซ้ำผ่าน); npm test 45/45, lint และ production build ผ่าน; browser ตรวจ Linux release ผ่าน 28 กรณี Chrome/WebKit (6 กรณีค่าส่ง/Order references/การเลือกโปรแล้วแก้ส่วนลดต้องปิดโปรและไม่มีช่องค่าส่งในร่าง/ใบสรุป + 6 กรณีแก้/reset/รูปแบบส่วนลด/retry + one-click เดิม 16 กรณี) หยุด/ลบ MongoDB disposable แล้ว ทดสอบด้วย Alex จำลอง ไม่สร้างบิลจริง ยังไม่ได้ commit/push/deploy
+
+## 2026-11-15 21:34 — ผูกเลขออเดอร์ Alex กับลูกค้า/ร่าง และแยกค่าส่งจากฐานส่วนลด
+- **คำอธิบาย:** เก็บ Order ID กับ Order Number แยกกันจาก response ของคำขอที่ส่งจริง ผูกกับร้าน/ลูกค้า/บทสนทนา/ร่างโดย ID โดยตรง ค่าส่งเป็นสินค้าในออเดอร์เดียวกันแต่ไม่เป็นฐานส่วนลด ซ่อนข้อมูลค่าเช่ารายสินค้า/ราคาที่แจ้งในใบสรุป คงช่องส่วนลดและยอดสุทธิ เพิ่มตาม requirement ที่ผู้ใช้เพิ่มในไฟล์ระหว่างงาน: เมื่อไม่ระบุค่าเช่าหรือค่าประกัน ใช้ราคา Alex แล้วให้แอดมินใส่ส่วนลดเอง แม้เปิดกฎยอดจากสรุปบิล
+- **โฟลเดอร์ `backend/src/`**
+  - `config.rs`, `alex.rs`, `tests_products.rs` — แก้: รองรับ optional ALEX_ORDER_NUMBER_POINTER แยกจาก path ของ Order ID และปรับ fixture config
+  - `db/checkout.rs`, `models/checkout.rs` — แก้: แยกอ่าน Order ID/Number จาก object เดียวที่ระบุชัดหรือ custom JSON pointers ตรวจ HTTP/logical failure ไม่เดาจาก customer/product ID เก็บเลขทั้งคู่ พร้อม customer snapshot, line_user_id, conversation_key, inquiry_id, draft_id/version ที่ส่ง เพิ่มช่องเลขทั้งคู่ในการตรวจผลด้วยมือ คง queue/source/role/idempotency เดิม; คิดส่วนลดเฉพาะราคาสินค้าเช่า รวมสินค้าค่าส่งเต็มราคาและไม่บวก quoted shipping ซ้ำ ถ้าราคาที่แจ้งขาดใช้แค็ตตาล็อกแยกแต่ละยอด เคารพส่วนลดที่แอดมินใส่กับค่าเริ่มต้น แต่ราคาที่ระบุในสรุปยังมีลำดับก่อน
+  - `models/cart.rs`, `models/shop_settings.rs`, `db/cart.rs`, `db/shop_settings.rs` — แก้: เพิ่ม is_shipping จากรหัสในกฎร้าน/ชื่อสินค้า หรือป้ายที่แอดมินเลือก เก็บใน cart snapshot และบิล การแก้ป้ายใช้ revision/branch/shop guard เดิม คงค่าส่งที่แอดมินเพิ่มเองแม้ policy มีรหัสเดียวกัน ค่าส่งอัตโนมัติของกฎคำนวณจากค่าเช่าสุทธิที่ไม่รวมค่าส่ง ไม่อนุมานจากราคาอย่างเดียว และโหมด manual ไม่เพิ่ม fee เอง
+  - `db/drafts.rs`, `db/indexes.rs` — แก้: ส่งเลขทั้งคู่กับ submission ID ในประวัติแต่ละร่าง เพิ่ม scoped indexes สำหรับ Order ID/Number แบบไม่บังคับ unique เพื่อไม่กระทบข้อมูลเก่า
+  - `tests_rental.rs`, `tests_shop_settings.rs`, `db/checkout.rs` — แก้/เพิ่ม: ทดสอบการเก็บและผูกเลขสองแบบต่อเวอร์ชัน/ลูกค้า, ปฏิเสธ response ล้มเหลวหรือเลขกำกวม, ไม่จับเลขข้าม object, manual resolution, ค่าส่งไม่เป็นส่วนลด/ไม่คิดซ้ำ, marker ใน snapshot, ค่าเช่า 550 + ค่าส่ง 40 = 590, ลดเฉพาะค่าเช่า 50 เหลือ 540 และ fallback ราคาเมื่อไม่ระบุทั้งสองยอด/ระบุเพียงยอดเดียวพร้อมส่วนลดเอง
+- **โฟลเดอร์ `frontend/src/`, `frontend/tests/`**
+  - `lib/api.ts`, `lib/cart-amounts.ts`, `components/order-cart.tsx`, `components/draft-editor.tsx` — แก้/เพิ่ม: ป้ายรายการค่าส่งที่เปลี่ยนได้ในตะกร้า คำนวณส่วนลดอัตโนมัติโดยไม่รวมค่าส่ง รักษาป้ายเมื่อคง/โคลนร่าง แสดง Order ID/Number แยกกัน เพิ่ม unit test ฐานส่วนลดรวมจำนวนและสินค้าค่าส่งหลายชิ้น
+  - `components/rental-checkout.tsx`, `components/admin-workspace.tsx`, `components/invoice.css` — แก้: แสดงเลขทั้งคู่ในบิลและประวัติร่าง ซ่อนค่าเช่ารายสินค้า/ราคาที่แจ้ง คงยอดสุทธิและส่วนลด แสดงค่าส่งที่รวมในสินค้า ป้องกันเลขกรอกค้างข้ามบิลเมื่อตรวจผลด้วยมือ แก้ state ส่วนลดให้คงค่าล่าสุดของอีกช่อง และ remount ช่องเงินเมื่อ reset เพื่อไม่ให้ WebKit เก็บค่า input เดิมมาทับยอดใหม่ ป้องกัน reference ยาวล้นจอ
+- **ไฟล์ root และโฟลเดอร์ `docs/`, `prompts/`**
+  - `.env.example`, `docker-stack.line.yml` — แก้: ส่ง ALEX_ORDER_NUMBER_POINTER ให้ backend บน server โดยไม่มี secret ใน frontend
+  - `image-rental-billing.md`, `shop-billing-instructions.md`, `requirements-v0.2.md` — แก้: อธิบาย identity mapping, รูปแบบ response ที่รองรับ/custom pointers, marker ค่าส่ง, catalog fallback และการซ่อนรายละเอียดค่าเช่า พร้อมสถานะ Done ของทั้ง 4 ข้อรอผู้ใช้ตรวจ
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - Linux backend/frontend release — แก้: build บน local เท่านั้น backend `rel-20261115143237-e5225ad79b77`, frontend `front-20261115142215-b191d5ef6741`; ตรวจ SHA256 binary และ frontend 2,111 ไฟล์ผ่าน
+- **ตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 75/75 (Windows linker ล็อกไฟล์ทดสอบชั่วคราว รันซ้ำผ่าน); frontend unit tests 45/45, lint และ production build ผ่าน; browser กับ Linux frontend release ล่าสุดผ่าน 28 กรณี Chrome/WebKit (6 จอ 1440/375/320px สำหรับ marker/ค่าส่ง/เลขสองแบบ/สลับบิลตรวจด้วยมือ + 6 กรณีแก้ส่วนลด/reset/format/retry + one-click เดิม 16 กรณี) ไม่มี page errors/horizontal overflow; Swarm YAML interpolation และ runtime backend Docker image build ผ่าน หยุด/ลบ test Mongo และ image ทดสอบแล้ว
+- **ขอบเขตยืนยัน:** ใช้ Alex จำลอง ยังไม่ได้ยืนยัน schema response ของร้านจริงหรือส่งบิลจริง ถ้าชื่อฟิลด์ต่างจากที่รองรับให้ตั้ง JSON pointers ตาม response จริง คงข้อมูลออเดอร์เก่า ไม่ backfill หรือเดาเลขที่ยังไม่ทราบ ยังไม่ได้ commit/push/deploy
+
+## 2026-11-15 20:26 — ไม่เติมข้อความจากร่าง AI ลง remark อัตโนมัติ
+- **คำอธิบาย:** ผู้ใช้ไม่ต้องการข้อความขนส่ง/ข้อสงสัยวันคืน/คำแนะนำให้เลือกสินค้าค่าขนส่ง และเวลา 8:19 เพิ่มใน remark แก้ต้นทางที่ API ใบสรุปไม่ส่ง fields.notes จากร่างมาเป็นค่าเริ่มต้น ช่องหมายเหตุเริ่มว่าง แอดมินยังกรอกเองได้ ร่างเดิมและประวัติออเดอร์ไม่ถูกลบ ไม่ใช้การตัดคำที่อาจลบหมายเหตุจริงของแอดมิน และคงหมายเหตุยอดค่าจัดส่งจริงตามพฤติกรรมเดิม
+- **โฟลเดอร์ `backend/src/`**
+  - `db/checkout.rs` — แก้: checkout list คืน notes=null ให้ frontend เดิมเริ่มช่อง remark ว่าง เพิ่ม remark_policy ใน source hash ให้ review ที่เตรียมก่อนเปลี่ยนพฤติกรรมต้องตรวจใหม่ ไม่เปลี่ยนกฎราคา/ส่วนลด/ค่าขนส่ง/การส่งบิล
+  - `tests_rental.rs` — แก้: ใส่ตัวอย่างข้อความที่ผู้ใช้ไม่ต้องการไว้ในร่าง ทดสอบว่า API ไม่เติมค่าเริ่มต้น และ review/payload remark1 ว่างได้เมื่อไม่กรอกและไม่มีค่าจัดส่ง พร้อมคงทดสอบว่าหมายเหตุอุปกรณ์ที่แอดมินกรอกเองส่งเข้า Alex ได้
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shop-billing-instructions.md`, `requirements-v0.2.md` — แก้: อธิบายหมายเหตุเริ่มว่างและขอบเขตการกรอกเอง บันทึก requirement เป็น Done รอผู้ใช้ตรวจ
+- **โฟลเดอร์ `dist/line-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — แก้: build-backend.bat บน local สำเร็จ release `rel-20261115132448-d9899e7496c2` ตรวจ SHA256 ผ่าน ใช้ frontend release เดิม `front-20261115124957-72f0b245c081` ที่รองรับ notes=null อยู่แล้ว
+- **ตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 73/73 (ครั้งแรก Windows linker ถูกล็อกชั่วคราว รันซ้ำผ่าน); browser ตรวจ frontend Linux release เดิมกับ API contract ใหม่ผ่าน 4 กรณี Chrome/WebKit desktop 1440px และมือถือ 375px ทั้งไม่กรอก remark และกรอกเอง ไม่มี page errors; หยุด/ลบ MongoDB disposable แล้ว ไม่สร้างออเดอร์จริง ยังไม่ได้ commit/push/deploy
+
+## 2026-11-15 19:51 — แก้ส่วนลดในใบสรุปและส่งยอดที่แก้จริงเข้า Alex
+- **คำอธิบาย:** เพิ่มช่องส่วนลดค่าเช่า/ส่วนลดค่าประกันในหน้าตรวจสรุปก่อนส่ง แอดมินแก้ยอดเป็นบาทได้ทันที มีปุ่มกลับไปใช้ส่วนลดจากร่าง ค่าเริ่มต้นตามสรุปบิลของร้านยังคงอยู่ แต่การแก้โดยตรงใช้กับบิลครั้งนี้ ไม่ต้องเตรียม AI ใหม่และยังส่งคลิกเดียว การแก้ในใบสรุปไม่เขียนกลับเป็นร่างใหม่
+- **โฟลเดอร์ `backend/src/`**
+  - `models/checkout.rs`, `routes/checkout.rs`, `routes/mod.rs` — แก้: รับส่วนลดที่แอดมินแก้แบบ optional เพื่อรองรับ client เดิม เพิ่ม POST checkout/amounts สำหรับตรวจยอดโดยไม่เขียนบิล และรับ amounts_hash ตอนตรวจร่าง
+  - `db/checkout.rs` — แก้: ตรวจส่วนลดตั้งแต่ศูนย์ถึงยอดแค็ตตาล็อก คำนวณค่าเช่า/ประกันใหม่ คำนวณเกณฑ์ค่าขนส่งและสร้าง/ถอดสินค้า fee จากยอดสุทธิที่แก้ ไม่ลดหรือเพิ่ม fee ซ้ำ ล้างหมายเหตุ fee เดิมเมื่อไม่เข้าเกณฑ์ ตรวจ hash ให้ตรงยอดที่แสดงก่อนสร้าง review และใช้ payload ส่วนลดใหม่ตอนส่ง เก็บ review_input ในประวัติพร้อมผู้ส่ง/เวลาส่ง แต่ไม่ส่งข้อมูล audit ภายในกลับ API รายการบิล คง shop/branch scope, catalog/queue/source checks และการกันส่งซ้ำเดิม
+  - `tests_rental.rs`, `tests_shop_settings.rs` — แก้: ขยาย integration tests ตรวจ preview ไม่สร้างบิล, auth, ส่วนลดติดลบ/เกินราคา, source/hash ไม่ตรง, ทศนิยมหน่วยสตางค์ใน payload ที่ส่งจริง, การกดซ้ำ, overrides แม้เปิดกฎยอดจากสรุปบิล และค่าขนส่งข้ามเกณฑ์ทั้งสองทิศทาง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `rental-checkout.tsx`, `invoice.css` — แก้: ช่องเงินมี label และขนาดเหมาะกับมือถือ คำนวณยอดสุทธิและตรวจเงื่อนไขผ่าน server ก่อนเปิดปุ่มส่ง แสดงสถานะ/ข้อผิดพลาด/ปุ่มลองคำนวณใหม่ ไม่ค้างเมื่อเติม .0 ให้เงินค่าเดิม ยกเลิก review เดิมเมื่อแก้ยอดหรือ source เปลี่ยน ไม่รับผล preview เก่าทับยอดใหม่ คงปุ่มส่งครั้งเดียวและการใช้ review ID เดิมเมื่อ retry
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shop-billing-instructions.md`, `requirements-v0.2.md` — แก้: อธิบายวิธีแก้ส่วนลด ขอบเขตยอดเฉพาะบิล และ API preview/hash พร้อมบันทึก requirement เป็น Done รอผู้ใช้ตรวจ
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - Linux backend/frontend release — แก้: build-all.bat สำเร็จบน Docker Desktop local; backend `rel-20261115124824-a2cae799312a`, frontend `front-20261115124957-72f0b245c081`; ตรวจ SHA256 ของ binary และ frontend ทั้ง 2,111 ไฟล์ผ่าน
+- **ตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test -- --include-ignored ผ่าน 73/73 ด้วย MongoDB disposable ซึ่งหยุดและลบทิ้งแล้ว; npm test ผ่าน 44/44, npm run lint และ production build ผ่าน; browser tests กับ Linux release จริงผ่าน 22 กรณี (แก้ส่วนลด 6 กรณี Chrome/WebKit จอ 1440/375/320px พร้อมลองใหม่/กลับค่าเดิม/แก้หลังตรวจคิว และ one-click checkout เดิม 16 กรณีรวม retry/queue race/staff) ไม่มี horizontal overflow ใช้ Alex จำลอง ไม่สร้างออเดอร์จริง ยังไม่ได้ commit/push/deploy
+
+## 2026-11-15 19:25 — ตรวจแจ้งเตือนเดิมและเตรียมแก้เส้นทาง Service Worker ใน Caddy
+- **คำอธิบาย:** ผู้ใช้ถามว่าการแจ้งเตือนข้อความใหม่จำเป็นต้องใช้ Firebase หรือไม่ ตรวจพบระบบปัจจุบัน polling จากหน้าเว็บทุก 10 วินาที ใช้ Notification API/showNotification แต่ยังไม่มี Push subscription, push event handler, backend Web Push หรือ PWA manifest จึงต้องเปิดหน้า Home/แชทค้างไว้ เสนอ Web Push มาตรฐานและอธิบายเงื่อนไข Home Screen ของ iPhone โดยยังไม่ได้เพิ่มระบบ Push
+- **ผลตรวจโดเมน/server:** HTTPS /api/health ตอบ 200 แต่ /alex-notifications-sw.js ตอบ 404 จาก Hermes/aiohttp ขณะที่ไฟล์เดียวกันบน frontend 127.0.0.1:18081 ตอบ 200 application/javascript; matcher @alex ใน /etc/caddy/Caddyfile ไม่มี path ของ worker จึงส่งไป fallback ผิดบริการ
+- **โฟลเดอร์ `docker/`, `docs/`, `prompts/`**
+  - `Caddyfile.line.example` — แก้: เพิ่ม /alex-notifications-sw.js ให้ส่งไป frontend โดยคงเส้นทางอื่น
+  - `browser-notifications.md` — เพิ่ม: วิธีเปิดแจ้งเตือนเดิม เงื่อนไขที่ไม่แจ้งแชทที่กำลังอ่าน ปัญหา path 404 วิธีตรวจ/แก้ Caddy ความต่างของ polling กับ Web Push และทางเลือก Firebase พร้อมเอกสาร MDN/WebKit/Firebase
+  - `requirements-v0.2.md` — เพิ่ม: สถานะ Done ของงานตรวจและเตรียม config ระบุชัดว่ายังไม่ได้เพิ่ม PWA/background Web Push
+- **ไฟล์ชั่วคราวบน Ubuntu:** เตรียม /tmp/alex-caddy-notifications-ksepyblk/Caddyfile, Caddyfile.before และ apply.sh ที่สิทธิ์จำกัดเฉพาะ ubuntu/root; helper ตรวจ baseline ป้องกันทับ config ที่เปลี่ยนไป validate ก่อนติดตั้ง สำรองไฟล์เดิม reload และตรวจ worker ผ่าน HTTPS/JavaScript หากล้มเหลวคืนไฟล์เดิม ไม่มีการรัน helper หรือเปลี่ยน active Caddyfile เพราะ sudo -n ยังต้องใช้รหัสผ่าน
+- **การตรวจสอบ:** ตรวจ HTTP จริงทั้งภายนอกและ loopback, อ่าน matcher ที่ใช้อยู่, caddy adapt candidate ผ่านและ bash -n helper ผ่าน แก้เฉพาะ config ตัวอย่าง/เอกสาร ไม่ได้ build โปรแกรม commit/push หรือ deploy; ไม่ได้ยืนยันการแจ้งเตือนบนเครื่องผู้ใช้หลังแก้ เพราะยังต้องให้ผู้ดูแลรัน sudo เพื่อติดตั้ง config
+
 ## 2026-11-15 17:46 — เงื่อนไขออกบิลภาษาทั่วไปพร้อมตรวจขอบเขตและแนะนำสินค้าให้กดเพิ่มเอง
 - **คำอธิบาย:** ผ่อนการรับเงื่อนไขจากไวยากรณ์ตายตัวเป็นภาษาทั่วไปในขอบเขตบิลร้านนี้ รองรับข้อความตามภาพทั้งคำนำหน้า K. ยึดยอดค่าเช่า/ค่าประกันที่แอดมินสรุป และแนะนำสินค้าค่าขนส่งโดยแอดมินกดเพิ่มเอง ข้อความทั่วไปต้องผ่านการตรวจขอบเขตก่อนบันทึก ไม่เพิ่มช่องทางรันโค้ด เขียนฐานข้อมูลโดยตรง เข้าถึงร้านอื่น หรือเพิ่มสิทธิ์จากข้อความ
 - **โฟลเดอร์ `backend/src/models/`, `backend/src/db/`**

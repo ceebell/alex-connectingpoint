@@ -18,7 +18,7 @@ const queueStates: Record<string, string> = { AVAILABLE: "ว่าง ณ เ�
 // Short labels shown on each cart card after a queue check.
 const queueBadges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
 
-function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemove }: { item: CartItem; index: number; queue?: string; colorName: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void }) {
+function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemove, onShipping }: { item: CartItem; index: number; queue?: string; colorName: string; disabled: boolean; onQuantity: (quantity: number) => void; onRemove: () => void; onShipping: (value: boolean) => void }) {
   const [text, setText] = useState(String(item.quantity));
   const { candidate } = item;
   function commit() { const next = quantityLimit(Number(text)); setText(String(next)); if (next !== item.quantity) onQuantity(next); }
@@ -32,6 +32,7 @@ function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemov
     <div className="match-main">
       <div className="match-title"><strong>{candidate.name}</strong><span>({candidate.code})</span></div>
       <div className="match-bottom"><dl className="match-price"><dt>ราคา:</dt><dd>{price(candidate.rental_fee_satang)}</dd><dt>ค่าประกัน:</dt><dd>{price(candidate.deposit_satang)}</dd></dl>{badge && <span className={`queue-badge ${badge[1]}`}>{badge[0]}</span>}</div>
+      <label className="checkbox-row small"><input type="checkbox" aria-label={`รายการค่าส่ง ${candidate.name}`} checked={!!item.is_shipping} disabled={disabled} onChange={e => onShipping(e.target.checked)} />รายการค่าส่ง · ไม่คิดส่วนลด</label>
     </div>
     <div className="quantity-stepper" role="group" aria-label={`จำนวน ${candidate.name}`}>
       <button type="button" aria-label="ลดจำนวน" disabled={disabled || item.quantity <= 1} onClick={() => step(item.quantity - 1)}>−</button>
@@ -159,10 +160,10 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
 
-  async function update(item: CartItem, quantity: number | null) {
+  async function update(item: CartItem, quantity: number | null, isShipping?: boolean) {
     if (working) return;
     setBusy(true); setError("");
-    try { keep(await api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart/item`, { method: "POST", body: JSON.stringify({ item_id: item._id, expected_revision: item.revision, quantity }) })); }
+    try { keep(await api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart/item`, { method: "POST", body: JSON.stringify({ item_id: item._id, expected_revision: item.revision, quantity, is_shipping: isShipping }) })); }
     catch (cause) { fail(cause); await api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart`).then(keep).catch(() => {}); }
     finally { setBusy(false); }
   }
@@ -203,7 +204,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
     <section className="order-section section-cart">
       <h3 className="form-heading"><span aria-hidden="true">🛒</span> ตะกร้าสินค้า ({cart.reduce((sum, item) => sum + item.quantity, 0)} ชิ้น)</h3>
       {!cart.length ? <p className="muted small">ยังไม่มีสินค้าในตะกร้า ค้นหาแล้วกด “เพิ่มลงตะกร้า”</p> : <>
-        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} colorName={codeLabel(item.candidate.color, colors)} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} />)}</div>
+        <div className="cart-list">{cart.map((item, index) => <CartCard key={`${item._id}-${item.revision}`} item={item} index={index} queue={availability?.items.find(line => line.product_item_id === item.product_item_id)?.state} colorName={codeLabel(item.candidate.color, colors)} disabled={working} onQuantity={quantity => update(item, quantity)} onRemove={() => update(item, null)} onShipping={value => update(item, item.quantity, value)} />)}</div>
         <p className="cart-total">ค่าเช่ารวม {price(rentalTotal)} บาท · ค่าประกันรวม {price(depositTotal)} บาท</p>
       </>}
     </section>

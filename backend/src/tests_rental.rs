@@ -796,7 +796,7 @@ async fn order_mock(
         )
             .into_response()
     } else {
-        Json(json!({"success":true,"orderId":"alex-bill-1","token":"must-be-removed"}))
+        Json(json!({"success":true,"orderId":"alex-bill-1","orderNumber":"AR-2026-0001","token":"must-be-removed"}))
             .into_response()
     }
 }
@@ -849,7 +849,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         serde_json::from_value(json!({"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
             "items":[{"product_name":"nina","quantity":1}],
             "rental":{"pickup_date":pickup,"return_date":returned,"fulfillment_method":method,"delivery_provider":if method=="delivery"{json!("Flash")}else{Value::Null},"return_shipping_deadline":"16:00"},
-            "amounts":{"rental_fee_satang":55000,"deposit_satang":150000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":discount.map(|_| 0)},"notes":"เข็มกลัดดอกไม้"})).unwrap()
+            "amounts":{"rental_fee_satang":55000,"deposit_satang":150000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":discount.map(|_| 0)},"notes":"ems , flash หรือ 29/11 ก่อนเที่ยง ต้องยืนยันวันคืน; สินค้าค่าขนส่งให้แอดมินเลือกเพิ่มเอง ไม่เพิ่มอัตโนมัติ\n\n\n8:19"})).unwrap()
     };
     manual(
         &state,
@@ -945,6 +945,8 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     let data = checkout::list(&state, id).await.unwrap();
     let group = data["groups"][0].clone();
     // Catalog rent 1500.00 quoted at 550.00 and deposit 2000.01 quoted at 1500.00.
+    // Old draft notes must not prefill the remark, even if the draft predates this policy.
+    assert!(data["notes"].is_null());
     assert_eq!(group["rental_discount_satang"], 95000);
     assert_eq!(group["deposit_discount_satang"], 50001);
     assert_eq!(
@@ -976,6 +978,28 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         StatusCode::UNPROCESSABLE_ENTITY
     );
     review["bail_payment_method"] = json!("");
+    let mut no_remark = review.clone();
+    no_remark["notes"] = json!("");
+    no_remark["shipping_fee_satang"] = json!(0);
+    let (status, clean) = request(&state, &format!("{base}/review"), "POST", no_remark, true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(clean["notes"], "");
+    let clean_record = all(&state, "bill_reviews")
+        .await
+        .into_iter()
+        .find(|record| record.get_object_id("_id").unwrap().to_hex() == clean["review_id"])
+        .unwrap();
+    assert_eq!(
+        clean_record
+            .get_document("payload")
+            .unwrap()
+            .get_document("orderDetail")
+            .unwrap()
+            .get_str("remark1")
+            .unwrap(),
+        ""
+    );
+    assert_eq!(mock.orders.load(Ordering::SeqCst), 0);
     let (status, preview) = request(
         &state,
         &format!("{base}/review"),
@@ -990,6 +1014,87 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(preview["deposit_satang"], 150000);
     assert_eq!(preview["customer"]["phone"], "0812345678");
     assert_eq!(mock.orders.load(Ordering::SeqCst), 0);
+    // Final human edits replace draft discounts without rerunning AI or changing the draft.
+    let amounts_path = format!("{base}/amounts");
+    let mut amounts = json!({"source_hash":data["source_hash"],"group_key":group["key"],"rental_discount_satang":95025,"deposit_discount_satang":50026});
+    let reviews_before = all(&state, "bill_reviews").await.len();
+    assert_eq!(
+        request(&state, &amounts_path, "POST", amounts.clone(), false)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    for (field, value) in [
+        ("rental_discount_satang", -1),
+        ("rental_discount_satang", 150001),
+        ("deposit_discount_satang", 200002),
+    ] {
+        let mut invalid = amounts.clone();
+        invalid[field] = json!(value);
+        assert_eq!(
+            request(&state, &amounts_path, "POST", invalid, true)
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let (status, adjusted) = request(&state, &amounts_path, "POST", amounts.clone(), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(adjusted["group"]["rental_discount_satang"], 95025);
+    assert_eq!(adjusted["group"]["deposit_discount_satang"], 50026);
+    assert_eq!(all(&state, "bill_reviews").await.len(), reviews_before);
+    assert_eq!(
+        checkout::list(&state, id).await.unwrap()["source_hash"],
+        data["source_hash"]
+    );
+    amounts["source_hash"] = json!("stale");
+    assert_eq!(
+        request(&state, &amounts_path, "POST", amounts, true)
+            .await
+            .1["error"]["code"],
+        "CONTEXT_CHANGED"
+    );
+    review["rental_discount_satang"] = json!(95025);
+    review["deposit_discount_satang"] = json!(50026);
+    review["amounts_hash"] = json!("unseen-price");
+    assert_eq!(
+        request(
+            &state,
+            &format!("{base}/review"),
+            "POST",
+            review.clone(),
+            true
+        )
+        .await
+        .1["error"]["code"],
+        "CONTEXT_CHANGED"
+    );
+    review["amounts_hash"] = adjusted["amounts_hash"].clone();
+    review["use_discount_promotion"] = json!(true);
+    // Clearing both defaults to zero is final, rather than a request to derive discounts again.
+    let mut zero_final = review.clone();
+    zero_final["rental_discount_satang"] = json!(0);
+    zero_final["deposit_discount_satang"] = json!(0);
+    zero_final.as_object_mut().unwrap().remove("amounts_hash");
+    let (zero_status, zero_review) =
+        request(&state, &format!("{base}/review"), "POST", zero_final, true).await;
+    assert_eq!(zero_status, StatusCode::OK);
+    assert_eq!(zero_review["discounts_finalized"], true);
+    assert_eq!(zero_review["rental_fee_satang"], 150000);
+    assert_eq!(zero_review["deposit_satang"], 200001);
+    let (status, preview) = request(
+        &state,
+        &format!("{base}/review"),
+        "POST",
+        review.clone(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["rental_fee_satang"], 54975);
+    assert_eq!(preview["deposit_satang"], 149975);
+    assert_eq!(preview["discounts_finalized"], true);
+    assert_eq!(preview["shipping_fee_satang"], 0);
     let submit = json!({"review_id":preview["review_id"],"confirmed":true});
     let result = request(
         &state,
@@ -1009,19 +1114,58 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     );
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
     let payload = mock.payloads.lock().await[0].clone();
-    assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.00");
-    assert_eq!(payload["orderDetail"]["bailDiscount"], "500.01");
+    assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.25");
+    assert_eq!(payload["orderDetail"]["bailDiscount"], "500.26");
+    assert_eq!(payload["orderDetail"]["useDiscountPromotion"], false);
     assert_eq!(payload["orderDetail"]["customerPhone"], "0812345678");
     assert_eq!(payload["orderDetail"]["startDate"], "2026-11-04");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
     assert!(payload["orderDetail"].get("birthDate").is_none());
     assert_eq!(payload["orderDetail"]["bailPaymentMethod"], "ยังไม่ชำระ");
-    // The shipping fee is written into the note without any acknowledgement step.
-    assert_eq!(
-        payload["orderDetail"]["remark1"],
-        "เข็มกลัดดอกไม้\nค่าจัดส่ง 40.00 บาท (ไม่รวมในยอดค่าเช่า)"
-    );
+    // The retired shipping textbox cannot add a charge or append a shipping remark.
+    assert_eq!(payload["orderDetail"]["remark1"], "เข็มกลัดดอกไม้");
     let record = all(&state, "alex_submissions").await[0].clone();
+    assert!(record.get_bool("discounts_finalized").unwrap());
+    assert_eq!(record.get_str("alex_order_id").unwrap(), "alex-bill-1");
+    assert_eq!(record.get_str("alex_order_number").unwrap(), "AR-2026-0001");
+    assert_eq!(record.get_object_id("inquiry_id").unwrap(), id);
+    assert_eq!(record.get_i64("draft_version").unwrap(), 2);
+    let inquiry_record = drafts::inquiry(&state, id).await.unwrap();
+    assert_eq!(
+        record.get("line_user_id"),
+        inquiry_record.get("line_user_id")
+    );
+    assert_eq!(
+        record.get("conversation_key"),
+        Some(
+            inquiry_record
+                .get("conversation_key")
+                .unwrap_or(&mongodb::bson::Bson::Null)
+        )
+    );
+    assert_eq!(
+        record
+            .get_document("customer")
+            .unwrap()
+            .get_str("phone")
+            .unwrap(),
+        "0812345678"
+    );
+    assert_eq!(
+        record
+            .get_document("review_input")
+            .unwrap()
+            .get_i64("rental_discount_satang")
+            .unwrap(),
+        95025
+    );
+    for field in [
+        "rental_discount_satang",
+        "deposit_discount_satang",
+        "amounts_hash",
+    ] {
+        review.as_object_mut().unwrap().remove(field);
+    }
     assert!(
         record
             .get_document("alex_response")
@@ -1114,7 +1258,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
             .0,
         StatusCode::CONFLICT
     );
-    let resolve = json!({"submission_id":unknown["_id"]["$oid"],"outcome":"created","order_id":"alex-bill-2","verified_in_alex":true});
+    let resolve = json!({"submission_id":unknown["_id"]["$oid"],"outcome":"created","order_id":"alex-bill-2","order_number":"AR-2026-0002","verified_in_alex":true});
     assert_eq!(
         request(&state, &format!("{base}/resolve"), "POST", resolve, true)
             .await
@@ -1137,6 +1281,15 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     };
     assert_eq!(states(&listed), ["SENT", "SENT", "OPEN"]);
     assert_eq!(listed["drafts"][0]["bill"]["alex_order_id"], "alex-bill-2");
+    assert_eq!(
+        listed["drafts"][0]["bill"]["alex_order_number"],
+        "AR-2026-0002"
+    );
+    assert_eq!(listed["drafts"][1]["bill"]["alex_order_id"], "alex-bill-1");
+    assert_eq!(
+        listed["drafts"][1]["bill"]["alex_order_number"],
+        "AR-2026-0001"
+    );
     let version_id = |listed: &Value, number: i64| {
         listed["drafts"]
             .as_array()

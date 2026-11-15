@@ -16,6 +16,7 @@ pub struct UpdateInput {
     pub item_id: String,
     pub expected_revision: i64,
     pub quantity: Option<i64>,
+    pub is_shipping: Option<bool>,
 }
 
 // Dates come from the order form on screen, so a queue check does not need a saved draft.

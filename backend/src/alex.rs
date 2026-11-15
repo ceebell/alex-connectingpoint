@@ -714,6 +714,7 @@ mod tests {
             product_url_prefix: None,
             image_origins: vec!["https://cdn.example.com".into()],
             order_id_pointer: None,
+            order_number_pointer: None,
         };
         let url = |value: &str| allowed_image(&cfg, value).map(|url| url.to_string());
         assert_eq!(
