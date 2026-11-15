@@ -6,6 +6,7 @@ import AdminWorkspace from "./admin-workspace";
 import TeamWorkspace from "./team-workspace";
 import TeamWelcome from "./team-welcome";
 import { workspaceRoute } from "@/lib/workspace-navigation";
+import ShopSettings from "./shop-settings";
 
 export default function AdminPortal() {
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -104,6 +105,10 @@ export default function AdminPortal() {
   if (route.page === "team" && session) {
     if (!canManageTeam(session)) return <main className="team-access-message"><h1>บัญชีนี้ไม่มีสิทธิ์จัดการทีม</h1><a className="button secondary" href="#home">กลับหน้าหลัก</a><a className="button secondary" href="#chats">เปิดรายการแชท</a></main>;
     return <TeamWorkspace session={session} onLogout={() => logout()} onSessionChange={refreshSession} />;
+  }
+  if (route.page === "settings" && session) {
+    if (!canManageTeam(session)) return <main className="team-access-message"><h1>บัญชีนี้ไม่มีสิทธิ์ตั้งค่าร้าน</h1><a className="button secondary" href="#home">กลับหน้าหลัก</a></main>;
+    return <ShopSettings session={session} onLogout={() => logout()} />;
   }
   return <AdminWorkspace key={session?.membership ? `${session.membership.id}:${session.membership.version}` : "legacy"} access={session} route={route} />;
 }

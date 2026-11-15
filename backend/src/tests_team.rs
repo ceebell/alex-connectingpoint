@@ -209,6 +209,28 @@ async fn mongo_team_onboarding_roles_invites_and_revocation() {
     assert_eq!(
         call(
             &state,
+            "/api/admin/shop-settings",
+            "GET",
+            Value::Null,
+            &owner
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, policy) = call(
+        &state,
+        "/api/admin/shop-settings",
+        "POST",
+        json!({"instruction_text":"","expected_version":0}),
+        &owner,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(policy["version"], 1);
+    assert_eq!(
+        call(
+            &state,
             "/api/admin/login",
             "POST",
             json!({"username":"admin","password":"test-only-password"}),
@@ -318,12 +340,28 @@ async fn mongo_team_onboarding_roles_invites_and_revocation() {
     let (_, settings) = call(&state, "/api/admin/alex", "GET", Value::Null, &staff).await;
     assert_eq!(settings["branches"].as_array().unwrap().len(), 1);
     assert_eq!(settings["branches"][0]["id"], "branch-a");
-    for path in ["/api/admin/team", &format!("/api/admin/team/{id}/history")] {
+    for path in [
+        "/api/admin/team",
+        "/api/admin/shop-settings",
+        &format!("/api/admin/team/{id}/history"),
+    ] {
         assert_eq!(
             call(&state, path, "GET", Value::Null, &staff).await.0,
             StatusCode::FORBIDDEN
         );
     }
+    assert_eq!(
+        call(
+            &state,
+            "/api/admin/shop-settings",
+            "POST",
+            json!({"instruction_text":"","expected_version":0}),
+            &staff
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
     for suffix in ["checkout/submit", "checkout/resolve", "order"] {
         assert_eq!(
             call(

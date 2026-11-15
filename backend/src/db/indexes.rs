@@ -3,6 +3,7 @@ use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     for (collection, keys, partial) in [
+        ("shop_settings", doc! {"shop_id":1,"channel_id":1}, None),
         ("team_settings", doc! {"shop_id":1,"channel_id":1}, None),
         (
             "admin_accounts",

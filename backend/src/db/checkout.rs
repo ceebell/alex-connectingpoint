@@ -27,6 +27,7 @@ struct Source {
     missing: Vec<Value>,
     has_conflicts: bool,
     closed: Option<&'static str>,
+    policy: super::shop_settings::Settings,
 }
 
 // What the version mapping below reads from each saved version.
@@ -102,11 +103,13 @@ fn queue_state(results: &[Value]) -> &'static str {
 
 // One inquiry is one Alex order: cart lines plus the order-level dates, notes and discounts.
 async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
-    let (inquiry, draft, fields, snapshot) = products::current(state, id).await?;
+    let (inquiry, draft, mut fields, snapshot) = products::current(state, id).await?;
+    let policy = super::shop_settings::load(state).await?;
+    if let Some(name) = &fields.customer_name {
+        fields.customer_name = Some(policy.rules.customer_name(name));
+    }
     let draft_id = draft.get_object_id("_id").map_err(|_| AppError::Data)?;
     let records = cart::items(state, id).await?;
-    let source_hash =
-        drafts::hash(&json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"cart":records}))?;
     let mut missing = Vec::new();
     if records.is_empty() {
         missing.push(json!({"field":"cart"}));
@@ -122,10 +125,17 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         }
     }
     let CartLines {
-        lines,
+        mut lines,
         unpriced,
         branches,
     } = cart_lines(&records)?;
+    // Policy-owned fee lines are regenerated from the exact current catalog item, never duplicated from the cart.
+    if let Some(rule) = &policy.rules.shipping_product {
+        lines.retain(|line| !line.code.eq_ignore_ascii_case(&rule.product_code));
+        if lines.is_empty() && !missing.iter().any(|item| item["field"] == "cart") {
+            missing.push(json!({"field":"cart"}));
+        }
+    }
     missing.extend(
         unpriced
             .into_iter()
@@ -183,6 +193,9 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
                 catalog_deposit,
             ),
         });
+        if let Some(group) = groups.last_mut() {
+            super::shop_settings::apply_shipping(state, &policy, group).await?;
+        }
     }
     let has_conflicts = draft
         .get_document("result")
@@ -191,6 +204,10 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         .is_some_and(|c| !c.is_empty());
     let versions = drafts::versions(state, &inquiry, Some(version_keys())).await?;
     let closed = closed(&draft, &version_bills(state, id, &versions).await?);
+    let source_hash = drafts::hash(
+        &json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"cart":records,
+        "billing_settings_version":policy.version,"billing_rules":policy.rules,"groups":groups}),
+    )?;
     Ok(Source {
         inquiry,
         draft,
@@ -200,6 +217,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         missing,
         has_conflicts,
         closed,
+        policy,
     })
 }
 
@@ -519,6 +537,10 @@ pub async fn review(
     if source.source_hash != input.source_hash {
         return Err(AppError::ContextChanged);
     }
+    input.customer_name = source.policy.rules.customer_name(&input.customer_name);
+    if source.policy.rules.shipping_product.is_some() {
+        input.shipping_fee_satang = 0;
+    }
     let group = choose(&source, &input.group_key)?;
     validate_input(&input, &group)?;
     let session = alex::login(state).await?;
@@ -584,6 +606,11 @@ pub async fn review(
         "input":bson::to_document(&input).map_err(|_|AppError::Data)?,"payload":bson::to_bson(&payload).map_err(|_|AppError::Data)?,"reservation_key":reservation_key,
         "queue":bson::to_bson(&queue).map_err(|_|AppError::Data)?,
         "created_at":now,"updated_at":now,"expires_at":DateTime::from_millis(now.timestamp_millis()+300_000)});
+    record.insert("billing_settings_version", source.policy.version);
+    record.insert(
+        "billing_rules",
+        bson::to_bson(&source.policy.rules).map_err(|_| AppError::Data)?,
+    );
     state.collection("bill_reviews").insert_one(record).await?;
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"queue":queue,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
@@ -786,6 +813,11 @@ pub async fn submit(
         "status":"SUBMITTING","group":review.get("group").cloned().ok_or(AppError::Data)?,"source_hash":&source.source_hash,
         "draft_id":draft_id,"draft_version":source.draft.get_i64("draft_version").map_err(|_|AppError::Data)?,
         "payload":review.get("payload").cloned().ok_or(AppError::Data)?,"submitted_by":&actor.name,"submitted_by_id":&actor.id,"created_at":now,"updated_at":now});
+    record.insert("billing_settings_version", source.policy.version);
+    record.insert(
+        "billing_rules",
+        bson::to_bson(&source.policy.rules).map_err(|_| AppError::Data)?,
+    );
     if let Err(error) = state
         .collection("alex_submissions")
         .insert_one(record.clone())

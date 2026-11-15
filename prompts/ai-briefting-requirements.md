@@ -44,6 +44,15 @@ prompts\img-ex2.jpg
 
 - ค่าส่งถ้ามี ให้บันทึกไว้ที่  note
 
+## Functional Requirements related to AI
+
+- มี Textbox สำหรับ AI instruction เพื่อ AI ซึ่งเป็นเงื่อนไขของแต่ละร้าน เช่น อาจจะกำหนดว่า `ชื่อลูกค้าทุกคนต้องมี K.นำหน้า`, `หากค่าเช่าในออเดอร์นั้น ต่ำกว่า 600 บาท จะมีค่าขนส่ง 40 บาท ให้เพิ่มค่าขนส่งจาก stock product code : 0053MNANANA`
+
+เป็น Textbox ให้ AI อ่านก่อนเตรียมออเดอร์ (ทั้งนี้ ระบบต้อง provide guardrails ไม่ให้ user ส่ง script แฝง หรือคำสั่งทำนอกเหนือจากเงื่อนไขการออกบิล)
+
+- ให้เพิ่ม icon setting ที่หน้าแรกตรงบริเวณที่วงสีแดงไว้ตามภาพด้านล่าง เพื่อกดเข้าไปหน้า configurations ของร้าน
+![alt text](S__1900556.jpg)
+
 
 ## UX/UI Requirements
 

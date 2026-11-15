@@ -1,10 +1,9 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Catalog images are external Alex links; next/image would need a fixed remote host list. */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, cleanPhone, codeLabel, CodeName, errorText, PAYMENT_METHODS, Profile, RECEIVING_METHODS, STORE_PICKUP, UNPAID } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
-import DateInput from "./date-input";
-import { formatDate as day, formatDateTime } from "@/lib/dates";
+import { formatDate as day } from "@/lib/dates";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
 type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number };
@@ -23,12 +22,13 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const [data, setData] = useState<Data | null>(null);
   const [groupKey, setGroupKey] = useState("");
   const [name, setName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState("");
-  const [shipping, setShipping] = useState("");
   const [receiving, setReceiving] = useState(""); const [rentalPayment, setRentalPayment] = useState(UNPAID); const [bailPayment, setBailPayment] = useState(UNPAID);
-  const [birth, setBirth] = useState(""); const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState("");
   const [freePromotion, setFreePromotion] = useState(false); const [discountPromotion, setDiscountPromotion] = useState(false);
   const [availability, setAvailability] = useState<Availability | null>(null);
-  const [review, setReview] = useState<Review | null>(null); const [confirmed, setConfirmed] = useState(false); const [acceptQueue, setAcceptQueue] = useState(false);
+  const [review, setReview] = useState<Review | null>(null);
+  const sending = useRef(false);
+  const attemptedReview = useRef<string | null>(null);
   const [busy, setBusy] = useState(false); const [extracting, setExtracting] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
   // Lines carry Alex color codes (P); show the shop's color names next to them.
@@ -36,6 +36,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const [resolveId, setResolveId] = useState(""); const [resolveOrder, setResolveOrder] = useState(""); const [resolveChecked, setResolveChecked] = useState(false);
   const working = disabled || busy || extracting || loading;
   const group = data?.groups.find(group => group.key === groupKey);
+  const shipping = group?.quoted_shipping_fee_satang ?? 0;
   // Only a send in progress blocks a new bill; bills of other versions do not, the queue check covers stock.
   const pending = data?.submissions.some(submission => submission.status === "SUBMITTING");
   const ready = !!group && !!data?.source_hash && !data.has_conflicts && !data.closed;
@@ -47,13 +48,11 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   const queueBlocked = !!review && review.queue.state !== "AVAILABLE";
   const catalogRental = group?.lines.reduce((sum, line) => sum + line.rental_fee_satang * line.quantity, 0) ?? 0;
   const catalogDeposit = group?.lines.reduce((sum, line) => sum + line.deposit_satang * line.quantity, 0) ?? 0;
-  const satang = (value: string) => Math.round(Number(value || 0) * 100);
   const endpoint = `/api/inquiries/${inquiryId}/checkout`;
 
-  function invalidate() { setReview(null); setConfirmed(false); setAcceptQueue(false); }
+  function invalidate() { setReview(null); attemptedReview.current = null; }
   function changeGroup(group: Group, commonNotes = data?.notes ?? "") {
     setGroupKey(group.key); setAvailability(null); invalidate();
-    setShipping(group.quoted_shipping_fee_satang === null ? group.fulfillment_method === "store_pickup" ? "0" : "" : String(group.quoted_shipping_fee_satang / 100));
     setReceiving(group.fulfillment_method === "store_pickup" ? STORE_PICKUP : group.delivery_provider && RECEIVING_METHODS.includes(group.delivery_provider) ? group.delivery_provider : "Flash");
     setNotes([commonNotes, group.notes].filter(Boolean).join("\n"));
   }
@@ -78,28 +77,29 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     try { setAvailability(await api<Availability>(`${endpoint}/availability`, { method: "POST", body: JSON.stringify({ source_hash: data!.source_hash, group_key: groupKey }) })); }
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
-  async function prepare() {
-    if (!ready || working) return;
-    setBusy(true); setError(""); invalidate();
+  async function submit(acceptQueue = false) {
+    if (!canSubmit || !ready || working || pending || sending.current) return;
+    sending.current = true;
+    setBusy(true); setError("");
     try {
-      const value = await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
+      // Keep the same ID on a retry after an ambiguous network failure.
+      const value = review && (!acceptQueue || attemptedReview.current === review.review_id) ? review : await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({
         source_hash: data!.source_hash, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address,
-        shipping_fee_satang: satang(shipping),
-        receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: birth || null, notes,
+        shipping_fee_satang: shipping,
+        receiving_method: receiving, rental_payment_method: rentalPayment, bail_payment_method: bailPayment, birth_date: null, notes,
         use_free_item_promotion: freePromotion, use_discount_promotion: discountPromotion,
       }) });
       // The review checks the queue too; show it on the items.
       setReview(value); setAvailability({ ...value.queue, checked_at: new Date().toISOString() });
+      if (value.queue.state !== "AVAILABLE" && !acceptQueue) return;
+      attemptedReview.current = value.review_id;
+      await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: value.review_id, confirmed: true, accept_queue: value.queue.state !== "AVAILABLE" && acceptQueue }) });
+      await refresh(); invalidate();
     }
-    catch (cause) { fail(cause); } finally { setBusy(false); }
-  }
-  async function submit() {
-    if (!canSubmit) return;
-    if (!review || !confirmed || (queueBlocked && !acceptQueue) || working) return;
-    setBusy(true); setError("");
-    try { await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: review.review_id, confirmed: true, accept_queue: queueBlocked && acceptQueue }) }); await refresh(); invalidate(); }
-    // A queue that became booked after the review needs a fresh review before it can be accepted.
-    catch (cause) { fail(cause); if (cause instanceof ApiError && cause.code === "QUEUE_BLOCKED") { invalidate(); refresh().catch(() => {}); } } finally { setBusy(false); }
+    catch (cause) {
+      fail(cause);
+      if (cause instanceof ApiError && ["QUEUE_BLOCKED", "CONTEXT_CHANGED", "BILL_NOT_READY"].includes(cause.code)) { invalidate(); refresh().catch(() => {}); }
+    } finally { sending.current = false; setBusy(false); }
   }
   async function resolve(outcome: "created" | "not_created") {
     if (!canSubmit) return;
@@ -110,9 +110,8 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
   }
 
   const totals = review ? { rent: review.catalog_rental_satang, rentDiscount: review.rental_discount_satang, rentNet: review.rental_fee_satang, deposit: review.catalog_deposit_satang, depositDiscount: review.deposit_discount_satang, depositNet: review.deposit_satang, shipping: review.shipping_fee_satang }
-    : group ? { rent: catalogRental, rentDiscount: group.rental_discount_satang, rentNet: catalogRental - group.rental_discount_satang, deposit: catalogDeposit, depositDiscount: group.deposit_discount_satang, depositNet: catalogDeposit - group.deposit_discount_satang, shipping: satang(shipping) } : null;
+    : group ? { rent: catalogRental, rentDiscount: group.rental_discount_satang, rentNet: catalogRental - group.rental_discount_satang, deposit: catalogDeposit, depositDiscount: group.deposit_discount_satang, depositNet: catalogDeposit - group.deposit_discount_satang, shipping } : null;
   const pieces = group?.lines.reduce((sum, line) => sum + line.quantity, 0) ?? 0;
-  const expired = !!review && now > new Date(review.expires_at).getTime();
 
   return <div className="rental-checkout invoice">
     <header className="invoice-head">
@@ -130,7 +129,7 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
     {data?.context_error && <div className="notice warning">ร่างหรือแชทเปลี่ยน กรุณาตรวจและบันทึกร่างล่าสุดก่อนเตรียมบิลใหม่</div>}
     {!!data?.missing.length && <div className="notice warning"><strong>ข้อมูลที่ยังต้องเติมในแท็บร่างล่าสุด</strong><ul>{data.missing.map((missing, i) => <li key={i}>{missingLabels[missing.field] ?? missing.field}{missing.code && ` (${missing.code})`}</li>)}</ul></div>}
     {data?.has_conflicts && !data.context_error && <div className="notice warning">มีข้อมูลขัดกันในร่าง กรุณาตรวจในแท็บร่างล่าสุดก่อน</div>}
-    {group && totals && <form autoComplete="off" className="invoice-body" onSubmit={e => { e.preventDefault(); void prepare(); }}>
+    {group && totals && <form autoComplete="off" className="invoice-body" onSubmit={e => { e.preventDefault(); void submit(queueBlocked); }}>
       <fieldset disabled={working || !ready || !!pending}>
         <section className="invoice-block">
           <h4><span aria-hidden="true">👤</span> ลูกค้า</h4>
@@ -154,11 +153,9 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
           <h4><span aria-hidden="true">💳</span> การรับและชำระเงิน</h4>
           <div className="field-grid">
             <label>วิธีมารับ<select autoComplete="off" required value={receiving} onChange={e => { setReceiving(e.target.value); invalidate(); }}>{RECEIVING_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
-            <label>ค่าจัดส่ง (บาท)<input autoComplete="off" required type="number" min="0" step="0.01" value={shipping} onChange={e => { setShipping(e.target.value); invalidate(); }} /></label>
             {([["วิธีชำระค่าเช่า", rentalPayment, setRentalPayment], ["วิธีชำระค่าประกัน", bailPayment, setBailPayment]] as const).map(([label, value, set]) => <label key={label}>{label}<select autoComplete="off" value={value} onChange={e => { set(e.target.value); invalidate(); }}>{PAYMENT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>)}
-            <label>วันเกิด (ถ้าทราบ)<DateInput value={birth} disabled={working} onChange={value => { setBirth(value); invalidate(); }} /></label>
           </div>
-          {Number(shipping) > 0 && <p className="notice info">ค่าจัดส่ง {baht(satang(shipping))} บาท จะบันทึกต่อท้ายหมายเหตุของออเดอร์ใน Alex (Alex ไม่มีช่องค่าส่งแยก)</p>}
+          {shipping > 0 && <p className="notice info">ค่าจัดส่งจากร่าง {baht(shipping)} บาท จะบันทึกต่อท้ายหมายเหตุของออเดอร์ใน Alex (Alex ไม่มีช่องค่าส่งแยก)</p>}
           <label>หมายเหตุ / อุปกรณ์<textarea autoComplete="off" rows={2} maxLength={2000} value={notes} onChange={e => { setNotes(e.target.value); invalidate(); }} /></label>
           <div className="invoice-options"><label className="checkbox-row"><input type="checkbox" checked={freePromotion} onChange={e => { setFreePromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นของแถม</label><label className="checkbox-row"><input type="checkbox" checked={discountPromotion} onChange={e => { setDiscountPromotion(e.target.checked); invalidate(); }} />ใช้โปรโมชั่นส่วนลด</label></div>
         </section>
@@ -175,20 +172,13 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
           <div className="invoice-grand"><span>ยอดรวมทั้งหมด</span><strong>{baht(totals.rentNet + totals.depositNet + totals.shipping)} <small>บาท</small></strong></div>
           {(group.quoted_rental_fee_satang !== null || group.quoted_deposit_satang !== null) && <p className="muted small">ราคาที่แจ้งลูกค้า:{group.quoted_rental_fee_satang !== null && ` ค่าเช่า ${baht(group.quoted_rental_fee_satang)}`}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${baht(group.quoted_deposit_satang)}`} · ส่วนลดที่ไม่ได้กรอกคิดจากส่วนต่างกับราคาใน Alex</p>}
           {((group.quoted_rental_fee_satang ?? 0) > catalogRental || (group.quoted_deposit_satang ?? 0) > catalogDeposit) && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex</p>}
-          <p className="muted small">ส่วนลดแก้ได้ที่แท็บร่างล่าสุด{review ? " · ยอดนี้ตรวจกับราคาและคิวใน Alex แล้ว" : " · ยอดจะตรวจกับ Alex อีกครั้งเมื่อเตรียมบิล"}</p>
+          <p className="muted small">ส่วนลดแก้ได้ที่แท็บร่างล่าสุด · ระบบตรวจราคาและคิวใน Alex ก่อนส่งออเดอร์</p>
         </section>
-        {!review && <button className="button primary full" disabled={working || !ready || !!pending}><span aria-hidden="true">🧾</span> {busy ? "กำลังตรวจ…" : "ตรวจคิวและเตรียมบิล"}</button>}
-        {!review && locked && <p className="notice warning" role="status">{locked}</p>}
+        {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul><p>หากต้องการส่งต่อ ให้กดปุ่มส่งออเดอร์ตามสถานะที่แสดงด้านล่าง</p></div>}
+        {locked && <p className="notice warning" role="status">{locked}</p>}
+        {!canSubmit && <p className="notice info">เตรียมข้อมูลและเช็คคิวได้ ให้ผู้จัดการหรือเจ้าของร้านส่งออเดอร์</p>}
+        <button className="button primary full" aria-busy={busy} disabled={!canSubmit || working || !ready || !!pending}>{busy ? "กำลังส่งออเดอร์…" : queueBlocked ? review.queue.state === "UNAVAILABLE" ? "ส่งออเดอร์เข้า Alex แม้ติดคิว" : "ส่งออเดอร์เข้า Alex แม้ยังตรวจคิวไม่ได้" : "ส่งออเดอร์เข้า Alex"}</button>
       </fieldset>
     </form>}
-    {review && <section className="invoice-confirm">
-      <p><strong>พร้อมส่ง:</strong> วิธีมารับ {review.receiving_method} · ชำระค่าเช่า {review.rental_payment_method} · ค่าประกัน {review.bail_payment_method}</p>
-      <p className="muted small">{expired ? "ใบตรวจหมดอายุแล้ว กรุณากดตรวจคิวและเตรียมบิลใหม่" : `ใบตรวจใช้ได้ถึง ${formatDateTime(review.expires_at)} น.`}</p>
-      {!data?.order_response_configured && <p className="muted small">หากยังอ่านเลขบิลจากผลตอบกลับไม่ได้ เวอร์ชันนี้จะขึ้นว่าส่งแล้วแต่ยังไม่มีเลขออเดอร์ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ภายหลังได้</p>}
-      {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul>
-        <label className="checkbox-row"><input type="checkbox" checked={acceptQueue} disabled={working} onChange={e => setAcceptQueue(e.target.checked)} />{review.queue.state === "UNAVAILABLE" ? "ทราบว่าติดคิว" : "ทราบว่ายังตรวจคิวไม่ได้"} ตกลงส่งออเดอร์เข้า Alex ต่อ</label></div>}
-      <label className="checkbox-row"><input type="checkbox" checked={confirmed} disabled={working} onChange={e => setConfirmed(e.target.checked)} />ตรวจลูกค้า รายการ วันที่ ยอด และส่วนลดแล้ว ยืนยันสร้างออเดอร์จริงใน Alex</label>
-      {!canSubmit && <p className="notice info">เตรียมข้อมูลและเช็คคิวได้ ให้ผู้จัดการหรือเจ้าของร้านยืนยันส่งออเดอร์</p>}<div className="invoice-actions"><button type="button" className="button secondary" disabled={working} onClick={invalidate}>แก้ไขข้อมูล</button><button type="button" className="button primary" disabled={!canSubmit || working || !confirmed || (queueBlocked && !acceptQueue) || !!pending || expired} onClick={submit}><span aria-hidden="true">🚀</span> {busy ? "กำลังส่งออเดอร์…" : "ยืนยันส่งออเดอร์เข้า Alex"}</button></div>
-    </section>}
   </div>;
 }

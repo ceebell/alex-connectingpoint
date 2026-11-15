@@ -136,6 +136,10 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             .clone(),
     )
     .map_err(|_| AppError::Data)?;
+    let billing_settings = crate::db::shop_settings::load(state).await?;
+    if job.get_i64("billing_settings_version").unwrap_or(0) != billing_settings.version {
+        return Err(AppError::ContextChanged);
+    }
     let copied = job.get_object_id("copied_from").ok();
     let inquiry = drafts::lock(state, job, input.expected_version).await?;
     if job.get_i64("summary_revision").unwrap_or(0) != drafts::summary_revision(&inquiry) {
@@ -214,6 +218,8 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
             "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_with_customer_chat",
             "customer_messages":customer_messages,
+            "billing_rules":billing_settings.rules,
+            "billing_settings_version":billing_settings.version,
             "size_messages":size_messages,
             "admin_summary_time_ms":inquiry.get_document("working_summary").ok().filter(|summary|summary.get_str("text").ok()==Some(input.summary.as_str())).and_then(|summary|summary.get_datetime("updated_at").ok()).copied().unwrap_or(reference).timestamp_millis(),
             "selected_image_event_refs":input.image_event_ids,
@@ -284,6 +290,31 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     } else {
         vec![]
     };
+    validate_evidence(&result, &sources, &images)?;
+    if billing_settings.rules.customer_name_prefix.is_some()
+        && let Some(name) = &result.fields.customer_name
+    {
+        let formatted = billing_settings.rules.customer_name(name);
+        if !formatted.is_empty() && formatted != *name {
+            let reference = billing_settings.version.to_string();
+            let quote = format!(
+                "Customer name prefix: {}",
+                billing_settings
+                    .rules
+                    .customer_name_prefix
+                    .as_deref()
+                    .unwrap_or("")
+            );
+            sources.insert(format!("shop_billing_rule:{reference}"), quote.clone());
+            result.fields.customer_name = Some(formatted);
+            result.evidence.push(Evidence {
+                field: "customer_name".into(),
+                source_type: "shop_billing_rule".into(),
+                source_ref: reference,
+                quote,
+            });
+        }
+    }
     validate_evidence(&result, &sources, &images)?;
     result.fields.normalize();
     let values = result.fields.values();
@@ -370,8 +401,12 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         "pricing_verified":false,"product_verified":false,"availability_verified":false,
         "cart":cart,"created_at":now,"updated_at":now},
     );
+    draft.insert("billing_settings_version", billing_settings.version);
     if let Some(source) = copied {
         draft.insert("copied_from", source);
+    }
+    if crate::db::shop_settings::load(state).await?.version != billing_settings.version {
+        return Err(AppError::ContextChanged);
     }
     drafts::commit(state, job, input.expected_version, draft).await?;
     if let Some(analysis) = analysis

@@ -11,6 +11,7 @@ mod oa_inbox;
 mod oa_sync;
 mod products;
 mod session;
+mod shop_settings;
 mod team;
 mod users;
 pub(crate) mod webhook;
@@ -26,6 +27,10 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub fn router(state: AppState) -> Result<Router, AppError> {
     let admin = Router::new()
+        .route(
+            "/api/admin/shop-settings",
+            get(shop_settings::get).post(shop_settings::save),
+        )
         .route("/api/admin/team", get(team::list))
         .route("/api/admin/team/branches", get(team::branches))
         .route("/api/admin/team/{id}", get(team::detail))

@@ -46,6 +46,7 @@ pub async fn authorize(
                 axum::http::Method::GET | axum::http::Method::HEAD
             );
             if (path.starts_with("/api/admin/team")
+                || path == "/api/admin/shop-settings"
                 || path.ends_with("/assign")
                 || path.ends_with("/retry"))
                 && access.role != crate::models::team::Role::Owner

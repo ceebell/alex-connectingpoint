@@ -39,6 +39,8 @@ pub enum AppError {
     Data,
     #[error("{0}")]
     Validation(&'static str),
+    #[error("Shop billing instructions could not be applied")]
+    BillingPolicy(&'static str),
     #[error("Draft changed or another preparation is in progress")]
     DraftConflict,
     #[error("Admin login is not configured")]
@@ -104,6 +106,7 @@ impl AppError {
             Self::OaUnlinked => "OA_UNLINKED",
             Self::OaMessageConflict => "OA_MESSAGE_CONFLICT",
             Self::Validation(_) => "VALIDATION_ERROR",
+            Self::BillingPolicy(code) => code,
             Self::DraftConflict => "DRAFT_CONFLICT",
             Self::AdminUnavailable => "ADMIN_NOT_CONFIGURED",
             Self::LoginLimited => "LOGIN_RATE_LIMITED",
@@ -148,6 +151,7 @@ impl IntoResponse for AppError {
             Self::Conflict => StatusCode::CONFLICT,
             Self::OaUnlinked | Self::OaMessageConflict => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::BillingPolicy(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DraftConflict | Self::ContextChanged | Self::DraftWaiting => StatusCode::CONFLICT,
             Self::RecordConflict
             | Self::SummaryConflict

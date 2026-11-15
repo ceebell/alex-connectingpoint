@@ -182,7 +182,7 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
     <button type="button" className={`button ${dirty || !draft ? "primary" : "secondary"} full`} disabled={busy || tooMuch} onClick={() => { if (validDates()) void onSave(fields, confirm); }}>{busy ? "กำลังบันทึก…" : "บันทึกร่างเป็นเวอร์ชันใหม่"}</button>
     <div className="order-submit">
       <button type="button" className={`button ${dirty || !draft ? "secondary" : "primary"} full`} disabled={busy || dirty || !draft || !cart.length} onClick={() => { if (validDates()) setInvoice(true); }}><span aria-hidden="true">🧾</span> สรุปออเดอร์และส่งเข้า Alex</button>
-      <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอด เช็คคิว และยืนยันส่งออเดอร์เข้า Alex"}</p>
+      <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอดและส่งออเดอร์เข้า Alex"}</p>
     </div>
     </fieldset>
     {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}

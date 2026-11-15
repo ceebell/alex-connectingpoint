@@ -12,7 +12,7 @@ export default function ShopDashboard({ inquiries, session, loading, notificatio
   const unread = inquiries.filter(inquiry => inquiry.unread).length;
   const drafts = inquiries.filter(inquiry => (inquiry.draft_version ?? 0) > 0 && !inquiry.order_id).length;
   return <section className="shop-dashboard" aria-label="ภาพรวมร้าน Arisa Rental" aria-busy={loading}>
-    <div className="dashboard-welcome"><span className="dashboard-shop-icon"><WorkspaceIcon name="home" /></span><div><p className="dashboard-eyebrow">ภาพรวมร้าน</p><h2>Arisa Rental</h2><p>สวัสดี {session.username}</p></div></div>
+    <div className="dashboard-welcome"><span className="dashboard-shop-icon"><WorkspaceIcon name="home" /></span><div><p className="dashboard-eyebrow">ภาพรวมร้าน</p><h2>Arisa Rental</h2><p>สวัสดี {session.username}</p></div>{canManageTeam(session) && <button type="button" className="dashboard-settings" aria-label="ตั้งค่าร้าน" title="ตั้งค่าร้าน" onClick={() => navigateWorkspace("settings")}><WorkspaceIcon name="settings" /></button>}</div>
     <div className="dashboard-stats">
       <article><span>แชทที่โหลดแล้ว</span><strong>{inquiries.length.toLocaleString("th-TH")}</strong></article>
       <article><span>ยังไม่ได้อ่าน</span><strong>{unread.toLocaleString("th-TH")}</strong></article>

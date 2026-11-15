@@ -6,6 +6,10 @@
 .dashboard-welcome .dashboard-eyebrow { color: var(--color-primary-ink); font-size: 12px; }
 .dashboard-shop-icon { display: grid; place-items: center; flex: 0 0 48px; height: 48px; border-radius: 14px; background: white; color: var(--color-primary-ink); }
 .dashboard-shop-icon svg { width: 28px; height: 28px; }
+.dashboard-settings { display: grid; place-items: center; margin-left: auto; flex: 0 0 44px; width: 44px; height: 44px; border: 1px solid #bfdbfe; border-radius: 12px; background: white; color: var(--color-primary-ink); }
+.dashboard-settings svg { width: 23px; height: 23px; }
+.dashboard-welcome > div { min-width: 0; }
+.dashboard-welcome h2 { overflow-wrap: anywhere; }
 .dashboard-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .dashboard-stats article { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: white; }
 .dashboard-stats span { font-size: 13px; color: #475569; }

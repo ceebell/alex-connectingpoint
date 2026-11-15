@@ -15,7 +15,7 @@ type Audit = { action: string; actor_name: string; actor_id: string; at: string;
 const actionNames: Record<string, string> = { INVITED: "สร้างคำเชิญ", ACCEPTED: "ยืนยัน LINE และรับคำเชิญ", APPROVED: "อนุมัติให้เข้าร้าน", REJECTED: "ปฏิเสธคำขอ", CANCELLED: "ยกเลิกคำเชิญ", UPDATED: "แก้ไขข้อมูลหรือสิทธิ์", MIGRATED_OWNER: "ย้ายเจ้าของร้านจากสิทธิ์เดิม" };
 const merge = (current: TeamMember[], incoming: TeamMember[]) => [...new Map([...current, ...incoming].map(member => [member.id, member])).values()].sort((a, b) => b.id.localeCompare(a.id));
 
-function useTeamViewport() {
+export function useTeamViewport() {
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;
@@ -24,9 +24,17 @@ function useTeamViewport() {
     let frame = 0;
     let blurFrame = 0;
     const editable = 'input:not([type="checkbox"]):not([type="radio"]), textarea, select';
-    const dismiss = (event: PointerEvent) => {
-      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(editable) || event.target.closest("label")?.querySelector(editable)) return;
+    let pressedEditor: HTMLElement | null = null;
+    const preserve = (event: PointerEvent) => {
       const control = document.activeElement;
+      pressedEditor = control instanceof HTMLElement && control.matches(editable) ? control : null;
+      if (!mobile.matches || !pressedEditor || !(event.target instanceof Element) || event.target.closest(editable) || event.target.closest("label")) return;
+      if (event.target.closest("button, a[href]")) event.preventDefault();
+    };
+    const dismiss = (event: MouseEvent) => {
+      const control = pressedEditor;
+      pressedEditor = null;
+      if (!mobile.matches || !(event.target instanceof Element) || event.target.closest(editable) || event.target.closest("label")?.querySelector(editable)) return;
       if (!(control instanceof HTMLElement) || !control.matches(editable)) return;
       cancelAnimationFrame(blurFrame);
       blurFrame = requestAnimationFrame(() => { if (document.activeElement === control) control.blur(); });
@@ -41,8 +49,9 @@ function useTeamViewport() {
       });
     };
     update(); viewport.addEventListener("resize", update); viewport.addEventListener("scroll", update); window.addEventListener("resize", update);
-    document.addEventListener("pointerup", dismiss);
-    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(blurFrame); document.removeEventListener("pointerup", dismiss); viewport.removeEventListener("resize", update); viewport.removeEventListener("scroll", update); window.removeEventListener("resize", update); root.style.removeProperty("--app-height"); root.style.removeProperty("--app-top"); };
+    document.addEventListener("pointerdown", preserve, true);
+    document.addEventListener("click", dismiss);
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(blurFrame); document.removeEventListener("pointerdown", preserve, true); document.removeEventListener("click", dismiss); viewport.removeEventListener("resize", update); viewport.removeEventListener("scroll", update); window.removeEventListener("resize", update); root.style.removeProperty("--app-height"); root.style.removeProperty("--app-top"); };
   }, []);
 }
 

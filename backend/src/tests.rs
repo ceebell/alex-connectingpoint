@@ -32,6 +32,8 @@ mod oa_sync_tests;
 mod product_tests;
 #[path = "tests_rental.rs"]
 mod rental_tests;
+#[path = "tests_shop_settings.rs"]
+mod shop_settings_tests;
 #[path = "tests_step2.rs"]
 mod step2;
 #[path = "tests_team.rs"]

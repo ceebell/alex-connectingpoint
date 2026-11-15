@@ -331,7 +331,9 @@ async fn enqueue_job(
     }
     let now = DateTime::now();
     let mut record = identity.clone();
+    let billing_settings = super::shop_settings::load(state).await?;
     record.extend(doc! {"_id":ObjectId::new(), "input_hash":input_hash,
+    "billing_settings_version":billing_settings.version,
     "input":bson::to_document(&input).map_err(|_| AppError::Data)?, "manual":manual,
     "summary_revision":summary_revision(&inquiry),
     "status":"PENDING", "attempts":0_i32, "available_at":now, "created_at":now, "updated_at":now});
