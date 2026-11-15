@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Customer, LineEvent } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import ChatLinkedContent from "./chat-linked-content";
 
 type Props = {
   message: LineEvent;
@@ -39,7 +40,7 @@ export default function ChatMessage({ message, customer, selectedImages, disable
         {message.withdrawn ? <p className="muted">ข้อความถูกยกเลิกแล้ว</p> : content?.type === "image" && content.preview_url?.startsWith("/api/line/outbound-media/") ? <a href={content.original_url ?? content.preview_url} target="_blank" rel="noreferrer"><img src={content.preview_url} alt={`รูปที่${sender}ส่ง`} loading="lazy" /></a> : content?.type === "image" ? message.media_id ? <>
           <a href={`/api/media/${message.media_id}`} target="_blank" rel="noreferrer"><img src={`/api/media/${message.media_id}`} alt={`รูปจาก${sender}`} loading="lazy" /></a>
           <label className="checkbox-row small"><input type="checkbox" checked={selectedImages.includes(message._id)} disabled={disabled || (!selectedImages.includes(message._id) && selectedImages.length >= 5)} onChange={event => onToggleImage(message._id, event.target.checked)} />แนบรูปนี้ให้ AI</label>
-        </> : <p className="muted">รูปยังไม่พร้อมหรือหมดอายุ</p> : content?.type === "sticker" ? <Sticker id={String(content.stickerId ?? "")} keywords={content.keywords} /> : <p>{content?.text ?? message.payload?.postback?.data ?? `ข้อความประเภท ${content?.type ?? message.payload?.type ?? "อื่น ๆ"}`}</p>}
+        </> : <p className="muted">รูปยังไม่พร้อมหรือหมดอายุ</p> : content?.type === "sticker" ? <Sticker id={String(content.stickerId ?? "")} keywords={content.keywords} /> : content?.type === "location" ? <ChatLinkedContent location={content} /> : <ChatLinkedContent text={content?.text ?? message.payload?.postback?.data ?? `ข้อความประเภท ${content?.type ?? message.payload?.type ?? "อื่น ๆ"}`} />}
       </div>
       <div className="message-meta"><time dateTime={message.event_at}>{timestamp}</time><span>{message.source === "oa_manager_browser" ? "จาก OA Manager" : message.source === "alex_push" ? "ส่งจาก Alex" : message._id.slice(-6)}</span></div>
     </div>

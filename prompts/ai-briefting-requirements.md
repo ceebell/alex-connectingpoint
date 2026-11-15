@@ -44,9 +44,15 @@ prompts\img-ex2.jpg
 
 - ค่าส่งถ้ามี ให้บันทึกไว้ที่  note
 
+### Recognize link and location
+
+- ในหน้า chat ให้ recognize URL link หาก user กดจะ redirect ออกไปเป็น external link ให้ pop up ขึ้นเตือนว่ากำลังจะเปิด notification บน default browser หาก user OK ก็เปิดได้ 
+
+- ให้ recognize location ที่ user ใส่มาด้วย ถ้ากดแล้ว ให้ redirect ไปที่ google map 
+
 ## Functional Requirements related to AI
 
-- มี Textbox สำหรับ AI instruction เพื่อ AI ซึ่งเป็นเงื่อนไขของแต่ละร้าน เช่น อาจจะกำหนดว่า `ชื่อลูกค้าทุกคนต้องมี K.นำหน้า`, `หากค่าเช่าในออเดอร์นั้น ต่ำกว่า 600 บาท จะมีค่าขนส่ง 40 บาท ให้เพิ่มค่าขนส่งจาก stock product code : 0053MNANANA`
+- มี Textbox สำหรับ AI instruction เพื่อ AI ซึ่งเป็นเงื่อนไขของแต่ละร้าน เช่น อาจจะกำหนดว่า `ชื่อลูกค้าทุกคนต้องมี K.นำหน้า`, `หากค่าเช่าในออเดอร์นั้น ต่ำกว่า 600 บาท จะมีค่าขนส่ง 40 บาท ให้เพิ่มค่าขนส่งจาก stock product code : 0053MNANANA`, `แอดมินสรุปบิลให้เอาค่าเช่า ค่าประกันตรงหน้าสรุปบิลเป็นหลักไม่คำนวณจากตะกร้าเอง`
 
 เป็น Textbox ให้ AI อ่านก่อนเตรียมออเดอร์ (ทั้งนี้ ระบบต้อง provide guardrails ไม่ให้ user ส่ง script แฝง หรือคำสั่งทำนอกเหนือจากเงื่อนไขการออกบิล)
 

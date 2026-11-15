@@ -43,6 +43,9 @@ pub struct Group {
     pub rental_discount_satang: i64,
     #[serde(default)]
     pub deposit_discount_satang: i64,
+    // The shop's summary-amounts rule: net rent and deposit equal the quoted summary totals.
+    #[serde(default)]
+    pub amounts_from_summary: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 pub struct BillingRules {
     pub customer_name_prefix: Option<String>,
     pub shipping_product: Option<ShippingRule>,
+    // Rent and deposit are billed exactly as the admin's bill summary states them, never recomputed from the cart.
+    #[serde(default)]
+    pub summary_amounts: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -48,6 +51,32 @@ fn amount(text: &str) -> Result<i64, AppError> {
     Ok(value)
 }
 
+// The first listed option that prefixes the text, returning the rest; list longer options first.
+fn strip_any<'a>(text: &'a str, options: &[&str]) -> Option<&'a str> {
+    options.iter().find_map(|option| text.strip_prefix(option))
+}
+
+// "แอดมินสรุปบิลให้เอาค่าเช่า ค่าประกันตรงหน้าสรุปบิลเป็นหลัก ไม่คำนวณจากตะกร้าเอง" and its close
+// variants, matched on whitespace-free text. Every part is fixed wording and nothing may follow it.
+fn summary_amounts_clause(compact: &str) -> bool {
+    let rest = strip_any(compact, &["แอดมินสรุปบิลให้", "แอดมินสรุปบิล", "ให้", ""])
+        .and_then(|rest| strip_any(rest, &["เอา", "ใช้"]))
+        .and_then(|rest| rest.strip_prefix("ค่าเช่า"))
+        .and_then(|rest| strip_any(rest, &["และ", "กับ", ",", "/", ""]))
+        .and_then(|rest| rest.strip_prefix("ค่าประกัน"))
+        .and_then(|rest| strip_any(rest, &["ตรง", "จาก", "ตาม", "ใน"]))
+        .and_then(|rest| strip_any(rest, &["หน้าสรุปบิล", "สรุปบิล"]))
+        .and_then(|rest| rest.strip_prefix("เป็นหลัก"))
+        .and_then(|rest| strip_any(rest, &[",", ""]));
+    let Some(rest) = rest else {
+        return false;
+    };
+    rest.is_empty()
+        || rest
+            .strip_prefix("ไม่คำนวณจากตะกร้า")
+            .is_some_and(|tail| tail.is_empty() || tail == "เอง")
+}
+
 // Parse a closed billing language. Raw text is never a prompt, program, URL or tool argument.
 // Unknown clauses fail closed rather than trusting a model or a blacklist to identify scripts.
 pub fn compile(text: &str) -> Result<BillingRules, AppError> {
@@ -71,6 +100,13 @@ pub fn compile(text: &str) -> Result<BillingRules, AppError> {
                 return Err(invalid());
             }
             rules.customer_name_prefix = Some(prefix.to_string());
+            continue;
+        }
+        if summary_amounts_clause(&compact) {
+            if rules.summary_amounts {
+                return Err(invalid());
+            }
+            rules.summary_amounts = true;
             continue;
         }
         let condition = ["หากค่าเช่าในออเดอร์นั้นต่ำกว่า", "หากค่าเช่าต่ำกว่า", "ถ้าค่าเช่าต่ำกว่า"]

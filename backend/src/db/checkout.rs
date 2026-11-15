@@ -9,7 +9,7 @@ use crate::{
             UNPAID,
         },
         customer::{Actor, ProfileInput, normalize_phone},
-        draft::{DraftFields, RECEIVING_METHODS, valid_date},
+        draft::{Amounts, DraftFields, RECEIVING_METHODS, valid_date},
     },
     state::AppState,
 };
@@ -136,6 +136,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             missing.push(json!({"field":"cart"}));
         }
     }
+    let cart_complete = !lines.is_empty() && unpriced.is_empty() && branches.len() == 1;
     missing.extend(
         unpriced
             .into_iter()
@@ -152,6 +153,25 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         .iter()
         .map(|line| line.deposit_satang * line.quantity)
         .sum();
+    let summary = policy.rules.summary_amounts;
+    if summary {
+        missing.extend(summary_issues(
+            &fields.amounts,
+            catalog_rental,
+            catalog_deposit,
+            cart_complete,
+        ));
+    }
+    // Under the summary-amounts rule a discount typed or auto-filled in the draft is ignored: the
+    // discount is always catalog − summary total, so the bill lands exactly on the summary amounts.
+    let (written_rental_discount, written_deposit_discount) = if summary {
+        (None, None)
+    } else {
+        (
+            fields.amounts.rental_discount_satang,
+            fields.amounts.deposit_discount_satang,
+        )
+    };
     let mut groups = Vec::new();
     if let (true, Some(branch), Some(pickup), Some(returned), Some(method)) = (
         missing.is_empty(),
@@ -183,15 +203,16 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             quoted_deposit_satang: fields.amounts.deposit_satang,
             quoted_shipping_fee_satang: fields.amounts.shipping_fee_satang,
             rental_discount_satang: discount(
-                fields.amounts.rental_discount_satang,
+                written_rental_discount,
                 fields.amounts.rental_fee_satang,
                 catalog_rental,
             ),
             deposit_discount_satang: discount(
-                fields.amounts.deposit_discount_satang,
+                written_deposit_discount,
                 fields.amounts.deposit_satang,
                 catalog_deposit,
             ),
+            amounts_from_summary: summary,
         });
         if let Some(group) = groups.last_mut() {
             super::shop_settings::apply_shipping(state, &policy, group).await?;
@@ -226,6 +247,30 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
 // always wins, and a quote above the catalog never becomes a negative discount.
 fn discount(explicit: Option<i64>, quoted: Option<i64>, catalog: i64) -> i64 {
     explicit.unwrap_or_else(|| quoted.map_or(0, |quoted| (catalog - quoted).max(0)))
+}
+
+// What stops a bill when the shop bills rent and deposit as the summary states them: a total the
+// summary lacks is never filled from the cart, and Alex can only discount, so a total above the
+// catalog cannot be billed as written. Catalog comparisons wait until the cart is complete.
+pub(crate) fn summary_issues(
+    amounts: &Amounts,
+    catalog_rental: i64,
+    catalog_deposit: i64,
+    cart_complete: bool,
+) -> Vec<Value> {
+    [
+        ("rental", amounts.rental_fee_satang, catalog_rental),
+        ("deposit", amounts.deposit_satang, catalog_deposit),
+    ]
+    .into_iter()
+    .filter_map(|(name, quoted, catalog)| match quoted {
+        None => Some(json!({"field":format!("summary_{name}")})),
+        Some(quoted) if cart_complete && quoted > catalog => {
+            Some(json!({"field":format!("summary_{name}_above_catalog")}))
+        }
+        Some(_) => None,
+    })
+    .collect()
 }
 
 // Bill lines from cart records, the codes that lack a catalog price, and the branches in use.
@@ -478,6 +523,7 @@ pub async fn cart_availability(
         quoted_shipping_fee_satang: None,
         rental_discount_satang: 0,
         deposit_discount_satang: 0,
+        amounts_from_summary: false,
     };
     let session = alex::login(state).await?;
     let results = check(state, &session, &group).await?;

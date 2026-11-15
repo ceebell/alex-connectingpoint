@@ -3,6 +3,21 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-15 12:07 — ลิงก์ภายนอกและตำแหน่งในแชทพร้อมยืนยันก่อนเปิด
+- **คำอธิบาย:** ทำให้ URL ในข้อความลูกค้าและแอดมินกดได้ เปิด popup แสดงเว็บไซต์และ URL ปลายทางก่อนยืนยัน กดตกลงแล้วเปิดแท็บใหม่โดยคงแชทและข้อความที่พิมพ์ค้างไว้ รองรับหมุด LINE พิกัดทศนิยม และปุ่มค้นหาที่อยู่ใน Google Maps ไม่โหลด preview หรือแผนที่ก่อนกดตกลง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `chat-linked-content.tsx`, `chat-linked-content.css` — เพิ่ม: ลิงก์ขีดเส้นใต้ การ์ดตำแหน่ง ปุ่มค้นหาที่อยู่ และ native dialog ผ่าน portal รองรับยกเลิก Escape คืน focus และจอมือถือ ปลายทางใหม่ใช้ noopener/noreferrer ไม่ส่ง referrer ไม่บังคับเลือกแอป default ของระบบ
+  - `chat-message.tsx` — แก้: แสดงข้อความและ location ผ่าน component ใหม่ คงรูป สติกเกอร์ การแนบรูปให้ AI และข้อความที่ยกเลิกไว้ตามเดิม หากข้อความถูกยกเลิกระหว่างเปิด popup ให้ปิด popup ด้วย
+- **โฟลเดอร์ `frontend/src/lib/`, `frontend/src/app/`**
+  - `chat-links.ts` — เพิ่ม: แยก HTTP(S)/www โดยคงข้อความและเครื่องหมายเดิม ปฏิเสธ scheme อื่น credentials และอักขระควบคุม ตรวจช่วงพิกัดรวมค่า 0 แยกคู่จำนวนเงินทั่วไป สร้าง Maps URL แบบ encoded query จำกัด 2048 ตัวอักษร และค้นหาที่อยู่ไทย/ข้อความระบุสถานที่แบบ heuristic ตัดชื่อ เบอร์โทร และรายละเอียดออเดอร์ออกจาก query ตามรูปแบบที่ตรวจพบ
+  - `api.ts`, `layout.tsx` — แก้: เพิ่มชนิดข้อมูล title/address/latitude/longitude ใน payload เดิม และโหลด CSS ของ component โดยไม่เพิ่ม API หรือ dependency
+- **โฟลเดอร์ `frontend/tests/`, `docs/`**
+  - `chat-links.test.mjs` — เพิ่ม: 8 tests ครอบคลุม URL/ข้อความไทย punctuation scheme/credentials/control chars โดเมน Maps ปลอม พิกัด ที่อยู่ เบอร์โทร และการเข้ารหัส query
+  - `chat-links-and-locations.md` — เพิ่ม: วิธีใช้ รูปแบบที่ตรวจพบ ข้อจำกัด heuristic และการเปิดเบราว์เซอร์/แอป Maps พร้อมเอกสารอ้างอิง
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - Linux standalone, static assets, `frontend.tag`, `frontend-release.json`, `frontend.sha256` — build บน Windows ด้วย Docker Desktop สำเร็จ release `front-20261115050648-c52b2e931a6e` ตรวจ checksum ครบ 2110 ไฟล์
+- **การตรวจสอบ:** npm test ผ่าน 41/41, npm run lint และ npm run build ผ่าน ตรวจ artifact สุดท้ายด้วย Chrome/WebKit อย่างละ desktop/375px/320px รวม 6 กรณี ยืนยันว่าไม่มี external request ก่อนตกลง ยกเลิก/Escape ไม่เปิดเว็บ แท็บใหม่ไม่มี opener/referrer Maps ใช้ query ถูกต้อง คงข้อความค้าง และไม่ล้นจอ ไม่ได้ส่งข้อมูลจริงออกไปเว็บภายนอกในการทดสอบ ไม่ได้ commit/push หรือ deploy server
+
 ## 2026-11-15 03:28 — ตั้งค่าเงื่อนไข AI ออกบิลรายร้านพร้อมกฎที่จำกัดขอบเขต
 - **คำอธิบาย:** เพิ่มไอคอนเฟืองด้านขวาการ์ดชื่อร้านใน Home และหน้า Settings ให้เจ้าของร้านกรอกเงื่อนไขก่อน AI เตรียมออเดอร์ รองรับคำนำหน้าชื่อลูกค้าและสินค้าค่าขนส่งตามยอดเช่าสุทธิ เช่น K. และยอดต่ำกว่า 600 บาทเพิ่มสินค้ารหัส 0053MNANANA ราคา 40 บาท ตัวอย่างไม่ถูกเปิดใช้เอง เงื่อนไขอื่นหรือคำสั่งแทรกจะถูกปฏิเสธทั้งชุด
 - **โฟลเดอร์ `backend/src/models/`, `backend/src/db/`**

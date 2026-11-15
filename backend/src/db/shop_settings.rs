@@ -73,6 +73,20 @@ pub async fn save(state: &AppState, input: SaveInput) -> Result<Value, AppError>
     }
 }
 
+// Rent after discount and before any fee line, which the shipping threshold compares against. Under the
+// summary-amounts rule it is the summary's ค่าเช่า as written, not a total recomputed from the cart.
+pub fn net_rental(group: &crate::models::checkout::Group) -> Result<i64, AppError> {
+    if group.amounts_from_summary {
+        return group.quoted_rental_fee_satang.ok_or(AppError::BillNotReady);
+    }
+    Ok(group
+        .lines
+        .iter()
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum::<i64>()
+        - group.rental_discount_satang)
+}
+
 pub async fn apply_shipping(
     state: &AppState,
     settings: &Settings,
@@ -88,13 +102,7 @@ pub async fn apply_shipping(
         return Err(AppError::BillNotReady);
     }
     group.quoted_shipping_fee_satang = Some(0);
-    let net_rental = group
-        .lines
-        .iter()
-        .map(|line| line.rental_fee_satang * line.quantity)
-        .sum::<i64>()
-        - group.rental_discount_satang;
-    if !settings.rules.shipping_applies(net_rental) {
+    if !settings.rules.shipping_applies(net_rental(group)?) {
         return Ok(());
     }
     let session = crate::alex::login(state).await?;

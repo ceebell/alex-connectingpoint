@@ -1,0 +1,79 @@
+.app-shell .chat-inline-link {
+  display: inline;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary-ink);
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.app-shell .chat-inline-link:hover { color: #1e40af; }
+.chat-location { display: grid; gap: 8px; min-width: 0; }
+.chat-location-heading { display: flex; align-items: flex-start; gap: 7px; }
+.chat-location-heading svg, .chat-map-action svg {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-location-heading svg { color: var(--color-primary-ink); }
+.chat-location-coordinates { color: #475569; font-size: calc(12px + var(--mobile-text-increment, 0px)); }
+.app-shell .chat-map-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  max-width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: var(--color-primary-ink);
+  font-size: inherit;
+  text-align: left;
+}
+.app-shell .chat-map-action:hover { background: #dbeafe; }
+.chat-location .chat-map-action { margin-top: 0; }
+.chat-link-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(460px, calc(100% - 24px));
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: white;
+  color: #0f172a;
+  box-shadow: 0 20px 60px #0f172a33;
+  overflow-wrap: anywhere;
+}
+.chat-link-dialog::backdrop { background: #0f172a66; }
+.chat-link-dialog h2 { font-size: calc(18px + var(--mobile-text-increment, 0px)); margin-bottom: 10px; }
+.chat-link-dialog > p { font-size: calc(13px + var(--mobile-text-increment, 0px)); color: #475569; }
+.chat-link-dialog .chat-link-query { margin-top: 12px; color: #0f172a; }
+.chat-link-destination { margin-top: 14px; padding: 12px; border: 1px solid #dbeafe; border-radius: 9px; background: #f8fbff; }
+.chat-link-destination strong { display: block; font-size: calc(14px + var(--mobile-text-increment, 0px)); text-align: left; }
+.chat-link-destination p { margin-top: 6px; color: #475569; font-size: calc(12px + var(--mobile-text-increment, 0px)); text-align: left; user-select: text; }
+.chat-link-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.chat-link-dialog-actions .button { min-height: 44px; text-decoration: none; font-size: calc(13px + var(--mobile-text-increment, 0px)); }
+.chat-link-dialog-actions a:hover { background: #1e40af; }
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
+  .chat-link-dialog { padding: 18px; max-height: calc(var(--app-height, 100dvh) - 24px); }
+  .chat-link-dialog-actions > .button { flex: 1 1 auto; }
+}

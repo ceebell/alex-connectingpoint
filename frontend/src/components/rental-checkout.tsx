@@ -6,7 +6,7 @@ import CustomerExtractButton from "./customer-extract-button";
 import { formatDate as day } from "@/lib/dates";
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; image_url?: string | null };
-type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number };
+type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number; amounts_from_summary?: boolean };
 type Submission = { _id: string; status: string; alex_order_id?: string; group: Group; submitted_by: string; created_at: string; verification?: string; draft_version?: number | null; queue_accepted?: boolean };
 type Data = { source_hash: string | null; draft_version?: number; closed?: "SENT" | "CANCELLED" | null; groups: Group[]; missing: { field: string; code?: string }[]; has_conflicts: boolean; context_error?: string; submissions: Submission[]; customer: { name: string | null; phone: string | null; address: string | null }; notes: string | null; order_response_configured: boolean };
 type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
@@ -15,7 +15,11 @@ const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumF
 const nights = (pickup: string, returned: string) => Math.max(1, Math.round((Date.parse(returned) - Date.parse(pickup)) / 86_400_000));
 const badges: Record<string, [string, string]> = { AVAILABLE: ["ว่าง", "free"], UNAVAILABLE: ["ติดคิว", "blocked"], UNKNOWN: ["ตรวจคิวไม่ได้", "unknown"] };
 const states: Record<string, string> = { AVAILABLE: "ว่าง ณ เวลาตรวจ", UNAVAILABLE: "ไม่ว่าง", UNKNOWN: "ยังตรวจไม่ได้", SUBMITTING: "กำลังส่งเข้า Alex", SUBMIT_UNKNOWN: "ส่งแล้ว · ยังไม่ได้เลขออเดอร์", CONFIRMED: "มีออเดอร์ใน Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์" };
-const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น" };
+const missingLabels: Record<string, string> = { cart: "เพิ่มสินค้าลงตะกร้าในแท็บร่างล่าสุด", mixed_branches: "สินค้าในตะกร้าต้องอยู่สาขาเดียวกัน", pickup_date: "วันรับชุด", return_date: "วันคืนชุด", fulfillment_method: "วิธีมารับ", catalog_price: "ราคาแค็ตตาล็อก", overlapping_product: "Product ID ซ้ำและวันเช่าทับกัน กรุณารวมจำนวนหรือเลือกชิ้นอื่น",
+  summary_rental: "ค่าเช่าในสรุปบิล — ร้านตั้งให้ใช้ยอดจากสรุปบิลเป็นหลัก ใส่ค่าเช่าในสรุปบิลแล้วเตรียมออเดอร์ด้วย AI ใหม่",
+  summary_deposit: "ค่าประกันในสรุปบิล — ร้านตั้งให้ใช้ยอดจากสรุปบิลเป็นหลัก ใส่ค่าประกันในสรุปบิลแล้วเตรียมออเดอร์ด้วย AI ใหม่",
+  summary_rental_above_catalog: "ค่าเช่าในสรุปบิลสูงกว่าราคาใน Alex ของตะกร้า — Alex ไม่มีช่องบวกเพิ่ม กรุณาตรวจสรุปบิลหรือสินค้าในตะกร้า",
+  summary_deposit_above_catalog: "ค่าประกันในสรุปบิลสูงกว่าราคาใน Alex ของตะกร้า — Alex ไม่มีช่องบวกเพิ่ม กรุณาตรวจสรุปบิลหรือสินค้าในตะกร้า" };
 
 // The bill as an invoice: one order from the cart and the latest draft, checked and reviewed before it is sent to Alex.
 export default function RentalCheckout({ inquiryId, userId, disabled, titleId, onUnauthorized, canSubmit = true }: { inquiryId: string; userId?: string; disabled: boolean; titleId?: string; onUnauthorized: () => void; canSubmit?: boolean }) {
@@ -170,9 +174,12 @@ export default function RentalCheckout({ inquiryId, userId, disabled, titleId, o
             {totals.shipping > 0 && <div><dt>ค่าจัดส่ง <span className="muted small">(หมายเหตุใน Alex)</span></dt><dd>{baht(totals.shipping)}</dd></div>}
           </dl>
           <div className="invoice-grand"><span>ยอดรวมทั้งหมด</span><strong>{baht(totals.rentNet + totals.depositNet + totals.shipping)} <small>บาท</small></strong></div>
-          {(group.quoted_rental_fee_satang !== null || group.quoted_deposit_satang !== null) && <p className="muted small">ราคาที่แจ้งลูกค้า:{group.quoted_rental_fee_satang !== null && ` ค่าเช่า ${baht(group.quoted_rental_fee_satang)}`}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${baht(group.quoted_deposit_satang)}`} · ส่วนลดที่ไม่ได้กรอกคิดจากส่วนต่างกับราคาใน Alex</p>}
-          {((group.quoted_rental_fee_satang ?? 0) > catalogRental || (group.quoted_deposit_satang ?? 0) > catalogDeposit) && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex</p>}
-          <p className="muted small">ส่วนลดแก้ได้ที่แท็บร่างล่าสุด · ระบบตรวจราคาและคิวใน Alex ก่อนส่งออเดอร์</p>
+          {group.amounts_from_summary ? <p className="notice info">ใช้ค่าเช่า {baht(group.quoted_rental_fee_satang ?? 0)} · ค่าประกัน {baht(group.quoted_deposit_satang ?? 0)} ตามสรุปบิลเป็นหลัก (เงื่อนไขร้าน) — ส่วนลดคิดจากส่วนต่างกับราคาใน Alex ไม่คำนวณจากตะกร้าหรือช่องส่วนลดในร่าง{totals.rentNet > (group.quoted_rental_fee_satang ?? 0) && ` · ค่าเช่าสุทธิรวมค่าขนส่งตามเงื่อนไขร้าน ${baht(totals.rentNet - (group.quoted_rental_fee_satang ?? 0))} บาท`}</p>
+            : <>
+              {(group.quoted_rental_fee_satang !== null || group.quoted_deposit_satang !== null) && <p className="muted small">ราคาที่แจ้งลูกค้า:{group.quoted_rental_fee_satang !== null && ` ค่าเช่า ${baht(group.quoted_rental_fee_satang)}`}{group.quoted_deposit_satang !== null && ` · ค่าประกัน ${baht(group.quoted_deposit_satang)}`} · ส่วนลดที่ไม่ได้กรอกคิดจากส่วนต่างกับราคาใน Alex</p>}
+              {((group.quoted_rental_fee_satang ?? 0) > catalogRental || (group.quoted_deposit_satang ?? 0) > catalogDeposit) && <p className="notice warning">ราคาที่แจ้งลูกค้าสูงกว่าราคาใน Alex — Alex ไม่มีช่องบวกเพิ่ม บิลจะใช้ราคาใน Alex</p>}
+            </>}
+          <p className="muted small">{group.amounts_from_summary ? "แก้ยอดได้ที่สรุปบิลแล้วเตรียมออเดอร์ด้วย AI ใหม่" : "ส่วนลดแก้ได้ที่แท็บร่างล่าสุด"} · ระบบตรวจราคาและคิวใน Alex ก่อนส่งออเดอร์</p>
         </section>
         {queueBlocked && <div className="notice warning" role="alert"><strong>{review.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิวในช่วงวันนี้" : "ตรวจคิวจาก Alex ไม่ได้"}</strong><ul>{review.queue.items.filter(item => item.state !== "AVAILABLE").map(item => <li key={item.product_item_id}>{item.code} · {states[item.state] ?? item.state}</li>)}</ul><p>หากต้องการส่งต่อ ให้กดปุ่มส่งออเดอร์ตามสถานะที่แสดงด้านล่าง</p></div>}
         {locked && <p className="notice warning" role="status">{locked}</p>}
