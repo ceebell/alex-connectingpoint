@@ -67,6 +67,10 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/inquiries/{id}/drafts", get(drafts::list))
         .route("/api/inquiries/{id}/checkout", get(checkout::list))
         .route(
+            "/api/inquiries/{id}/checkout/form",
+            post(checkout::save_form),
+        )
+        .route(
             "/api/inquiries/{id}/checkout/amounts",
             post(checkout::amounts),
         )

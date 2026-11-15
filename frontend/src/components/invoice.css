@@ -1,6 +1,12 @@
-/* Invoice-style order summary, used in the คิว/บิล tab and as a modal from ร่างล่าสุด. */
+/* Saved bill summary and the editable invoice modal. */
+.bill-details{display:flex;flex-direction:column;gap:12px;margin:0;min-width:0}
+.bill-details dt{font-size:calc(12px + var(--mobile-text-increment,0px));color:#64748b}
+.bill-details dd{margin:4px 0 0;color:#0f172a;white-space:pre-wrap;overflow-wrap:anywhere}
+.bill-line{padding:10px 0;border-top:1px solid #e2e8f0;overflow-wrap:anywhere}
+.bill-line p{font-size:calc(12px + var(--mobile-text-increment,0px));color:#475569;margin-top:4px}
+article.invoice-body{display:flex;flex-direction:column;gap:16px}
 .invoice{display:flex;flex-direction:column;gap:16px;min-width:0}
-.invoice .notice{margin:0}
+.invoice .notice{margin:0;overflow-wrap:anywhere}
 .invoice code{overflow-wrap:anywhere}
 .invoice-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px 20px;padding:18px 20px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#f0f9ff);border:1px solid #bfdbfe}
 .invoice-eyebrow{font-size:calc(12px + var(--mobile-text-increment, 0px));letter-spacing:1.4px;font-weight:500;color:var(--color-primary-ink);margin-bottom:2px}

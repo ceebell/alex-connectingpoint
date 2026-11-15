@@ -125,6 +125,8 @@ pub struct DraftResult {
     pub questions: Vec<String>,
     #[serde(default)]
     pub date_options: Vec<DateOption>,
+    #[serde(default)]
+    pub bank_transfer_slips: Vec<super::payment_slip::BankTransferSlip>,
 }
 
 impl DraftResult {
@@ -553,6 +555,7 @@ mod tests {
             conflicts: vec![],
             questions: vec![],
             date_options: vec![],
+            bank_transfer_slips: vec![],
         };
         let sources = BTreeMap::from([("admin_summary:s1".into(), "Customer A".into())]);
         assert!(validate_evidence(&result, &sources, &BTreeSet::new()).is_err());
@@ -587,6 +590,7 @@ mod tests {
             conflicts: vec![],
             questions: vec![],
             date_options: vec![],
+            bank_transfer_slips: vec![],
         };
         let images = BTreeSet::new();
         assert!(validate_evidence(&result, &sources, &images).is_ok());

@@ -1,7 +1,7 @@
 use crate::{
     db::checkout,
     error::AppError,
-    models::checkout::{CheckInput, ResolveInput, ReviewInput, SubmitInput},
+    models::checkout::{CheckInput, ResolveInput, ReviewInput, SaveFormInput, SubmitInput},
 };
 use axum::{
     Json,
@@ -55,6 +55,18 @@ pub async fn submit(
     let actor = super::session::actor(&state, &headers);
     Ok(Json(
         checkout::submit(&state, id(&inquiry)?, input, &actor).await?,
+    ))
+}
+pub async fn save_form(
+    super::access::ScopedState(state): super::access::ScopedState,
+    Path(inquiry): Path<String>,
+    headers: HeaderMap,
+    input: Result<Json<SaveFormInput>, JsonRejection>,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    let actor = super::session::actor(&state, &headers);
+    Ok(Json(
+        checkout::save_form(&state, id(&inquiry)?, input, &actor).await?,
     ))
 }
 pub async fn resolve(

@@ -56,6 +56,6 @@ export default function SummaryImages({ inquiryId, attachments, selected, disabl
     <input className="sr-only" ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple aria-label="แนบรูปสรุปให้ AI สูงสุด 5 รูป" onChange={e => upload(e.target.files)} disabled={disabled || busy || selected.length >= 5} />
     {error && <div className="notice warning" role="alert">{error}</div>}
     {attachments.length > 0 && <div className="summary-image-grid">{attachments.map(attachment => <div key={attachment.id} className={`summary-image ${selected.includes(attachment.id) ? "selected" : ""}`}><label><img src={attachment.url} alt={attachment.name || "รูปสรุปที่แนบ"} /><span><input type="checkbox" checked={selected.includes(attachment.id)} disabled={disabled || busy || (!selected.includes(attachment.id) && selected.length >= 5)} onChange={e => onToggle(attachment.id, e.target.checked)} />ใช้รูปนี้</span></label><button type="button" className="summary-image-delete" aria-label={`ลบรูป ${attachment.name || "รูปสรุป"}`} title="ลบรูปนี้" disabled={disabled || busy} onClick={() => remove(attachment)}><span aria-hidden="true">🗑</span></button></div>)}</div>}
-    <p className="muted small">แนบภาพที่มีชื่อชุด สี ไซซ์ และวันที่ได้ หรือเลือกรูปจากแชท รวมสูงสุด 5 รูป รูปที่แนบส่วนนี้ใช้เตรียมร่างภายใน</p>
+    <p className="muted small">แนบรูปสรุปชุดหรือสลิปโอนเงิน แล้วเตรียมออเดอร์ด้วย AI สลิปที่ยอดต่างจากค่าเช่าสุทธิรวมค่าประกันสุทธิไม่เกิน 100 บาทจะเติมวิธีชำระเป็นโอนเงินทั้งสองช่อง รวมรูปที่เลือกสูงสุด 5 รูป</p>
   </div>;
 }

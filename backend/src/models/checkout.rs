@@ -48,6 +48,8 @@ pub struct Group {
     // The shop's summary-amounts rule: net rent and deposit equal the quoted summary totals.
     #[serde(default)]
     pub amounts_from_summary: bool,
+    #[serde(default)]
+    pub discounts_finalized: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +73,10 @@ pub struct ReviewInput {
     pub rental_payment_method: String,
     #[serde(default)]
     pub bail_payment_method: String,
+    #[serde(default)]
+    pub payment_methods_edited: bool,
+    #[serde(default)]
+    pub payment_slip_source_ref: Option<String>,
     // Legacy input, ignored: shipping is charged only through catalog order items.
     pub shipping_fee_satang: i64,
     // Explicit admin edits override draft defaults, including the summary-amounts policy.
@@ -93,6 +99,13 @@ pub struct SubmitInput {
     // The admin saw that some items are booked (or the queue could not be read) and sends anyway.
     #[serde(default)]
     pub accept_queue: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveFormInput {
+    pub expected_revision: i64,
+    pub form: ReviewInput,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

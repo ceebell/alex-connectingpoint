@@ -88,6 +88,16 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             false,
         ),
         (
+            "checkout_forms",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"draft_id":1,"group.key":1},
+            true,
+        ),
+        (
+            "checkout_forms",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"draft_version":-1,"updated_at":-1},
+            false,
+        ),
+        (
             "alex_submissions",
             doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"created_at":-1},
             false,

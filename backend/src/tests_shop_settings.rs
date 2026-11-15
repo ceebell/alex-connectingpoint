@@ -60,8 +60,8 @@ fn summary_amounts_bill_the_summary_totals_not_the_cart() {
         rental_fee_satang: rental,
         deposit_satang: deposit,
         shipping_fee_satang: None,
-        rental_discount_satang: Some(0),
-        deposit_discount_satang: Some(0),
+        rental_discount_satang: None,
+        deposit_discount_satang: None,
     };
     assert!(summary_issues(&amounts(Some(50_000), Some(20_000)), 55_000, 30_000, true).is_empty());
     assert_eq!(
@@ -78,6 +78,10 @@ fn summary_amounts_bill_the_summary_totals_not_the_cart() {
     );
     // An incomplete cart is reported by itself; the catalog comparison waits until it is complete.
     assert!(summary_issues(&amounts(Some(60_000), Some(30_000)), 0, 0, false).is_empty());
+    let mut finalized = amounts(Some(60_000), Some(50_000));
+    finalized.rental_discount_satang = Some(10_000);
+    finalized.deposit_discount_satang = Some(0);
+    assert!(summary_issues(&finalized, 55_000, 30_000, true).is_empty());
     let mut group: crate::models::checkout::Group = serde_json::from_value(json!({"key":"g","branch_id":"branch-a","pickup_date":"2026-11-18","return_date":"2026-11-20","fulfillment_method":"delivery","delivery_provider":"Flash","lines":[{"item_index":0,"product_item_id":"dress","code":"DRESS","name":"Dress","color":null,"size":null,"quantity":1,"rental_fee_satang":65000,"deposit_satang":30000}],"notes":"","quoted_rental_fee_satang":55000,"quoted_deposit_satang":30000,"quoted_shipping_fee_satang":null,"rental_discount_satang":0})).unwrap();
     assert!(!group.amounts_from_summary);
     assert_eq!(shop_settings::net_rental(&group).unwrap(), 65_000);
@@ -393,8 +397,7 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
         .await,
         Err(crate::error::AppError::ContextChanged)
     ));
-    // Summary-amounts rule: rent and deposit come from the bill summary; the draft's discounts
-    // (auto-filled as 0 here) and the cart totals never decide what is billed.
+    // Summary totals supply defaults only when no explicit final discount was saved.
     shop_settings::save(
         &owner(&base),
         SaveInput {
@@ -419,7 +422,13 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
     assert_eq!(checkout["missing"], json!([]));
     assert_eq!(checkout["groups"][0]["quoted_deposit_satang"], 30000);
     assert_eq!(checkout["groups"][0]["deposit_discount_satang"], 0);
-    super::product_tests::manual(&base, id, 3, summary_fields(json!({"rental_fee_satang":50000,"deposit_satang":20000,"rental_discount_satang":0,"deposit_discount_satang":0}))).await;
+    super::product_tests::manual(
+        &base,
+        id,
+        3,
+        summary_fields(json!({"rental_fee_satang":50000,"deposit_satang":20000})),
+    )
+    .await;
     let checkout = crate::db::checkout::list(&base, id).await.unwrap();
     let group = &checkout["groups"][0];
     assert_eq!(group["amounts_from_summary"], true);
@@ -594,6 +603,43 @@ async fn fee_product_is_exact_priced_once_and_rule_changes_fence_preparation() {
         .get_bool("is_shipping")
         .unwrap()
     );
+    // A saved admin discount survives the summary-amounts rule all the way to the Alex payload.
+    for (index, discount) in [10000_i64, 0, 10000].into_iter().enumerate() {
+        super::product_tests::manual(&base, id, 9 + index as i64, summary_fields(json!({"rental_fee_satang":50000,"deposit_satang":20000,"rental_discount_satang":discount,"deposit_discount_satang":0}))).await;
+        let current = crate::db::checkout::list(&base, id).await.unwrap();
+        let group = &current["groups"][0];
+        assert_eq!(group["rental_discount_satang"], discount);
+        assert_eq!(group["deposit_discount_satang"], 0);
+        assert_eq!(group["discounts_finalized"], true);
+        assert_eq!(group["amounts_from_summary"], false);
+        let input = json!({"source_hash":current["source_hash"],"group_key":group["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":0,"use_discount_promotion":true});
+        let reviewed =
+            crate::db::checkout::review(&base, id, serde_json::from_value(input).unwrap())
+                .await
+                .unwrap();
+        assert_eq!(reviewed["rental_fee_satang"], 59000 - discount);
+        assert_eq!(reviewed["deposit_satang"], 30000);
+        assert_eq!(reviewed["discounts_finalized"], true);
+        let record = base
+            .collection("bill_reviews")
+            .find_one(
+                doc! {"_id":ObjectId::parse_str(reviewed["review_id"].as_str().unwrap()).unwrap()},
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let detail = record
+            .get_document("payload")
+            .unwrap()
+            .get_document("orderDetail")
+            .unwrap();
+        assert_eq!(
+            detail.get_str("rentalDiscount").unwrap(),
+            format!("{}.{:02}", discount / 100, discount % 100)
+        );
+        assert_eq!(detail.get_str("bailDiscount").unwrap(), "0.00");
+        assert!(!detail.get_bool("useDiscountPromotion").unwrap());
+    }
     base.db.drop().await.unwrap();
     server.abort();
 }

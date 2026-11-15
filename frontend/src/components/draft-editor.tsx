@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAmounts, emptyRental, Fields, labels, LineEvent, RECEIVING_METHODS, receivingMethod, Rental, STORE_PICKUP } from "@/lib/api";
 import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
-import RentalCheckout from "./rental-checkout";
+import RentalCheckout, { type CheckoutHandle } from "./rental-checkout";
 import DateInput from "./date-input";
 import { formatDate as day } from "@/lib/dates";
 import { discountableRental } from "@/lib/cart-amounts";
@@ -70,17 +70,18 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = overflow; };
   }, []);
-  return createPortal(<dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onClose={onClose} style={{ "--drag-x": `${offset.x}px`, "--drag-y": `${offset.y}px` } as CSSProperties}>
+  return createPortal(<dialog ref={ref} className="invoice-dialog" aria-labelledby="invoice-title" onCancel={event => { event.preventDefault(); onClose(); }} style={{ "--drag-x": `${offset.x}px`, "--drag-y": `${offset.y}px` } as CSSProperties}>
     <div className="invoice-dialog-bar" onPointerDown={startDrag} onDoubleClick={() => setOffset({ x: 0, y: 0 })}>
       <span className="invoice-dialog-grip" aria-hidden="true" title="ดับเบิลคลิกเพื่อกลับกลางจอ">⠿ ลากแถบนี้เพื่อย้าย</span>
-      <button type="button" className="text-button" onClick={() => ref.current?.close()}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button>
+      <button type="button" className="text-button" onClick={onClose}><span aria-hidden="true">✕</span> ปิดหน้าสรุป</button>
     </div>
     <div className="invoice-dialog-body">{children}</div>
   </dialog>, document.body);
 }
 
-export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized, canSubmit = true }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void; canSubmit?: boolean }) {
+export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized, canSubmit = true, onSubmitted }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void; canSubmit?: boolean; onSubmitted?: () => void }) {
   const form = useRef<HTMLDivElement>(null);
+  const checkout = useRef<CheckoutHandle>(null);
   function validDates() {
     for (const input of form.current?.querySelectorAll<HTMLInputElement>(".date-input-text") ?? []) {
       if (!input.reportValidity()) return false;
@@ -92,7 +93,8 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const [fields, setFields] = useState<Fields>(() => orderLevel(initial));
   // The bill is built from the saved draft, so the invoice waits until the form is saved.
   const [baseline] = useState(() => JSON.stringify(orderLevel(initial)));
-  const dirty = JSON.stringify(fields) !== baseline;
+  const [discountIntentChanged, setDiscountIntentChanged] = useState(false);
+  const dirty = JSON.stringify(fields) !== baseline || discountIntentChanged;
   const [invoice, setInvoice] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -106,23 +108,21 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
   const amount = (key: keyof Amounts) => fields.amounts[key] ?? null;
   const setRental = (key: keyof Rental, value: string) => setFields(current => ({ ...current, rental: { ...current.rental, [key]: value || null } }));
   const setReceiving = (method: string) => setFields(current => ({ ...current, rental: { ...current.rental, fulfillment_method: method === STORE_PICKUP ? "store_pickup" : "delivery", delivery_provider: method === STORE_PICKUP ? null : method } }));
-  const setAmount = (key: keyof Amounts, value: string) => setFields(current => ({ ...current, amounts: { ...current.amounts, [key]: value ? Math.round(Number(value) * 100) : null } }));
-  // Discounts are filled with the quoted-price difference (Alex price in the cart − quoted fee, 0 when none)
-  // and follow cart changes while they still hold the previous automatic value; a value the admin typed is kept.
-  // When the saved cart first loads, only a discount the saved draft left empty is filled.
-  const cartLoaded = useRef(false);
+  const fixedDiscounts = useRef(new Set<keyof Amounts>((["rental_discount_satang", "deposit_discount_satang"] as const).filter(key => initial.amounts?.[key] != null)));
+  const setAmount = (key: keyof Amounts, value: string) => {
+    if (value !== "") fixedDiscounts.current.add(key); else fixedDiscounts.current.delete(key);
+    if (initial.amounts?.[key] == null && value !== "") setDiscountIntentChanged(true);
+    setFields(current => ({ ...current, amounts: { ...current.amounts, [key]: value ? Math.round(Number(value) * 100) : null } }));
+  };
+  // Track intent explicitly; a typed discount may equal the old automatic amount.
   function cartChanged(items: CartItem[]) {
-    const previous = cart;
-    const first = !cartLoaded.current;
-    cartLoaded.current = true;
     setCart(items);
     setFields(current => {
       const amounts = { ...current.amounts };
       for (const [key, fee] of [["rental_discount_satang", "rental_fee_satang"], ["deposit_discount_satang", "deposit_satang"]] as const) {
         const quoted = current.amounts[fee] ?? null;
         const auto = (list: CartItem[]) => !list.length || quoted === null ? 0 : Math.max(0, (fee === "rental_fee_satang" ? discountableRental(list) : list.reduce((sum, item) => sum + (item.candidate[fee] ?? 0) * item.quantity, 0)) - quoted);
-        const now = current.amounts[key] ?? null;
-        if (now === null || (first ? initial.amounts?.[key] == null : now === auto(previous))) amounts[key] = auto(items);
+        if (!fixedDiscounts.current.has(key)) amounts[key] = auto(items);
       }
       return JSON.stringify(amounts) === JSON.stringify(current.amounts) ? current : { ...current, amounts };
     });
@@ -185,6 +185,6 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอดและส่งออเดอร์เข้า Alex"}</p>
     </div>
     </fieldset>
-    {invoice && <InvoiceDialog onClose={() => setInvoice(false)}><RentalCheckout canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} /></InvoiceDialog>}
+    {invoice && <InvoiceDialog onClose={() => { void (async () => { if (await checkout.current?.flush() !== false) setInvoice(false); })(); }}><RentalCheckout ref={checkout} canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} onSubmitted={() => { setInvoice(false); onSubmitted?.(); }} /></InvoiceDialog>}
   </div>;
 }

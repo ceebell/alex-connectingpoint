@@ -5,11 +5,12 @@ use crate::{
     models::{
         cart::CheckInput as CartCheckInput,
         checkout::{
-            CheckInput, Group, Line, PAYMENT_METHODS, ResolveInput, ReviewInput, SubmitInput,
-            UNPAID,
+            CheckInput, Group, Line, PAYMENT_METHODS, ResolveInput, ReviewInput, SaveFormInput,
+            SubmitInput, UNPAID,
         },
         customer::{Actor, ProfileInput, normalize_phone},
         draft::{Amounts, DraftFields, RECEIVING_METHODS, valid_date},
+        payment_slip::{self, BANK_TRANSFER, BankTransferSlip},
     },
     state::AppState,
 };
@@ -28,6 +29,7 @@ struct Source {
     has_conflicts: bool,
     closed: Option<&'static str>,
     policy: super::shop_settings::Settings,
+    bank_transfer_slips: Vec<BankTransferSlip>,
 }
 
 // What the version mapping below reads from each saved version.
@@ -109,6 +111,57 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         fields.customer_name = Some(policy.rules.customer_name(name));
     }
     let draft_id = draft.get_object_id("_id").map_err(|_| AppError::Data)?;
+    let mut bank_transfer_slips: Vec<BankTransferSlip> = draft
+        .get_document("result")
+        .ok()
+        .and_then(|result| result.get("bank_transfer_slips"))
+        .map(|value| bson::from_bson(value.clone()).map_err(|_| AppError::Data))
+        .transpose()?
+        .unwrap_or_default();
+    let selected_images = snapshot
+        .events
+        .iter()
+        .filter(|event| {
+            event
+                .get_document("payload")
+                .ok()
+                .and_then(|payload| payload.get_document("message").ok())
+                .and_then(|message| message.get_str("type").ok())
+                == Some("image")
+                && !event.get_bool("withdrawn").unwrap_or(false)
+        })
+        .filter_map(|event| event.get_object_id("_id").ok().map(|id| id.to_hex()))
+        .collect();
+    payment_slip::validate(&bank_transfer_slips, &selected_images)?;
+    if !bank_transfer_slips.is_empty() {
+        // A previous order's slip cannot automatically mark a new draft as paid.
+        let mut used_filter = state.scope();
+        used_filter.extend(doc! {"inquiry_id":id,"draft_id":{"$ne":draft_id},"status":{"$ne":"NOT_CREATED"},"payment_slip.slip":{"$exists":true}});
+        let previous: Vec<Document> = state
+            .collection("alex_submissions")
+            .find(used_filter)
+            .projection(doc! {"payment_slip":1})
+            .await?
+            .try_collect()
+            .await?;
+        let used: Vec<BankTransferSlip> = previous
+            .iter()
+            .filter_map(|record| {
+                record
+                    .get_document("payment_slip")
+                    .ok()?
+                    .get_document("slip")
+                    .ok()
+            })
+            .filter_map(|slip| bson::from_document(slip.clone()).ok())
+            .collect();
+        bank_transfer_slips.retain(|slip| {
+            !used.iter().any(|previous| {
+                previous.source_ref == slip.source_ref
+                    || previous.fingerprint() == slip.fingerprint()
+            })
+        });
+    }
     let records = cart::items(state, id).await?;
     let mut missing = Vec::new();
     if records.is_empty() {
@@ -161,7 +214,6 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         .sum();
     let summary = policy.rules.summary_amounts;
     let summary_rental = summary && fields.amounts.rental_fee_satang.is_some();
-    let summary_deposit = summary && fields.amounts.deposit_satang.is_some();
     // Missing quotes use verified catalog prices. An explicit quote still takes priority,
     // while an admin discount can be applied to a catalog default without rerunning AI.
     if summary && cart_complete {
@@ -179,16 +231,9 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
             cart_complete,
         ));
     }
-    let written_rental_discount = if summary_rental {
-        None
-    } else {
-        fields.amounts.rental_discount_satang
-    };
-    let written_deposit_discount = if summary_deposit {
-        None
-    } else {
-        fields.amounts.deposit_discount_satang
-    };
+    // Saved explicit discounts, including zero, outrank quoted totals and shop defaults.
+    let written_rental_discount = fields.amounts.rental_discount_satang;
+    let written_deposit_discount = fields.amounts.deposit_discount_satang;
     let mut groups = Vec::new();
     if let (true, Some(branch), Some(pickup), Some(returned), Some(method)) = (
         missing.is_empty(),
@@ -229,7 +274,9 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
                 fields.amounts.deposit_satang,
                 catalog_deposit,
             ),
-            amounts_from_summary: summary_rental,
+            amounts_from_summary: summary_rental && written_rental_discount.is_none(),
+            discounts_finalized: written_rental_discount.is_some()
+                || written_deposit_discount.is_some(),
         });
         if let Some(group) = groups.last_mut() {
             super::shop_settings::apply_shipping(state, &policy, group).await?;
@@ -248,7 +295,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
     let source_hash = drafts::hash(
         &json!({"draft":draft_id.to_hex(),"context":snapshot.hash,"cart":records,
         "billing_settings_version":policy.version,"billing_rules":policy.rules,"groups":groups,
-        "remark_policy":"explicit_admin_notes_v1","pricing_policy":"final_review_discounts_v1"}),
+        "remark_policy":"manual_draft_notes_then_saved_form_v2","pricing_policy":"final_admin_draft_discounts_v2","bank_transfer_slips":bank_transfer_slips,"payment_tolerance_satang":payment_slip::TOLERANCE_SATANG}),
     )?;
     Ok(Source {
         inquiry,
@@ -260,6 +307,7 @@ async fn source(state: &AppState, id: ObjectId) -> Result<Source, AppError> {
         has_conflicts,
         closed,
         policy,
+        bank_transfer_slips,
     })
 }
 
@@ -285,6 +333,11 @@ pub(crate) fn summary_issues(
     ]
     .into_iter()
     .filter_map(|(name, quoted, catalog)| match quoted {
+        _ if (name == "rental" && amounts.rental_discount_satang.is_some())
+            || (name == "deposit" && amounts.deposit_discount_satang.is_some()) =>
+        {
+            None
+        }
         None => Some(json!({"field":format!("summary_{name}")})),
         Some(quoted) if cart_complete && quoted > catalog => {
             Some(json!({"field":format!("summary_{name}_above_catalog")}))
@@ -373,6 +426,7 @@ async fn adjusted_group(
     if rental_discount.is_none() && deposit_discount.is_none() {
         return Ok(group);
     }
+    group.discounts_finalized = true;
     // Discounts apply to the rented products. Regenerate the policy-owned shipping item
     // afterwards, using the edited net rent, so a fee is neither discounted nor duplicated.
     if let Some(rule) = source
@@ -435,7 +489,226 @@ pub async fn amounts(state: &AppState, id: ObjectId, input: CheckInput) -> Resul
     )
 }
 
+fn bill_snapshot(record: &Document, version: Option<i64>) -> Result<Value, AppError> {
+    let group: Group = bson::from_document(
+        record
+            .get_document("group")
+            .map_err(|_| AppError::Data)?
+            .clone(),
+    )
+    .map_err(|_| AppError::Data)?;
+    let input = record
+        .get_document("review_input")
+        .or_else(|_| record.get_document("input"))
+        .ok();
+    let detail = record
+        .get_document("payload")
+        .ok()
+        .and_then(|payload| payload.get_document("orderDetail").ok());
+    let text = |key: &str, legacy: &str| {
+        input
+            .and_then(|input| input.get_str(key).ok())
+            .or_else(|| detail.and_then(|detail| detail.get_str(legacy).ok()))
+            .unwrap_or("")
+    };
+    let rental: i64 = group
+        .lines
+        .iter()
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum();
+    let deposit: i64 = group
+        .lines
+        .iter()
+        .map(|line| line.deposit_satang * line.quantity)
+        .sum();
+    let status = record.get_str("status").unwrap_or("PREPARED");
+    Ok(
+        json!({"id":record.get_object_id("_id").map_err(|_|AppError::Data)?.to_hex(),"draft_id":record.get_object_id("draft_id").ok().map(|id|id.to_hex()),"draft_version":version.or_else(||record.get_i64("draft_version").ok()),"status":status,"group":group,
+        "customer":{"name":text("customer_name","customerName"),"phone":text("customer_phone","customerPhone"),"address":text("customer_address","customerAddress")},
+        "receiving_method":text("receiving_method","receivingMethod"),"rental_payment_method":text("rental_payment_method","rentalPaymentMethod"),"bail_payment_method":text("bail_payment_method","bailPaymentMethod"),
+        "notes":detail.and_then(|detail|detail.get_str("remark1").ok()).unwrap_or_else(||text("notes","remark1")),
+        "payment_slip":record.get("payment_slip"),"catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,"rental_fee_satang":rental-group.rental_discount_satang,"deposit_satang":deposit-group.deposit_discount_satang,
+        "use_free_item_promotion":input.and_then(|input|input.get_bool("use_free_item_promotion").ok()).unwrap_or(false),"use_discount_promotion":input.and_then(|input|input.get_bool("use_discount_promotion").ok()).unwrap_or(false),
+        "alex_order_id":record.get_str("alex_order_id").ok(),"alex_order_number":record.get_str("alex_order_number").ok(),"updated_by":record.get_str("updated_by").or_else(|_|record.get_str("submitted_by")).ok(),"updated_at":record.get_datetime("updated_at").or_else(|_|record.get_datetime("created_at")).ok()}),
+    )
+}
+
+fn saved_form_view(record: &Document) -> Result<Value, AppError> {
+    Ok(
+        json!({"revision":record.get_i64("revision").map_err(|_|AppError::Data)?,"source_hash":record.get_str("source_hash").map_err(|_|AppError::Data)?,"input":bson::from_bson::<Value>(record.get("input").cloned().ok_or(AppError::Data)?).map_err(|_|AppError::Data)?,"bill":bill_snapshot(record,None)?}),
+    )
+}
+
+fn manual_draft_note<'a>(draft: &Document, note: Option<&'a str>) -> Option<&'a str> {
+    let reference = draft.get_object_id("_id").ok()?.to_hex();
+    let evidence = draft
+        .get_document("result")
+        .ok()?
+        .get_array("evidence")
+        .ok()?;
+    evidence
+        .iter()
+        .filter_map(|entry| entry.as_document())
+        .any(|entry| {
+            entry.get_str("field").ok() == Some("notes")
+                && entry.get_str("source_type").ok() == Some("admin_edit")
+                && entry.get_str("source_ref").ok() == Some(reference.as_str())
+        })
+        .then_some(note)
+        .flatten()
+}
+
+fn matched_payment(
+    source: &Source,
+    group: &Group,
+    input: &ReviewInput,
+) -> Result<Option<Value>, AppError> {
+    let Some(reference) = &input.payment_slip_source_ref else {
+        return Ok(None);
+    };
+    let rental: i64 = group
+        .lines
+        .iter()
+        .map(|line| line.rental_fee_satang * line.quantity)
+        .sum();
+    let deposit: i64 = group
+        .lines
+        .iter()
+        .map(|line| line.deposit_satang * line.quantity)
+        .sum();
+    let rental_net = rental - group.rental_discount_satang;
+    let deposit_net = deposit - group.deposit_discount_satang;
+    let slip = source
+        .bank_transfer_slips
+        .iter()
+        .find(|slip| &slip.source_ref == reference && slip.matches(rental_net, deposit_net))
+        .ok_or(AppError::Validation(
+            "The bank slip no longer matches the final net rental and deposit",
+        ))?;
+    if input.payment_methods_edited
+        || input.rental_payment_method != BANK_TRANSFER
+        || input.bail_payment_method != BANK_TRANSFER
+    {
+        return Err(AppError::Validation(
+            "A matched bank slip must apply bank transfer to both payments",
+        ));
+    }
+    Ok(Some(
+        json!({"slip":slip,"net_satang":rental_net+deposit_net,"tolerance_satang":payment_slip::TOLERANCE_SATANG}),
+    ))
+}
+
+pub async fn save_form(
+    state: &AppState,
+    id: ObjectId,
+    mut input: SaveFormInput,
+    actor: &Actor,
+) -> Result<Value, AppError> {
+    if !(0..i64::MAX).contains(&input.expected_revision) {
+        return Err(AppError::BadRequest);
+    }
+    let source = source(state, id).await?;
+    if source.source_hash != input.form.source_hash {
+        return Err(AppError::ContextChanged);
+    }
+    input.form.shipping_fee_satang = 0;
+    if input.form.rental_discount_satang.is_some() || input.form.deposit_discount_satang.is_some() {
+        input.form.use_discount_promotion = false;
+    }
+    if input.form.customer_name.chars().count() > 200
+        || input.form.customer_phone.chars().count() > 40
+        || input.form.customer_address.chars().count() > 1000
+        || input.form.notes.chars().count() > 2000
+        || !RECEIVING_METHODS.contains(&input.form.receiving_method.as_str())
+        || [
+            &input.form.rental_payment_method,
+            &input.form.bail_payment_method,
+        ]
+        .iter()
+        .any(|method| !PAYMENT_METHODS.contains(&method.as_str()))
+    {
+        return Err(AppError::Validation("Check the saved bill form fields"));
+    }
+    let group = adjusted_group(
+        state,
+        &source,
+        &input.form.group_key,
+        input.form.rental_discount_satang,
+        input.form.deposit_discount_satang,
+    )
+    .await?;
+    let payment_slip = matched_payment(&source, &group, &input.form)?;
+    if group.discounts_finalized {
+        input.form.use_discount_promotion = false;
+    }
+    let draft_id = source
+        .draft
+        .get_object_id("_id")
+        .map_err(|_| AppError::Data)?;
+    let mut filter = state.scope();
+    filter.extend(doc! {"inquiry_id":id,"draft_id":draft_id,"group.key":&group.key});
+    let form = bson::to_document(&input.form).map_err(|_| AppError::Data)?;
+    let existing = state
+        .collection("checkout_forms")
+        .find_one(filter.clone())
+        .await?;
+    if let Some(record) = &existing {
+        check_record_branch(state, record)?;
+        if record.get_document("input").ok() == Some(&form) {
+            return saved_form_view(record);
+        }
+        if record.get_i64("revision").ok() != Some(input.expected_revision) {
+            return Err(AppError::RecordConflict);
+        }
+    } else if input.expected_revision != 0 {
+        return Err(AppError::RecordConflict);
+    }
+    if self::source(state, id).await?.source_hash != source.source_hash {
+        return Err(AppError::ContextChanged);
+    }
+    super::team::revalidate(state).await?;
+    let now = DateTime::now();
+    let mut fields = doc! {"input":form,"group":bson::to_document(&group).map_err(|_|AppError::Data)?,"source_hash":&source.source_hash,"draft_version":source.draft.get_i64("draft_version").map_err(|_|AppError::Data)?,"updated_by":&actor.name,"updated_by_id":&actor.id,"updated_at":now};
+    fields.insert(
+        "payment_slip",
+        bson::to_bson(&payment_slip).map_err(|_| AppError::Data)?,
+    );
+    let record = if existing.is_some() {
+        filter.insert("revision", input.expected_revision);
+        state
+            .collection("checkout_forms")
+            .find_one_and_update(filter, doc! {"$set":fields,"$inc":{"revision":1_i64}})
+            .return_document(mongodb::options::ReturnDocument::After)
+            .await?
+            .ok_or(AppError::RecordConflict)?
+    } else {
+        let mut record = filter;
+        record.remove("group.key");
+        record.extend(fields);
+        record.extend(doc! {"_id":ObjectId::new(),"created_at":now,"revision":1_i64});
+        if let Err(error) = state
+            .collection("checkout_forms")
+            .insert_one(record.clone())
+            .await
+        {
+            return Err(if super::events::duplicate(&error) {
+                AppError::RecordConflict
+            } else {
+                error.into()
+            });
+        }
+        record
+    };
+    saved_form_view(&record)
+}
+
 fn safe_submission(mut record: Document) -> Result<Value, AppError> {
+    if let Ok(summary) = bill_snapshot(&record, None) {
+        record.insert(
+            "bill_summary",
+            bson::to_bson(&summary).map_err(|_| AppError::Data)?,
+        );
+    }
     for key in [
         "payload",
         "alex_response",
@@ -481,6 +754,14 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     {
         filter.insert("group.branch_id", doc! {"$in": &access.branch_ids});
     }
+    let forms: Vec<Document> = state
+        .collection("checkout_forms")
+        .find(filter.clone())
+        .sort(doc! {"draft_version":-1,"updated_at":-1})
+        .limit(50)
+        .await?
+        .try_collect()
+        .await?;
     let submissions: Vec<Document> = state
         .collection("alex_submissions")
         .find(filter)
@@ -490,6 +771,30 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
         .try_collect()
         .await?;
     let versions = drafts::versions(state, &inquiry, Some(version_keys())).await?;
+    let last_submission = submissions.first();
+    let last_form = forms.first();
+    let show_form = last_form.is_some_and(|form| {
+        last_submission.is_none_or(|bill| {
+            let bill_version = bill_version(bill, &versions)
+                .map(|(_, number)| number)
+                .unwrap_or(0);
+            form.get_i64("draft_version").unwrap_or(0) > bill_version
+                || (form.get_i64("draft_version").ok() == Some(bill_version)
+                    && bill.get_str("status").ok() == Some("NOT_CREATED")
+                    && form.get_datetime("updated_at").ok() > bill.get_datetime("created_at").ok())
+        })
+    });
+    let latest_bill = if show_form {
+        last_form.and_then(|form| bill_snapshot(form, None).ok())
+    } else {
+        last_submission.and_then(|bill| {
+            bill_snapshot(
+                bill,
+                bill_version(bill, &versions).map(|(_, number)| number),
+            )
+            .ok()
+        })
+    };
     let submissions = submissions
         .into_iter()
         .map(|record| {
@@ -505,16 +810,29 @@ pub async fn list(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
             return Ok(
                 json!({"source_hash":Value::Null,"draft_version":drafts::version(&inquiry),
         "groups":[],"missing":[],"has_conflicts":true,"submissions":submissions,"customer":{"name":Value::Null,"phone":Value::Null,"address":Value::Null},
-        "notes":Value::Null,"context_error":error.code(),"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
+        "notes":Value::Null,"context_error":error.code(),"latest_bill":latest_bill,"saved_form":Value::Null,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
             );
         }
     };
+    let saved_form = forms
+        .iter()
+        .find(|form| {
+            form.get_object_id("draft_id").ok() == source.draft.get_object_id("_id").ok()
+                && source.groups.iter().any(|group| {
+                    form.get_document("group")
+                        .ok()
+                        .and_then(|group| group.get_str("key").ok())
+                        == Some(group.key.as_str())
+                })
+        })
+        .map(saved_form_view)
+        .transpose()?;
+    let notes = manual_draft_note(&source.draft, source.fields.notes.as_deref()).map(str::to_owned);
     Ok(
         json!({"source_hash":source.source_hash,"draft_version":drafts::version(&source.inquiry),"closed":source.closed,"groups":source.groups,"missing":source.missing,
         "has_conflicts":source.has_conflicts,"submissions":submissions,"customer":{"name":source.fields.customer_name,"phone":source.fields.customer_phone,"address":source.fields.customer_address},
-        // Draft notes can contain AI questions, shop workflow instructions and chat timestamps.
-        // The final bill starts with an empty remark; only the admin's review input supplies notes.
-        "notes":Value::Null,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
+        // Prefill explicitly saved admin notes; saved modal input, including a cleared note, wins.
+        "bank_transfer_slips":source.bank_transfer_slips,"payment_tolerance_satang":payment_slip::TOLERANCE_SATANG,"notes":notes,"latest_bill":latest_bill,"saved_form":saved_form,"order_response_configured":state.config.alex.as_ref().is_some_and(|cfg|cfg.order_id_pointer.is_some())}),
     )
 }
 
@@ -634,6 +952,7 @@ pub async fn cart_availability(
         rental_discount_satang: 0,
         deposit_discount_satang: 0,
         amounts_from_summary: false,
+        discounts_finalized: false,
     };
     let session = alex::login(state).await?;
     let results = check(state, &session, &group).await?;
@@ -696,8 +1015,10 @@ pub async fn review(
     input.customer_name = source.policy.rules.customer_name(&input.customer_name);
     // Shipping is a verified catalog item in this order, never an extra browser-supplied charge.
     input.shipping_fee_satang = 0;
-    let discounts_finalized =
-        input.rental_discount_satang.is_some() || input.deposit_discount_satang.is_some();
+    let discounts_finalized = input.rental_discount_satang.is_some()
+        || input.deposit_discount_satang.is_some()
+        || source.fields.amounts.rental_discount_satang.is_some()
+        || source.fields.amounts.deposit_discount_satang.is_some();
     if discounts_finalized {
         // The final admin amounts replace defaults and cannot stack an automatic Alex discount.
         input.use_discount_promotion = false;
@@ -770,6 +1091,7 @@ pub async fn review(
         detail["birthDate"] = json!(birth);
     }
     let payload = json!({"orderDetail":detail,"orderItems":group.lines.iter().map(|line|json!({"productItemId":line.product_item_id,"reservedQuantity":line.quantity})).collect::<Vec<_>>()});
+    let payment_slip = matched_payment(&source, &group, &input)?;
     if self::source(state, id).await?.source_hash != source.source_hash {
         return Err(AppError::ContextChanged);
     }
@@ -795,13 +1117,17 @@ pub async fn review(
     record.insert("billing_settings_version", source.policy.version);
     record.insert("discounts_finalized", discounts_finalized);
     record.insert(
+        "payment_slip",
+        bson::to_bson(&payment_slip).map_err(|_| AppError::Data)?,
+    );
+    record.insert(
         "billing_rules",
         bson::to_bson(&source.policy.rules).map_err(|_| AppError::Data)?,
     );
-    state.collection("bill_reviews").insert_one(record).await?;
+    state.collection("bill_reviews").insert_one(&record).await?;
     Ok(
         json!({"review_id":review_id.to_hex(),"group":group,"queue":queue,"customer":{"name":input.customer_name,"phone":input.customer_phone,"address":input.customer_address},
-        "catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
+        "payment_slip":record.get("payment_slip"),"catalog_rental_satang":rental,"catalog_deposit_satang":deposit,"rental_fee_satang":rental_fee,"deposit_satang":deposit_fee,"shipping_fee_satang":input.shipping_fee_satang,
         "rental_discount_satang":group.rental_discount_satang,"deposit_discount_satang":group.deposit_discount_satang,"discounts_finalized":discounts_finalized,
         "receiving_method":input.receiving_method,"rental_payment_method":input.rental_payment_method,"bail_payment_method":input.bail_payment_method,"notes":input.notes,"expires_at":record_expiry(now)}),
     )
@@ -1086,6 +1412,13 @@ pub async fn submit(
         review.get("input").cloned().ok_or(AppError::Data)?,
     );
     record.insert(
+        "payment_slip",
+        review
+            .get("payment_slip")
+            .cloned()
+            .unwrap_or(bson::Bson::Null),
+    );
+    record.insert(
         "discounts_finalized",
         review.get_bool("discounts_finalized").unwrap_or(false),
     );
@@ -1279,7 +1612,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_notes_saved_by_the_admin_prefill_the_invoice() {
+        let id = ObjectId::new();
+        let note = Some("ใช้งานชุด 28 พ.ย. 69");
+        let mut draft = doc! {"_id":id,"result":{"evidence":[{"field":"notes","source_type":"admin_edit","source_ref":id.to_hex()}]}};
+        assert_eq!(manual_draft_note(&draft, note), note);
+        draft.insert("result", doc! {"evidence":[{"field":"notes","source_type":"admin_summary","source_ref":id.to_hex()}]});
+        assert_eq!(
+            manual_draft_note(&draft, Some("ems , flash; ต้องยืนยันวันคืน\n8:19")),
+            None
+        );
+        draft.insert("result", doc! {"evidence":[{"field":"notes","source_type":"admin_edit","source_ref":ObjectId::new().to_hex()}]});
+        assert_eq!(manual_draft_note(&draft, note), None);
+    }
+
+    #[test]
     fn quoted_fees_below_the_catalog_become_discounts() {
+        assert_eq!(discount(None, Some(50_000), 64_000), 14_000);
+        assert_eq!(discount(Some(10_000), Some(50_000), 64_000), 10_000);
+        assert_eq!(discount(Some(0), Some(50_000), 64_000), 0);
         assert_eq!(discount(None, Some(50_000), 70_000), 20_000);
         assert_eq!(discount(Some(5_000), Some(50_000), 70_000), 5_000);
         assert_eq!(discount(Some(0), Some(50_000), 70_000), 0);

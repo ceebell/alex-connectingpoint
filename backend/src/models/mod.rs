@@ -8,6 +8,7 @@ pub mod line;
 pub mod oa_inbox;
 pub mod oa_sync;
 pub mod outbound;
+pub mod payment_slip;
 pub mod product;
 pub mod quick_replies;
 pub mod shop_settings;

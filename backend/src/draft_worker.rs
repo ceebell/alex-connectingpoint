@@ -208,6 +208,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             conflicts: vec![],
             questions: vec![],
             date_options: vec![],
+            bank_transfer_slips: vec![],
         }
     } else {
         let (customer_messages, customer_sources) = crate::customer_extract::chat_sources(
@@ -267,6 +268,19 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         lift_item_dates(&mut raw);
         let mut result: DraftResult =
             serde_json::from_value(raw).map_err(|_| AppError::HermesFailed)?;
+        let selected_images = input.image_event_ids.iter().cloned().collect();
+        crate::models::payment_slip::validate(&result.bank_transfer_slips, &selected_images)?;
+        if result.evidence.iter().any(|evidence| {
+            evidence.field.starts_with("customer_")
+                && result
+                    .bank_transfer_slips
+                    .iter()
+                    .any(|slip| slip.source_ref == evidence.source_ref)
+        }) {
+            return Err(AppError::Validation(
+                "A bank slip's payer or payee cannot supply the rental customer's contact details",
+            ));
+        }
         result.drop_retired_evidence();
         crate::customer_extract::validate_draft_chat(
             &result,
@@ -337,6 +351,29 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         // A manual edit keeps the date choices read from the images until a new AI draft replaces them.
         if input.fields.is_some() && result.date_options.is_empty() {
             result.date_options = prior.date_options.clone();
+        }
+        // Editing the active draft preserves its OCR evidence. A cloned order starts unpaid.
+        if input.fields.is_some() && copied.is_none() {
+            let visible: BTreeSet<_> = snapshot
+                .events
+                .iter()
+                .filter(|event| {
+                    event
+                        .get_document("payload")
+                        .ok()
+                        .and_then(|payload| payload.get_document("message").ok())
+                        .and_then(|message| message.get_str("type").ok())
+                        == Some("image")
+                        && !event.get_bool("withdrawn").unwrap_or(false)
+                })
+                .filter_map(|event| event.get_object_id("_id").ok().map(|id| id.to_hex()))
+                .collect();
+            result.bank_transfer_slips = prior
+                .bank_transfer_slips
+                .into_iter()
+                .filter(|slip| visible.contains(&slip.source_ref))
+                .collect();
+            crate::models::payment_slip::validate(&result.bank_transfer_slips, &visible)?;
         }
         let prior_values = prior.fields.values();
         if let Ok(fields) = previous.get_array("confirmed_fields") {

@@ -96,6 +96,7 @@ fn image_only_requests_accept_five_and_keep_order_level_fields() {
         conflicts: vec![],
         questions: vec![],
         date_options: vec![],
+        bank_transfer_slips: vec![],
     };
     result.drop_retired_evidence();
     assert_eq!(result.evidence.len(), 1);
@@ -497,7 +498,7 @@ async fn ai_mock(
         evidence.push(json!({"field":"items.0.rental.dispatch_date","source_type":"admin_attachment","source_ref":refs[0],"quote":"ส่ง 4/11"}));
         evidence.push(json!({"field":"items.1.notes","source_type":"admin_attachment","source_ref":refs[1],"quote":"ต้องยืนยันราคาที่ตกลง"}));
         let options = json!([{"pickup_date":format!("{year}-11-05"),"return_date":format!("{year}-11-08"),"label":"nina: รับ 5 คืน 8"}]);
-        json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"],"date_options":options})
+        json!({"fields":raw,"evidence":evidence,"conflicts":[],"questions":["วันรับชุด nina เป็นวันที่ 5 หรือ 6 คะ"],"date_options":options,"bank_transfer_slips":[{"source_ref":refs[4],"amount_satang":90000,"currency":"THB","bank":"Test bank","transaction_ref":"TX-IMAGE-1","completed":true,"quote":"Transfer completed 900.00 THB TX-IMAGE-1"}]})
     };
     Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
 }
@@ -677,6 +678,14 @@ async fn private_photos_and_customer_autofill_are_scoped_grounded_and_not_sent_t
     assert_eq!(fields["customer_phone"], "0822222222");
     assert_eq!(fields["customer_address"], "99 ถนนสุขุมวิท กทม. 10110");
     assert_eq!(saved[0]["input_scope"], "admin_inputs_with_customer_chat");
+    assert_eq!(
+        saved[0]["result"]["bank_transfer_slips"][0]["source_ref"],
+        ids[4]
+    );
+    assert_eq!(
+        saved[0]["result"]["bank_transfer_slips"][0]["amount_satang"],
+        90000
+    );
     let contact_evidence = saved[0]["result"]["evidence"]
         .as_array()
         .unwrap()
@@ -839,6 +848,19 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     let id = all(&state, "inquiries").await[0]
         .get_object_id("_id")
         .unwrap();
+    let slip_upload = request(
+        &state,
+        &format!("/api/inquiries/{id}/draft-images"),
+        "POST",
+        json!({"name":"bank-slip.png","image_base64":"iVBORw0KGgo="}),
+        true,
+    )
+    .await;
+    assert_eq!(slip_upload.0, StatusCode::OK);
+    let slip_id = slip_upload.1["attachment"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     // One inquiry is one order: dates, notes and discounts are order-level; products come from the cart.
     // No written discount means the quoted fees are compared with the Alex prices in the cart.
     let order = |pickup: &str,
@@ -849,7 +871,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         serde_json::from_value(json!({"customer_name":"คุณเอ","customer_phone":"0812345678","customer_address":"99 ถนนสุขุมวิท กทม. 10110",
             "items":[{"product_name":"nina","quantity":1}],
             "rental":{"pickup_date":pickup,"return_date":returned,"fulfillment_method":method,"delivery_provider":if method=="delivery"{json!("Flash")}else{Value::Null},"return_shipping_deadline":"16:00"},
-            "amounts":{"rental_fee_satang":55000,"deposit_satang":150000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":discount.map(|_| 0)},"notes":"ems , flash หรือ 29/11 ก่อนเที่ยง ต้องยืนยันวันคืน; สินค้าค่าขนส่งให้แอดมินเลือกเพิ่มเอง ไม่เพิ่มอัตโนมัติ\n\n\n8:19"})).unwrap()
+            "amounts":{"rental_fee_satang":55000,"deposit_satang":150000,"shipping_fee_satang":4000,"rental_discount_satang":discount,"deposit_discount_satang":discount.map(|_| 0)},"notes":"ใช้งานชุด 28 พ.ย. 69"})).unwrap()
     };
     manual(
         &state,
@@ -942,11 +964,21 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         order("2026-11-04", "2026-11-08", "delivery", None),
     )
     .await;
+    // The OCR pipeline is covered above; inject its trusted result to exercise billing end to end.
+    let active_id = drafts::inquiry(&state, id)
+        .await
+        .unwrap()
+        .get_object_id("active_draft_id")
+        .unwrap();
+    let receipt = json!({"source_ref":slip_id,"amount_satang":204950,"currency":"THB","bank":"Test bank","transaction_ref":"TX-CHECKOUT-1","completed":true,"quote":"Transfer completed 2049.50 THB TX-CHECKOUT-1"});
+    state.collection("order_drafts").update_one(doc! {"_id":active_id}, doc! {"$set":{"result.bank_transfer_slips":mongodb::bson::to_bson(&vec![receipt]).unwrap()}}).await.unwrap();
     let data = checkout::list(&state, id).await.unwrap();
+    assert_eq!(data["payment_tolerance_satang"], 10000);
+    assert_eq!(data["bank_transfer_slips"][0]["source_ref"], slip_id);
     let group = data["groups"][0].clone();
     // Catalog rent 1500.00 quoted at 550.00 and deposit 2000.01 quoted at 1500.00.
-    // Old draft notes must not prefill the remark, even if the draft predates this policy.
-    assert!(data["notes"].is_null());
+    // Saved admin notes prefill the modal; its explicit input can still replace or clear them.
+    assert_eq!(data["notes"], "ใช้งานชุด 28 พ.ย. 69");
     assert_eq!(group["rental_discount_satang"], 95000);
     assert_eq!(group["deposit_discount_satang"], 50001);
     assert_eq!(
@@ -963,6 +995,59 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     );
     review["source_hash"] = data["source_hash"].clone();
     review["group_key"] = group["key"].clone();
+    // The editable modal and latest bill share a durable, versioned form, not UI defaults.
+    let form_path = format!("{base}/form");
+    let mut saved_input = review.clone();
+    saved_input["bail_payment_method"] = json!("เงินสด");
+    saved_input["rental_discount_satang"] = json!(0);
+    saved_input["deposit_discount_satang"] = json!(5000);
+    saved_input["use_discount_promotion"] = json!(true);
+    let mut save_body = json!({"expected_revision":0,"form":saved_input});
+    assert_eq!(
+        request(&state, &form_path, "POST", save_body.clone(), false)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, saved) = request(&state, &form_path, "POST", save_body.clone(), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["revision"], 1);
+    assert_eq!(saved["bill"]["rental_fee_satang"], 150000);
+    assert_eq!(saved["bill"]["deposit_satang"], 195001);
+    assert_eq!(saved["input"]["shipping_fee_satang"], 0);
+    assert_eq!(saved["input"]["use_discount_promotion"], false);
+    assert_eq!(saved["bill"]["bail_payment_method"], "เงินสด");
+    assert_eq!(
+        request(&state, &form_path, "POST", save_body.clone(), true)
+            .await
+            .1["revision"],
+        1
+    );
+    save_body["form"]["notes"] = json!("แก้ไขหมายเหตุ");
+    assert_eq!(
+        request(&state, &form_path, "POST", save_body.clone(), true)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    save_body["expected_revision"] = json!(1);
+    let updated = request(&state, &form_path, "POST", save_body.clone(), true).await;
+    assert_eq!(updated.0, StatusCode::OK);
+    assert_eq!(updated.1["revision"], 2);
+    let reloaded = checkout::list(&state, id).await.unwrap();
+    assert_eq!(reloaded["saved_form"]["input"]["notes"], "แก้ไขหมายเหตุ");
+    assert_eq!(reloaded["latest_bill"]["rental_payment_method"], "โอนเงิน");
+    assert_eq!(reloaded["latest_bill"]["bail_payment_method"], "เงินสด");
+    assert_eq!(reloaded["latest_bill"]["status"], "PREPARED");
+    assert_eq!(mock.orders.load(Ordering::SeqCst), 0);
+    save_body["expected_revision"] = json!(2);
+    save_body["form"]["source_hash"] = json!("old-context");
+    assert_eq!(
+        request(&state, &form_path, "POST", save_body.clone(), true)
+            .await
+            .1["error"]["code"],
+        "CONTEXT_CHANGED"
+    );
     // Payments use Alex's own choices; an empty one means not paid yet.
     review["bail_payment_method"] = json!("ทองคำ");
     assert_eq!(
@@ -1082,6 +1167,43 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(zero_review["discounts_finalized"], true);
     assert_eq!(zero_review["rental_fee_satang"], 150000);
     assert_eq!(zero_review["deposit_satang"], 200001);
+    let mut matched = review.clone();
+    matched["bail_payment_method"] = json!("โอนเงิน");
+    matched["payment_slip_source_ref"] = json!(slip_id);
+    matched["payment_methods_edited"] = json!(false);
+    let mut forged = matched.clone();
+    forged["payment_slip_source_ref"] = json!(ObjectId::new().to_hex());
+    assert_eq!(
+        request(&state, &format!("{base}/review"), "POST", forged, true)
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut wrong_total = matched.clone();
+    wrong_total["rental_discount_satang"] = json!(0);
+    wrong_total["deposit_discount_satang"] = json!(0);
+    wrong_total.as_object_mut().unwrap().remove("amounts_hash");
+    assert_eq!(
+        request(&state, &format!("{base}/review"), "POST", wrong_total, true)
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut manual_payment = matched.clone();
+    manual_payment["payment_methods_edited"] = json!(true);
+    assert_eq!(
+        request(
+            &state,
+            &format!("{base}/review"),
+            "POST",
+            manual_payment,
+            true
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    review = matched;
     let (status, preview) = request(
         &state,
         &format!("{base}/review"),
@@ -1121,7 +1243,8 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     assert_eq!(payload["orderDetail"]["startDate"], "2026-11-04");
     assert_eq!(payload["orderItems"][0]["productItemId"], "item-1");
     assert!(payload["orderDetail"].get("birthDate").is_none());
-    assert_eq!(payload["orderDetail"]["bailPaymentMethod"], "ยังไม่ชำระ");
+    assert_eq!(payload["orderDetail"]["bailPaymentMethod"], "โอนเงิน");
+    assert_eq!(payload["orderDetail"]["rentalPaymentMethod"], "โอนเงิน");
     // The retired shipping textbox cannot add a charge or append a shipping remark.
     assert_eq!(payload["orderDetail"]["remark1"], "เข็มกลัดดอกไม้");
     let record = all(&state, "alex_submissions").await[0].clone();
@@ -1163,6 +1286,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
         "rental_discount_satang",
         "deposit_discount_satang",
         "amounts_hash",
+        "payment_slip_source_ref",
     ] {
         review.as_object_mut().unwrap().remove(field);
     }
@@ -1174,7 +1298,39 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
             .is_none()
     );
     // A sent version is closed: it is not billed again (clone it instead).
-    assert_eq!(checkout::list(&state, id).await.unwrap()["closed"], "SENT");
+    let sent_bill = checkout::list(&state, id).await.unwrap();
+    assert_eq!(sent_bill["closed"], "SENT");
+    assert_eq!(sent_bill["latest_bill"]["status"], "CONFIRMED");
+    assert_eq!(sent_bill["latest_bill"]["alex_order_id"], "alex-bill-1");
+    assert_eq!(
+        sent_bill["latest_bill"]["alex_order_number"],
+        "AR-2026-0001"
+    );
+    assert_eq!(sent_bill["latest_bill"]["notes"], "เข็มกลัดดอกไม้");
+    assert_eq!(sent_bill["latest_bill"]["rental_payment_method"], "โอนเงิน");
+    assert_eq!(sent_bill["latest_bill"]["bail_payment_method"], "โอนเงิน");
+    assert_eq!(
+        sent_bill["latest_bill"]["payment_slip"]["slip"]["source_ref"],
+        slip_id
+    );
+    assert_eq!(
+        sent_bill["latest_bill"]["payment_slip"]["net_satang"],
+        204950
+    );
+    assert_eq!(sent_bill["latest_bill"]["rental_discount_satang"], 95025);
+    assert_eq!(sent_bill["latest_bill"]["deposit_discount_satang"], 50026);
+    assert_eq!(sent_bill["latest_bill"]["customer"]["phone"], "0812345678");
+    assert_eq!(
+        result.1["bill_summary"]["alex_order_number"],
+        "AR-2026-0001"
+    );
+    save_body["form"]["source_hash"] = data["source_hash"].clone();
+    assert_eq!(
+        request(&state, &form_path, "POST", save_body.clone(), true)
+            .await
+            .1["error"]["code"],
+        "DRAFT_CLOSED"
+    );
     assert_eq!(
         request(
             &state,
@@ -1198,6 +1354,7 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     .await;
     let data = checkout::list(&state, id).await.unwrap();
     review["source_hash"] = data["source_hash"].clone();
+    assert_eq!(data["bank_transfer_slips"], json!([]));
     review["group_key"] = data["groups"][0]["key"].clone();
     review["shipping_fee_satang"] = json!(0);
     // Bills accept only Alex's own receiving methods.
@@ -1429,6 +1586,10 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     text_event(&state, "after-bill", "ขอแก้ข้อมูลภายหลัง", 3).await;
     let stale = checkout::list(&state, id).await.unwrap();
     assert!(stale["source_hash"].is_null());
+    assert!(stale["saved_form"].is_null());
+    assert_eq!(stale["latest_bill"]["draft_version"], 4);
+    assert_eq!(stale["latest_bill"]["status"], "CONFIRMED");
+    assert_eq!(stale["latest_bill"]["notes"], "เข็มกลัดดอกไม้");
     // Two sent bills, the queue-blocked attempt that never left, and the accepted resend.
     assert_eq!(stale["submissions"].as_array().unwrap().len(), 4);
     assert_eq!(stale["submissions"][0]["draft_version"], 4);

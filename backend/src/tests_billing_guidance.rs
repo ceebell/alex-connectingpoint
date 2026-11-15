@@ -79,6 +79,7 @@ fn policy_evidence_cannot_invent_customer_identity_stock_or_base_prices() {
         conflicts: vec![],
         questions: vec![],
         date_options: vec![],
+        bank_transfer_slips: vec![],
     };
     for field in [
         "notes",
