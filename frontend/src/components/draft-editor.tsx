@@ -5,6 +5,7 @@ import { Attachment, Amounts, Availability, CartItem, cleanPhone, Draft, emptyAm
 import CustomerExtractButton from "./customer-extract-button";
 import OrderCart, { price, QueueCheck } from "./order-cart";
 import RentalCheckout, { type CheckoutHandle } from "./rental-checkout";
+import type { BillFeedback } from "@/lib/bill-feedback";
 import DateInput from "./date-input";
 import { formatDate as day } from "@/lib/dates";
 import { discountableRental } from "@/lib/cart-amounts";
@@ -79,7 +80,7 @@ function InvoiceDialog({ onClose, children }: { onClose: () => void; children: R
   </dialog>, document.body);
 }
 
-export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized, canSubmit = true, onSubmitted }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void; canSubmit?: boolean; onSubmitted?: () => void }) {
+export default function DraftEditor({ inquiryId, userId, draft, initial, busy, messages, attachments, onSave, onClone, onUnauthorized, canSubmit = true, onSubmitted }: { inquiryId: string; userId?: string; draft: Draft | undefined; initial: Fields; busy: boolean; messages: LineEvent[]; attachments: Attachment[]; onSave: (fields: Fields, confirm: boolean) => Promise<void>; onClone: () => void; onUnauthorized: () => void; canSubmit?: boolean; onSubmitted?: (feedback: BillFeedback) => void }) {
   const form = useRef<HTMLDivElement>(null);
   const checkout = useRef<CheckoutHandle>(null);
   function validDates() {
@@ -185,6 +186,6 @@ export default function DraftEditor({ inquiryId, userId, draft, initial, busy, m
       <p className="muted small">{!cart.length ? "เพิ่มสินค้าลงตะกร้าก่อนสร้างออเดอร์" : dirty || !draft ? "มีข้อมูลที่ยังไม่บันทึก กรุณาบันทึกร่างก่อนสร้างออเดอร์" : "เปิดใบสรุปเพื่อตรวจยอดและส่งออเดอร์เข้า Alex"}</p>
     </div>
     </fieldset>
-    {invoice && <InvoiceDialog onClose={() => { void (async () => { if (await checkout.current?.flush() !== false) setInvoice(false); })(); }}><RentalCheckout ref={checkout} canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} onSubmitted={() => { setInvoice(false); onSubmitted?.(); }} /></InvoiceDialog>}
+    {invoice && <InvoiceDialog onClose={() => { void (async () => { if (await checkout.current?.flush() !== false) setInvoice(false); })(); }}><RentalCheckout ref={checkout} canSubmit={canSubmit} inquiryId={inquiryId} userId={userId} disabled={busy} titleId="invoice-title" onUnauthorized={onUnauthorized} onSubmitted={feedback => { setInvoice(false); onSubmitted?.(feedback); }} /></InvoiceDialog>}
   </div>;
 }

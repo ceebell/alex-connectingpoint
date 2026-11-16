@@ -1228,12 +1228,41 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     .await;
     assert_eq!(result.0, StatusCode::OK);
     assert_eq!(result.1["status"], "CONFIRMED");
-    assert_eq!(
-        request(&state, &format!("{base}/submit"), "POST", submit, true)
-            .await
-            .1["alex_order_id"],
-        "alex-bill-1"
-    );
+    assert_eq!(result.1["alex_order_id"], "alex-bill-1");
+    assert_eq!(result.1["alex_order_number"], "AR-2026-0001");
+    let replay = request(
+        &state,
+        &format!("{base}/submit"),
+        "POST",
+        submit.clone(),
+        true,
+    )
+    .await;
+    assert_eq!(replay.0, StatusCode::OK);
+    for field in [
+        "_id",
+        "inquiry_id",
+        "draft_id",
+        "draft_version",
+        "line_user_id",
+        "conversation_key",
+        "customer",
+        "alex_order_id",
+        "alex_order_number",
+    ] {
+        assert_eq!(replay.1[field], result.1[field], "{field}");
+    }
+    // A request ID cannot retrieve or create an order under another customer.
+    let other_customer = request(
+        &state,
+        &format!("/api/inquiries/{}/checkout/submit", ObjectId::new()),
+        "POST",
+        submit,
+        true,
+    )
+    .await;
+    assert_eq!(other_customer.1["error"]["code"], "BILL_NOT_READY");
+    assert!(other_customer.1.get("alex_order_id").is_none());
     assert_eq!(mock.orders.load(Ordering::SeqCst), 1);
     let payload = mock.payloads.lock().await[0].clone();
     assert_eq!(payload["orderDetail"]["rentalDiscount"], "950.25");
@@ -1248,6 +1277,23 @@ async fn checkout_bills_the_cart_as_one_order_checks_stock_and_never_retries_unk
     // The retired shipping textbox cannot add a charge or append a shipping remark.
     assert_eq!(payload["orderDetail"]["remark1"], "เข็มกลัดดอกไม้");
     let record = all(&state, "alex_submissions").await[0].clone();
+    for field in [
+        "_id",
+        "inquiry_id",
+        "draft_id",
+        "draft_version",
+        "line_user_id",
+        "conversation_key",
+        "customer",
+        "alex_order_id",
+        "alex_order_number",
+    ] {
+        assert_eq!(
+            result.1[field],
+            serde_json::to_value(record.get(field).unwrap()).unwrap(),
+            "{field}"
+        );
+    }
     assert!(record.get_bool("discounts_finalized").unwrap());
     assert_eq!(record.get_str("alex_order_id").unwrap(), "alex-bill-1");
     assert_eq!(record.get_str("alex_order_number").unwrap(), "AR-2026-0001");

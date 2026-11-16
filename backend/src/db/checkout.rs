@@ -703,6 +703,12 @@ pub async fn save_form(
 }
 
 fn safe_submission(mut record: Document) -> Result<Value, AppError> {
+    // Keep the reference contract explicit, including records written by older releases.
+    for key in ["alex_order_id", "alex_order_number"] {
+        if !record.contains_key(key) {
+            record.insert(key, bson::Bson::Null);
+        }
+    }
     if let Ok(summary) = bill_snapshot(&record, None) {
         record.insert(
             "bill_summary",
@@ -1397,6 +1403,8 @@ pub async fn submit(
     }
     let now = DateTime::now();
     let mut record = identity.clone();
+    record.insert("alex_order_id", bson::Bson::Null);
+    record.insert("alex_order_number", bson::Bson::Null);
     // `active` marks a send in progress; it is cleared once Alex has answered.
     record.extend(doc! {"reservation_key":review.get_str("reservation_key").map_err(|_|AppError::Data)?,"active":true,
         "status":"SUBMITTING","group":review.get("group").cloned().ok_or(AppError::Data)?,"source_hash":&source.source_hash,
@@ -1610,6 +1618,23 @@ pub async fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn submission_response_keeps_missing_references_explicit_without_inventing_values() {
+        let record = doc! {"status":"SUBMITTING"};
+        let value = safe_submission(record.clone()).unwrap();
+        assert_eq!(value.get("alex_order_id"), Some(&Value::Null));
+        assert_eq!(value.get("alex_order_number"), Some(&Value::Null));
+        let mut confirmed = record;
+        confirmed.extend(doc! {"status":"CONFIRMED","alex_order_id":"id-123"});
+        let value = safe_submission(confirmed.clone()).unwrap();
+        assert_eq!(value["alex_order_id"], "id-123");
+        assert_eq!(value.get("alex_order_number"), Some(&Value::Null));
+        confirmed.insert("alex_order_number", "AR-2026-001");
+        let value = safe_submission(confirmed).unwrap();
+        assert_eq!(value["alex_order_id"], "id-123");
+        assert_eq!(value["alex_order_number"], "AR-2026-001");
+    }
 
     #[test]
     fn only_notes_saved_by_the_admin_prefill_the_invoice() {

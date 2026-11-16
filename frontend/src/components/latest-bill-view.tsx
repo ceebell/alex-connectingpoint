@@ -1,15 +1,16 @@
 import { formatDate, formatDateTime } from "@/lib/dates";
 import type { BillSnapshot } from "./rental-checkout";
 import PaymentSlipNotice from "./payment-slip-notice";
+import BillFeedbackCard from "./bill-feedback";
+import { submissionFeedback } from "@/lib/bill-feedback";
 
 const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
-const states: Record<string, string> = { PREPARED: "บันทึกสรุปแล้ว · ยังไม่ได้ส่งเข้า Alex", SUBMITTING: "กำลังส่งเข้า Alex", SUBMIT_UNKNOWN: "ส่งแล้ว · รอตรวจผลใน Alex", CONFIRMED: "ส่งเข้า Alex แล้ว", NOT_CREATED: "ยังไม่ได้สร้างออเดอร์ใน Alex" };
 
 export default function LatestBillView({ bill }: { bill: BillSnapshot | null }) {
   if (!bill) return <div className="empty-state"><h3>ยังไม่มีสรุปบิลล่าสุด</h3><p>เปิดแท็บร่างล่าสุด แล้วกด “สรุปออเดอร์และส่งเข้า Alex” เพื่อเตรียมข้อมูลบิล</p></div>;
   return <article className="invoice-body" aria-label="สรุปบิลล่าสุด">
-    <header className="invoice-head"><div><h3>สรุปบิลล่าสุด{bill.draft_version ? ` · ร่าง v${bill.draft_version}` : ""}</h3><p role="status">{states[bill.status] ?? bill.status}</p></div></header>
-    {(bill.alex_order_id || bill.alex_order_number) && <section className="notice success" aria-label="ออเดอร์ใน Alex">{bill.alex_order_number && <p>Order Number: <strong>{bill.alex_order_number}</strong></p>}{bill.alex_order_id && <p>Order ID: <code>{bill.alex_order_id}</code></p>}</section>}
+    {bill.status !== "PREPARED" && <BillFeedbackCard value={submissionFeedback({ _id: bill.id, status: bill.status, alex_order_id: bill.alex_order_id, alex_order_number: bill.alex_order_number })} />}
+    <header className="invoice-head"><div><h3>สรุปบิลล่าสุด{bill.draft_version ? ` · ร่าง v${bill.draft_version}` : ""}</h3>{bill.status === "PREPARED" && <p role="status">บันทึกสรุปแล้ว · ยังไม่ได้ส่งเข้า Alex</p>}</div></header>
     {bill.payment_slip && <PaymentSlipNotice match={bill.payment_slip} />}
     <section className="invoice-block"><h4>ลูกค้า</h4><dl className="bill-details"><div><dt>ชื่อ</dt><dd>{bill.customer.name || "—"}</dd></div><div><dt>โทรศัพท์</dt><dd>{bill.customer.phone || "—"}</dd></div><div><dt>ที่อยู่</dt><dd>{bill.customer.address || "—"}</dd></div></dl></section>
     <section className="invoice-block"><h4>รายการสินค้า</h4><dl className="bill-details"><div><dt>วันรับชุด</dt><dd>{formatDate(bill.group.pickup_date)}</dd></div><div><dt>วันคืนชุด</dt><dd>{formatDate(bill.group.return_date)}</dd></div></dl>{bill.group.lines.map((line, i) => <div className="bill-line" key={`${line.product_item_id}-${i}`}><strong>{line.name}</strong><p>{line.code}{line.size && ` · ${line.size}`}{line.is_shipping && " · ค่าขนส่ง"} · {line.quantity} รายการ</p><p>ค่าเช่า {baht(line.rental_fee_satang * line.quantity)} บาท · ค่าประกัน {baht(line.deposit_satang * line.quantity)} บาท</p></div>)}</section>

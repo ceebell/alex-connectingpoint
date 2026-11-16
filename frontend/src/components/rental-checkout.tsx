@@ -7,6 +7,8 @@ import { formatDate as day } from "@/lib/dates";
 import LatestBillView from "./latest-bill-view";
 import { matchPaymentSlip, type BankTransferSlip, type PaymentSlipMatch } from "@/lib/payment-slip";
 import PaymentSlipNotice from "./payment-slip-notice";
+import BillFeedbackCard from "./bill-feedback";
+import { forgetBillAttempt, isPreflightRejection, rememberBillAttempt, restoreBillAttempt, submissionFeedback, type BillAttempt, type BillFeedback } from "@/lib/bill-feedback";
 
 export type CheckoutHandle = { flush: () => Promise<boolean> };
 type BillForm = { source_hash: string; group_key: string; customer_name: string; customer_phone: string; customer_address: string; receiving_method: string; rental_payment_method: string; bail_payment_method: string; payment_methods_edited: boolean; payment_slip_source_ref: string | null; shipping_fee_satang: number; rental_discount_satang: number | null; deposit_discount_satang: number | null; amounts_hash: string | null; birth_date: null; use_free_item_promotion: boolean; use_discount_promotion: boolean; notes: string };
@@ -16,11 +18,17 @@ const formKey = (form: BillForm) => JSON.stringify(Object.entries(form).sort(([a
 
 type Line = { item_index: number; product_item_id: string; code: string; name: string; color: string | null; size: string | null; quantity: number; rental_fee_satang: number; deposit_satang: number; is_shipping?: boolean; image_url?: string | null };
 type Group = { key: string; branch_id: string; pickup_date: string; return_date: string; fulfillment_method: string; delivery_provider: string | null; lines: Line[]; notes: string; quoted_rental_fee_satang: number | null; quoted_deposit_satang: number | null; quoted_shipping_fee_satang: number | null; rental_discount_satang: number; deposit_discount_satang: number; amounts_from_summary?: boolean; discounts_finalized?: boolean };
-type Submission = { _id: string; status: string; alex_order_id?: string; alex_order_number?: string; group: Group; submitted_by: string; created_at: string; verification?: string; draft_version?: number | null; queue_accepted?: boolean; bill_summary?: BillSnapshot };
+type Submission = { http_status?: number; _id: string; status: string; alex_order_id?: string; alex_order_number?: string; group: Group; submitted_by: string; created_at: string; verification?: string; draft_version?: number | null; queue_accepted?: boolean; bill_summary?: BillSnapshot };
 type Data = { bank_transfer_slips?: BankTransferSlip[]; payment_tolerance_satang?: number; source_hash: string | null; draft_version?: number; closed?: "SENT" | "CANCELLED" | null; groups: Group[]; missing: { field: string; code?: string }[]; has_conflicts: boolean; context_error?: string; submissions: Submission[]; customer: { name: string | null; phone: string | null; address: string | null }; notes: string | null; order_response_configured: boolean; saved_form?: SavedForm | null; latest_bill?: BillSnapshot | null };
 type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
 type Review = { review_id: string; group: Group; queue: Omit<Availability, "checked_at">; customer: { name: string; phone: string; address: string }; catalog_rental_satang: number; catalog_deposit_satang: number; rental_fee_satang: number; deposit_satang: number; shipping_fee_satang: number; rental_discount_satang: number; deposit_discount_satang: number; receiving_method: string; rental_payment_method: string; bail_payment_method: string; notes: string; expires_at: string };
 const baht = (value: number) => (value / 100).toLocaleString("th-TH", { maximumFractionDigits: 2 });
+async function checkoutRequest<T>(path: string, options: RequestInit = {}, timeout = 90000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try { return await api<T>(path, { ...options, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
 const moneyInput = (value: string) => {
   if (!/^\d*(?:\.\d{0,2})?$/.test(value) || value === ".") return null;
   const satang = Math.round(Number(value || "0") * 100);
@@ -36,7 +44,7 @@ const missingLabels: Record<string, string> = { cart: "เพิ่มสิน�
   summary_deposit_above_catalog: "ค่าประกันในสรุปบิลสูงกว่าราคาใน Alex ของตะกร้า — Alex ไม่มีช่องบวกเพิ่ม กรุณาตรวจสรุปบิลหรือสินค้าในตะกร้า" };
 
 // The bill as an invoice: one order from the cart and the latest draft, checked and reviewed before it is sent to Alex.
-export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; disabled: boolean; titleId?: string; onUnauthorized: () => void; canSubmit?: boolean; mode?: "edit" | "latest"; onSubmitted?: () => void }>(function RentalCheckout({ inquiryId, userId, disabled, titleId, onUnauthorized, canSubmit = true, mode = "edit", onSubmitted }, ref) {
+export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; disabled: boolean; titleId?: string; onUnauthorized: () => void; canSubmit?: boolean; mode?: "edit" | "latest"; onSubmitted?: (feedback: BillFeedback) => void }>(function RentalCheckout({ inquiryId, userId, disabled, titleId, onUnauthorized, canSubmit = true, mode = "edit", onSubmitted }, ref) {
   const [data, setData] = useState<Data | null>(null);
   const [groupKey, setGroupKey] = useState("");
   const [name, setName] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState("");
@@ -61,6 +69,14 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
   const [retainedGroup, setRetainedGroup] = useState<Group | null>(null);
   const sending = useRef(false);
   const attemptedReview = useRef<string | null>(null);
+  const attempt = useRef<BillAttempt | null>(null);
+  const announced = useRef<string | null>(null);
+  const lastError = useRef("");
+  const checkoutForm = useRef<HTMLFormElement>(null);
+  const feedbackElement = useRef<HTMLDivElement>(null);
+  const [feedback, setFeedback] = useState<BillFeedback | null>(null);
+  const [recordKnown, setRecordKnown] = useState(false);
+  const feedbackLocked = !!feedback && ["unknown", "waiting", "checking_result"].includes(feedback.state);
   const [busy, setBusy] = useState(false); const [extracting, setExtracting] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
   // Lines carry Alex color codes (P); show the shop's color names next to them.
@@ -110,12 +126,13 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
     // A preview is usable only for its exact source and amounts; formatting changes can reuse it.
     setAvailability(null); invalidate();
   }
-  function fail(cause: unknown) { setError(errorText(cause)); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
+  function fail(cause: unknown) { lastError.current = errorText(cause); setError(lastError.current); if (cause instanceof ApiError && cause.status === 401) onUnauthorized(); }
   async function refresh() { const value = await api<Data>(endpoint); setData(value); return value; }
   const form: BillForm | null = validAmounts && loadedSource.current && sourceGroup ? { source_hash: loadedSource.current, group_key: groupKey, customer_name: name, customer_phone: phone, customer_address: address, receiving_method: receiving, rental_payment_method: rentalMethod, bail_payment_method: bailMethod, payment_methods_edited: manualPayments, payment_slip_source_ref: automaticPayment?.slip.source_ref ?? null, shipping_fee_satang: 0, rental_discount_satang: edited ? rentalDiscount : null, deposit_discount_satang: edited ? depositDiscount : null, amounts_hash: null, birth_date: null, notes, use_free_item_promotion: freePromotion, use_discount_promotion: !edited && !sourceGroup?.discounts_finalized && discountPromotion } : null;
   const currentFormKey = form ? formKey(form) : "";
 
   async function persistForm(duringSend = false): Promise<boolean> {
+    if (feedbackLocked) return !sending.current;
     if (mode === "latest" || !hydrated || data?.closed) return true;
     if (sending.current && !duringSend) return false;
     if (!sourceGroup || !loadedSource.current) return true;
@@ -126,7 +143,7 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
       if (savedKey.current === key) return true;
       if (mounted.current) setSaveStatus("กำลังบันทึกสรุปบิล…");
       try {
-        const saved = await api<SavedForm>(`${endpoint}/form`, { method: "POST", body: JSON.stringify({ expected_revision: saveRevision.current, form: snapshot }) });
+        const saved = await checkoutRequest<SavedForm>(`${endpoint}/form`, { method: "POST", body: JSON.stringify({ expected_revision: saveRevision.current, form: snapshot }) });
         saveRevision.current = saved.revision; savedKey.current = formKey(saved.input);
         if (mounted.current) { setSaveStatus("บันทึกสรุปบิลแล้ว"); setData(current => current ? { ...current, saved_form: saved, latest_bill: saved.bill } : current); }
         return true;
@@ -138,10 +155,10 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
   useImperativeHandle(ref, () => ({ flush: () => persistForm() }));
 
   useEffect(() => {
-    if (mode !== "edit" || !hydrated || !ready || working || pending || amountPending || !!amountError || !currentFormKey || savedKey.current === currentFormKey) return;
+    if (mode !== "edit" || !hydrated || !ready || working || pending || feedbackLocked || amountPending || !!amountError || !currentFormKey || savedKey.current === currentFormKey) return;
     const timer = setTimeout(() => { void persistForm(); }, 700);
     return () => clearTimeout(timer);
-  }, [currentFormKey, hydrated, mode, ready, working, pending, amountPending, amountError]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentFormKey, hydrated, mode, ready, working, pending, feedbackLocked, amountPending, amountError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -167,10 +184,29 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
         }
       }
       setHydrated(true);
+      const restored = restoreBillAttempt(inquiryId);
+      if (mode === "edit" && restored && restored.draftVersion === value.draft_version) {
+        attempt.current = restored; attemptedReview.current = restored.reviewId;
+        const record = value.submissions.find(item => item._id === restored.reviewId);
+        if (record) acceptResult(record, false);
+        else setFeedback({ state: "unknown", requestId: restored.reviewId, message: "มีคำขอที่ยังไม่ได้รับผลยืนยันก่อนรีเฟรชหน้า กดตรวจผลหรือติดตามคำขอเดิมได้ ข้อมูลที่บันทึกไว้ยังอยู่" });
+      }
     }).catch(cause => { if (!cancelled) fail(cause); }).finally(() => { if (!cancelled) setLoading(false); });
     const timer = setInterval(() => { api<Data>(endpoint).then(value => { if (!cancelled) { setData(value); setNow(Date.now()); } }).catch(() => {}); }, 10000);
     return () => { cancelled = true; mounted.current = false; clearInterval(timer); };
   }, [inquiryId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!feedback) return;
+    feedbackElement.current?.focus({ preventScroll: true });
+    feedbackElement.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [feedback]);
+
+  useEffect(() => {
+    if (!attempt.current) return;
+    const record = data?.submissions.find(item => item._id === attempt.current?.reviewId);
+    if (record && (!sending.current || record.status === "CONFIRMED")) acceptResult(record, false);
+  }, [data?.submissions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!amountRequestKey) return;
@@ -188,6 +224,60 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
     return () => { cancelled = true; clearTimeout(timer); };
   }, [amountRequestKey, endpoint, amountRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function acceptResult(submitted: Submission, merge = true) {
+    if (!mounted.current) return;
+    const outcome = submissionFeedback(submitted);
+    setFeedback(current => JSON.stringify(current) === JSON.stringify(outcome) ? current : outcome);
+    setRecordKnown(true);
+    if (merge) setData(current => current ? { ...current, closed: submitted.status === "NOT_CREATED" ? null : submitted.status === "CONFIRMED" || submitted.status === "SUBMIT_UNKNOWN" ? "SENT" : current.closed, submissions: [submitted, ...current.submissions.filter(item => item._id !== submitted._id)], latest_bill: submitted.bill_summary ?? current.latest_bill } : current);
+    if (outcome.state === "success" || outcome.state === "failed") forgetBillAttempt(inquiryId);
+    if (outcome.state === "failed") { attempt.current = null; invalidate(); }
+    if (outcome.state === "success" && announced.current !== submitted._id) {
+      announced.current = submitted._id;
+      onSubmitted?.(outcome);
+    }
+  }
+
+  async function reconcile(original: BillAttempt, cause?: unknown, replay = false): Promise<void> {
+    try {
+      const value = await checkoutRequest<Data>(endpoint, {}, 15000);
+      if (!mounted.current) return;
+      setData(value);
+      const record = value.submissions.find(item => item._id === original.reviewId);
+      setRecordKnown(!!record);
+      if (record) {
+        acceptResult(record, false);
+        if (record.status === "NOT_CREATED" && cause) setFeedback({ ...submissionFeedback(record), message: `${errorText(cause)} คำขอนี้ไม่ได้สร้างออเดอร์ ข้อมูลที่กรอกยังอยู่` });
+        return;
+      }
+      if (cause instanceof ApiError && isPreflightRejection(cause.code)) {
+        forgetBillAttempt(inquiryId); attempt.current = null; invalidate();
+        setFeedback({ state: "failed", requestId: original.reviewId, message: `${errorText(cause)} ข้อมูลที่กรอกยังอยู่` });
+        return;
+      }
+      if (replay) {
+        setFeedback({ state: "sending", requestId: original.reviewId, message: "กำลังติดตามด้วยรหัสคำขอเดิม ไม่สร้างรหัสใหม่" });
+        try { acceptResult(await checkoutRequest<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: original.reviewId, confirmed: true, accept_queue: original.acceptQueue }) })); }
+        catch (retryError) { await reconcile(original, retryError); }
+        return;
+      }
+      setFeedback({ state: "unknown", requestId: original.reviewId, message: "ยังไม่พบผลยืนยันของคำขอนี้ ระบบอาจยังประมวลผลอยู่ กดตรวจผลหรือติดตามด้วยรหัสเดิมได้โดยไม่สร้างคำขอใหม่" });
+    } catch (checkError) {
+      if (!mounted.current) return;
+      fail(checkError);
+      setFeedback({ state: "unknown", requestId: original.reviewId, message: "ติดต่อระบบเพื่อตรวจผลไม่ได้ ออเดอร์อาจถูกสร้างแล้ว ข้อมูลที่กรอกยังอยู่ กรุณาตรวจผลก่อนสร้างคำขอใหม่" });
+    }
+  }
+
+  async function trackAttempt(replay = false) {
+    const original = attempt.current;
+    if (!original || working || sending.current) return;
+    setBusy(true); setError("");
+    setFeedback({ state: "checking_result", requestId: original.reviewId, message: "กำลังค้นผลจากประวัติคำขอเดิม" });
+    try { await reconcile(original, undefined, replay); }
+    finally { if (mounted.current) setBusy(false); }
+  }
+
   async function check() {
     if (!ready || working || !validAmounts || amountPending || amountError) return;
     setBusy(true); setError(""); invalidate();
@@ -195,34 +285,38 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
   async function submit(acceptQueue = false) {
-    if (!canSubmit || !ready || working || pending || sending.current || !validAmounts || amountPending || amountError) return;
+    if (!canSubmit || !ready || working || pending || feedbackLocked || sending.current || !validAmounts || amountPending || amountError) return;
     sending.current = true;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); lastError.current = "";
+    setFeedback({ state: "saving", message: "ขั้นตอน 1/3 · บันทึกข้อมูลที่แอดมินแก้ก่อนส่ง" });
+    let dispatched: BillAttempt | null = null;
     try {
       // Keep the same ID on a retry after an ambiguous network failure.
-      if (!await persistForm(true)) return;
-      const value = review && (!acceptQueue || attemptedReview.current === review.review_id) ? review : await api<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({ ...form!, ...(edited ? { amounts_hash: matchingPreview?.amounts_hash } : {}) }) });
+      if (!await persistForm(true)) { setFeedback({ state: "failed", message: lastError.current || "บันทึกข้อมูลก่อนส่งไม่สำเร็จ ยังไม่ได้ส่งออเดอร์เข้า Alex ข้อมูลที่กรอกยังอยู่" }); return; }
+      setFeedback({ state: "checking", message: "ขั้นตอน 2/3 · ตรวจราคา สิทธิ์ และคิวสินค้าล่าสุด" });
+      const value = review && (!acceptQueue || attemptedReview.current === review.review_id) ? review : await checkoutRequest<Review>(`${endpoint}/review`, { method: "POST", body: JSON.stringify({ ...form!, ...(edited ? { amounts_hash: matchingPreview?.amounts_hash } : {}) }) });
       // The review checks the queue too; show it on the items.
       setReview({ ...value, sourceHash: data!.source_hash! }); setAvailability({ ...value.queue, checked_at: new Date().toISOString() });
-      if (value.queue.state !== "AVAILABLE" && !acceptQueue) return;
+      if (value.queue.state !== "AVAILABLE" && !acceptQueue) { setFeedback({ state: "blocked", message: value.queue.state === "UNAVAILABLE" ? "Alex แจ้งว่าสินค้าติดคิว กรุณาตรวจรายการก่อนเลือกส่งแม้ติดคิว" : "ยังตรวจคิวจาก Alex ไม่ได้ กรุณาตรวจรายการก่อนเลือกส่งแม้ยังตรวจคิวไม่ได้" }); return; }
       attemptedReview.current = value.review_id;
-      const submitted = await api<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: value.review_id, confirmed: true, accept_queue: value.queue.state !== "AVAILABLE" && acceptQueue }) });
-      if (mounted.current) {
-        setData(current => current ? { ...current, closed: submitted.status === "NOT_CREATED" ? null : "SENT", submissions: [submitted, ...current.submissions.filter(item => item._id !== submitted._id)], latest_bill: submitted.bill_summary ?? current.latest_bill } : current);
-        if (onSubmitted) onSubmitted();
-        else void refresh().catch(() => {});
-      }
+      dispatched = { inquiryId, reviewId: value.review_id, draftVersion: data!.draft_version ?? 0, acceptQueue: value.queue.state !== "AVAILABLE" && acceptQueue };
+      attempt.current = dispatched; rememberBillAttempt(dispatched); setRecordKnown(false);
+      setFeedback({ state: "sending", requestId: value.review_id, message: "ขั้นตอน 3/3 · รอ Alex ยืนยันเลขออเดอร์ กรุณารอสักครู่" });
+      acceptResult(await checkoutRequest<Submission>(`${endpoint}/submit`, { method: "POST", body: JSON.stringify({ review_id: value.review_id, confirmed: true, accept_queue: dispatched.acceptQueue }) }));
     }
     catch (cause) {
+      if (!mounted.current) return;
       fail(cause);
-      if (cause instanceof ApiError && ["QUEUE_BLOCKED", "CONTEXT_CHANGED", "BILL_NOT_READY"].includes(cause.code)) { invalidate(); refresh().catch(() => {}); }
-    } finally { sending.current = false; setBusy(false); }
+      if (dispatched) { setFeedback({ state: "checking_result", requestId: dispatched.reviewId, message: "การเชื่อมต่อขัดข้อง กำลังตรวจว่าคำขอเดิมสร้างออเดอร์แล้วหรือไม่" }); await reconcile(dispatched, cause); }
+      else { setFeedback({ state: "failed", message: `${errorText(cause)} ยังไม่ได้ส่งออเดอร์เข้า Alex ข้อมูลที่กรอกยังอยู่` }); }
+      if (!dispatched && cause instanceof ApiError && ["QUEUE_BLOCKED", "CONTEXT_CHANGED", "BILL_NOT_READY"].includes(cause.code)) { invalidate(); refresh().catch(() => {}); }
+    } finally { sending.current = false; if (mounted.current) setBusy(false); }
   }
   async function resolve(outcome: "created" | "not_created") {
     if (!canSubmit) return;
     if (!resolveId || !resolveChecked || working) return;
     setBusy(true); setError("");
-    try { await api(`${endpoint}/resolve`, { method: "POST", body: JSON.stringify({ submission_id: resolveId, outcome, order_id: resolveOrder || null, order_number: resolveNumber.trim() || null, verified_in_alex: true }) }); await refresh(); setResolveId(""); setResolveOrder(""); setResolveNumber(""); setResolveChecked(false); }
+    try { const resolved = await api<Submission>(`${endpoint}/resolve`, { method: "POST", body: JSON.stringify({ submission_id: resolveId, outcome, order_id: resolveOrder || null, order_number: resolveNumber.trim() || null, verified_in_alex: true }) }); if (["CONFIRMED", "NOT_CREATED"].includes(resolved.status)) forgetBillAttempt(inquiryId); await refresh(); setResolveId(""); setResolveOrder(""); setResolveNumber(""); setResolveChecked(false); }
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
 
@@ -237,8 +331,8 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
     </header>}
     {mode === "latest" && !loading && <LatestBillView bill={data?.latest_bill ?? null} />}
     {loading && <p role="status" className="muted">กำลังโหลดรายการและประวัติส่งบิล…</p>}
-    {error && <div className="notice warning" role="alert">{error}<button type="button" className="text-button" disabled={working} onClick={() => refresh().catch(fail)}>โหลดผลล่าสุด</button></div>}
-    {mode === "edit" && data?.closed && <div className={`notice ${data.closed === "SENT" ? "success" : "warning"}`}><strong>{data.closed === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชันนี้ส่งเข้า Alex แล้ว</> : "ร่างเวอร์ชันนี้ถูกยกเลิกแล้ว"}</strong><p>ส่งซ้ำไม่ได้ ถ้าต้องการส่งอีกครั้งให้โคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า</p></div>}
+    {error && !feedback && <div className="notice warning" role="alert">{error}<button type="button" className="text-button" disabled={working} onClick={() => refresh().catch(fail)}>โหลดผลล่าสุด</button></div>}
+    {mode === "edit" && !feedback && data?.closed && <div className={`notice ${data.closed === "SENT" ? "success" : "warning"}`}><strong>{data.closed === "SENT" ? <><span aria-hidden="true">✅ </span>ร่างเวอร์ชันนี้ส่งเข้า Alex แล้ว</> : "ร่างเวอร์ชันนี้ถูกยกเลิกแล้ว"}</strong><p>ส่งซ้ำไม่ได้ ถ้าต้องการส่งอีกครั้งให้โคลนเป็นเวอร์ชันใหม่ในแท็บเวอร์ชันก่อนหน้า</p></div>}
     {data?.submissions.filter(submission => mode === "edit" || ["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status)).map(submission => <div key={submission._id} className={`notice ${submission.status === "CONFIRMED" ? "success" : submission.status === "SUBMITTING" ? "warning" : "info"}`}><strong>{submission.status === "CONFIRMED" && <span aria-hidden="true">✅ </span>}{submission.draft_version ? `ร่าง v${submission.draft_version} · ` : ""}{states[submission.status] ?? submission.status}</strong><p>{submission.group.lines.map(line => line.code).join(", ")} · {day(submission.group.pickup_date)} – {day(submission.group.return_date)}{submission.queue_accepted && " · ส่งทั้งที่ติดคิว"}</p>{submission.alex_order_number && <p>Order Number: <code>{submission.alex_order_number}</code></p>}{submission.alex_order_id && <p>Order ID: <code>{submission.alex_order_id}</code></p>}
       {["SUBMITTING", "SUBMIT_UNKNOWN"].includes(submission.status) && <><p>{submission.status === "SUBMITTING" ? "กำลังรอ Alex ตอบกลับ ถ้าค้างนานให้ตรวจใน Alex แล้วบันทึกผล" : "ระบบอ่านเลขออเดอร์จากผลตอบกลับไม่ได้ ตรวจใน Alex แล้วบันทึกเลขออเดอร์ไว้ได้ (ไม่ล็อกการส่งเวอร์ชันอื่น)"}</p><button type="button" className="text-button" disabled={!canSubmit} onClick={() => { setResolveId(submission._id); setResolveChecked(false); setResolveOrder(submission.alex_order_id ?? ""); setResolveNumber(submission.alex_order_number ?? ""); }}>บันทึกผลที่ตรวจจาก Alex</button>
         {resolveId === submission._id && <div className="bill-resolve"><label>Order ID ที่พบใน Alex<input autoComplete="off" value={resolveOrder} disabled={working} onChange={e => setResolveOrder(e.target.value)} /></label><label>Order Number ที่พบใน Alex<input autoComplete="off" value={resolveNumber} disabled={working} onChange={e => setResolveNumber(e.target.value)} /></label><label className="checkbox-row"><input type="checkbox" checked={resolveChecked} onChange={e => setResolveChecked(e.target.checked)} disabled={working} />ตรวจสถานะใน Alex ด้วยตัวเองแล้ว</label><button type="button" className="button secondary full" disabled={!canSubmit || working || !resolveChecked || !resolveOrder.trim()} onClick={() => resolve("created")}>ยืนยันว่ามีออเดอร์นี้แล้ว</button><button type="button" className="text-button full" disabled={!canSubmit || working || !resolveChecked || now - new Date(submission.created_at).getTime() < 120000} onClick={() => resolve("not_created")}>ตรวจแล้วว่าไม่ได้สร้างบิล</button><p className="muted small">กรณีไม่พบบิล ต้องรออย่างน้อย 2 นาทีแล้วตรวจ Alex ก่อนเปิดให้ส่งใหม่</p></div>}
@@ -247,8 +341,8 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
     {mode === "edit" && data?.context_error && <div className="notice warning">ร่างหรือแชทเปลี่ยน กรุณาตรวจและบันทึกร่างล่าสุดก่อนเตรียมบิลใหม่</div>}
     {mode === "edit" && !!data?.missing.length && <div className="notice warning"><strong>ข้อมูลที่ยังต้องเติมในแท็บร่างล่าสุด</strong><ul>{data.missing.map((missing, i) => <li key={i}>{missingLabels[missing.field] ?? missing.field}{missing.code && ` (${missing.code})`}</li>)}</ul></div>}
     {mode === "edit" && data?.has_conflicts && !data.context_error && <div className="notice warning">มีข้อมูลขัดกันในร่าง กรุณาตรวจในแท็บร่างล่าสุดก่อน</div>}
-    {mode === "edit" && group && totals && <form autoComplete="off" className="invoice-body" onSubmit={e => { e.preventDefault(); void submit(queueBlocked); }}>
-      <fieldset disabled={working || !ready || !!pending}>
+    {mode === "edit" && group && totals && <form ref={checkoutForm} autoComplete="off" className="invoice-body" onSubmit={e => { e.preventDefault(); void submit(queueBlocked); }}>
+      <fieldset disabled={working || !ready || !!pending || feedbackLocked}>
         <section className="invoice-block">
           <h4><span aria-hidden="true">👤</span> ลูกค้า</h4>
           <div className="field-grid">
@@ -303,8 +397,13 @@ export default forwardRef<CheckoutHandle, { inquiryId: string; userId?: string; 
         {locked && <p className="notice warning" role="status">{locked}</p>}
         {saveStatus && <p className="muted small" role="status">{saveStatus}</p>}
         {!canSubmit && <p className="notice info">เตรียมข้อมูลและเช็คคิวได้ ให้ผู้จัดการหรือเจ้าของร้านส่งออเดอร์</p>}
-        <button className="button primary full" aria-busy={busy || amountPending} disabled={!canSubmit || working || !ready || !!pending || !validAmounts || amountPending || !!amountError}>{busy ? "กำลังส่งออเดอร์…" : queueBlocked ? review.queue.state === "UNAVAILABLE" ? "ส่งออเดอร์เข้า Alex แม้ติดคิว" : "ส่งออเดอร์เข้า Alex แม้ยังตรวจคิวไม่ได้" : "ส่งออเดอร์เข้า Alex"}</button>
+        <button className="button primary full" aria-busy={busy || amountPending} disabled={!canSubmit || working || !ready || !!pending || feedbackLocked || !validAmounts || amountPending || !!amountError}>{busy ? "กำลังส่งออเดอร์…" : queueBlocked ? review.queue.state === "UNAVAILABLE" ? "ส่งออเดอร์เข้า Alex แม้ติดคิว" : "ส่งออเดอร์เข้า Alex แม้ยังตรวจคิวไม่ได้" : "ส่งออเดอร์เข้า Alex"}</button>
       </fieldset>
     </form>}
+    {feedback && <div className="invoice-feedback" ref={feedbackElement} tabIndex={-1}><BillFeedbackCard value={feedback}>
+      {feedback.state === "failed" && ready && <button type="button" className="button primary" disabled={!canSubmit || working || !!pending || !validAmounts || amountPending || !!amountError} onClick={() => checkoutForm.current?.requestSubmit()}>ลองส่งอีกครั้ง</button>}
+      {["unknown", "waiting"].includes(feedback.state) && attempt.current && <><button type="button" className="button secondary" disabled={working} onClick={() => trackAttempt()}>ตรวจผลล่าสุด</button>{!recordKnown && canSubmit && <button type="button" className="button secondary" disabled={working} onClick={() => trackAttempt(true)}>ติดตามด้วยคำขอเดิม</button>}</>}
+      {["unknown", "waiting"].includes(feedback.state) && onSubmitted && <button type="button" className="text-button" disabled={working} onClick={() => onSubmitted(feedback)}>ดูสรุปบิลและบันทึกผลตรวจจาก Alex</button>}
+    </BillFeedbackCard></div>}
   </div>;
 });

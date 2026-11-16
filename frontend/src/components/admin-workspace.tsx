@@ -4,6 +4,8 @@ import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, 
 import DraftEditor from "./draft-editor";
 import SummaryImages from "./summary-images";
 import RentalCheckout from "./rental-checkout";
+import BillFeedbackCard from "./bill-feedback";
+import type { BillFeedback } from "@/lib/bill-feedback";
 import type { Attachment } from "@/lib/api";
 import ChatMessage, { CustomerAvatar } from "./chat-message";
 import ReplyComposer from "./reply-composer";
@@ -64,6 +66,12 @@ function DraftReadOnly({ draft }: { draft: Draft }) {
 }
 
 export default function AdminWorkspace({ access, route }: { access?: AdminSession | null; route: WorkspaceRoute }) {
+  const [billFeedback, setBillFeedback] = useState<BillFeedback | null>(null);
+  useEffect(() => {
+    if (billFeedback?.state !== "success") return;
+    const timer = setTimeout(() => setBillFeedback(null), 10000);
+    return () => clearTimeout(timer);
+  }, [billFeedback]);
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [loginError, setLoginError] = useState(() => { const code = loginParams().get("login_error"); return code ? loginErrors[code] ?? "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่" : ""; });
@@ -601,7 +609,7 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
           {tab === "draft" && <>{latest?.stale && <div className="notice warning">แชทหรือสรุปแอดมินมีการเปลี่ยนแปลง ร่างนี้ต้องได้รับการตรวจและเตรียมใหม่</div>}{latest && <div className="section-caption draft-state"><span className="pill">{statusLabels[latest.workflow_status] ?? latest.workflow_status}</span><span className="small muted">{time(latest.created_at)}</span></div>}{latest?.redacted && <div className="notice warning">ซ่อนร่างเดิมเพราะมีข้อความถูกยกเลิก กรุณาเตรียมร่างใหม่จากสรุปและบริบทล่าสุด</div>}{latest?.result && <>{latest.result.conflicts.length > 0 && <div className="notice warning"><strong>ข้อมูลขัดกันที่ต้องตรวจ</strong><ul>{latest.result.conflicts.map((value, i) => <li key={i}>{value}</li>)}</ul></div>}{latest.missing_fields.length > 0 && <div className="notice soft"><strong>ข้อมูลที่ยังขาด</strong><p>{latest.missing_fields.map(fieldLabel).join(" · ")}</p></div>}{latest.result.questions.length > 0 && <div className="questions"><h3>คำถามที่ AI แนะนำ</h3><ul>{latest.result.questions.map((value, i) => <li key={i}>{value}</li>)}</ul><p className="muted small">ใช้ประกอบการคุยกับลูกค้า ยังไม่ได้ส่งข้อความ</p></div>}</>}
           {order ? <div className="notice success" role="status"><strong><span aria-hidden="true">✅</span> อนุมัติร่างภายในแล้ว</strong><p>จากร่าง v{order.draft_version} · โดย {order.approved_by} · {time(order.approved_at)}<br />บันทึกร่างที่อนุมัติภายในแล้ว ส่งบิลจริงจากปุ่มสรุปออเดอร์ในแท็บร่างล่าสุด</p></div>
             : latest?.result && <div className="approve-card">{canApprove ? <><label className="checkbox-row"><input type="checkbox" checked={approveChecked} disabled={working} onChange={e => setApproveChecked(e.target.checked)} />ตรวจร่าง v{latest.draft_version} กับลูกค้าแล้ว ข้อมูลถูกต้อง</label><button type="button" className="button primary full" disabled={working || !approveChecked} onClick={approveOrder}>อนุมัติร่างภายใน</button><p className="muted small">เก็บร่างที่ตรวจแล้วในระบบ หากต้องการสร้างบิลใน Alex ให้กดสรุปออเดอร์ในแท็บร่างล่าสุด</p></> : <p className="muted small">อนุมัติร่างภายในได้เมื่อร่างล่าสุดข้อมูลครบ ไม่มีข้อขัดแย้ง และแชทไม่มีข้อความใหม่หลังทำร่าง</p>}</div>}
-          <DraftEditor onSubmitted={() => setTab("checkout")} canSubmit={submitAllowed} key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onClone={() => { if (latest) void copyVersion(latest, "clone"); }} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
+          <DraftEditor onSubmitted={feedback => { setBillFeedback(feedback.state === "success" ? feedback : null); setTab("checkout"); }} canSubmit={submitAllowed} key={`${selected}-${version}-${latest?.redacted}`} inquiryId={selected} userId={current?.line_user_id} draft={latest} initial={latest?.result?.fields ?? emptyFields()} busy={!!working} messages={messages} attachments={attachments} onSave={(fields, confirm) => submit(fields, confirm)} onClone={() => { if (latest) void copyVersion(latest, "clone"); }} onUnauthorized={() => setSession(null)} />{latest?.result && <EvidenceList evidence={latest.result.evidence} />}</>}
           {tab === "checkout" && <RentalCheckout mode="latest" canSubmit={submitAllowed} key={`${selected}-${version}-${contextHash}`} inquiryId={selected} userId={current?.line_user_id} disabled={!!working || summaryEdited} onUnauthorized={() => setSession(null)} />}
           {tab === "history" && <>{!drafts.length && <p className="muted">ยังไม่มีเวอร์ชันที่บันทึก</p>}{drafts.map(draft => {
             const state = draft.state ?? "OPEN";
@@ -622,6 +630,7 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
       </section></div>}
       {!route.inquiryId && <WorkspaceNavigation activePage={route.page} manageTeam={manageTeam} />}
     </main>
+    {billFeedback && <div className="bill-result-toast"><BillFeedbackCard value={billFeedback} onDismiss={() => setBillFeedback(null)} /></div>}
     {renaming?.line_user_id && <CustomerNameDialog userId={renaming.line_user_id} customer={renaming.customer} onClose={() => setRenaming(null)} onUnauthorized={() => setSession(null)} onSaved={(alias, lineName) => setInquiries(previous => previous.map(inquiry => inquiry.line_user_id === renaming.line_user_id ? { ...inquiry, customer: { ...inquiry.customer, display_name: alias.custom_name ?? lineName, line_display_name: lineName, custom_name: alias.custom_name, name_version: alias.version } } : inquiry))} />}
   </div>;
 }
