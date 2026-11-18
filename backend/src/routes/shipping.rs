@@ -59,6 +59,20 @@ pub async fn image(
     )
         .into_response())
 }
+pub async fn delete(
+    super::access::ScopedState(state): super::access::ScopedState,
+    Path(receipt): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    Ok(Json(
+        shipping::delete(
+            &state,
+            id(&receipt)?,
+            &super::session::actor(&state, &headers),
+        )
+        .await?,
+    ))
+}
 pub async fn extract(
     super::access::ScopedState(state): super::access::ScopedState,
     Path(receipt): Path<String>,

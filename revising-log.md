@@ -3,6 +3,30 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-18 23:11 — ลบ Tracking batch และจับคู่ชื่อจากแชทลูกค้า
+- **คำอธิบาย:** เพิ่มลบใบเสร็จที่อัปโหลดพร้อมพัสดุทั้ง batch ออกจากการใช้งาน มีการยืนยัน เก็บผู้ลบ/เวลาและประวัติภายในเพื่อคงการป้องกันส่งซ้ำ ไม่ลบออเดอร์ Alex หรือข้อความที่ส่งแล้ว พร้อมค้น/จัดอันดับจากชื่อ LINE และชื่อที่แอดมินตั้งในแชทเพิ่มเติมจากชื่อในบิล แสดงชื่อ/รูปแชทที่แนะนำเฉพาะเมื่อลูกค้าตรงชัดเจนคนเดียว แยกชื่อบนใบเสร็จและยังให้แอดมินเลือกออเดอร์/กดส่งเอง
+- **โฟลเดอร์ `backend/src/`**
+  - `db/shipping.rs` — แก้: สถานะ DELETED ปิดรายการ/รายละเอียด/รูป/บันทึก/ส่ง/worker ของ batch ที่ลบ ตรวจร้าน/ช่องและทุกสาขาที่ผูก ใช้ lease ใน MongoDB ร่วมกันระหว่างลบ/บันทึก/ส่ง ส่งคำขอลบซ้ำได้ ไม่ทำให้ประวัติหรือ retry key หาย และค้นโปรไฟล์/alias ก่อนจำกัดออเดอร์เพื่อหาออเดอร์เก่าจากชื่อแชท
+  - `routes/shipping.rs`, `routes/mod.rs` — แก้: เพิ่ม POST `/api/admin/shipping/receipts/{receipt}/delete` ภายใต้การยืนยันตัวตน/CSRF เดิม
+  - `tests_shipping.rs` — แก้: เพิ่มทดสอบชื่อ LINE/alias ต่างจากชื่อในบิล ออเดอร์เก่าเกิน 1,000 รายการ ชื่อซ้ำ แยกร้าน/ช่อง/สาขา ลบทุกสถานะ ลบซ้ำ lease กั้น mutation URL เก่าใช้ไม่ได้ และเก็บประวัติข้อความ/ออเดอร์
+- **โฟลเดอร์ `frontend/src/components/`, `frontend/src/lib/`, `frontend/tests/`**
+  - `shipping-workspace.tsx`, `shipping-workspace.css` — แก้: ปุ่มลบทั้ง batch พร้อมยืนยันและข้อความสำเร็จ/ผิดพลาด กันผลโหลดเก่าคืนรายการที่ลบ เปิด batch ถัดไปหรือหน้าอัปโหลดเมื่อหมด แสดงชื่อ/รูปแชทที่แนะนำและชื่อแชทล่าสุดของรายการบันทึกโดยคงชื่อใบเสร็จแยก รองรับมือถือ
+  - `shipping.ts`, `shipping.test.mjs` — แก้: แนะนำลูกค้าชัดเจนคนเดียวโดยแยกคนออกจากจำนวนออเดอร์ ไม่แนะนำเมื่อชื่อซ้ำ ผลยังมีต่อ หรือคะแนนไม่ชัดเจน
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: วิธีลบ batch ขอบเขตการเก็บประวัติ/สงวน Tracking และ hash ภาพที่เคยอัปโหลด การค้นชื่อแชทและขีดจำกัด พร้อมผลทดสอบ
+  - `requirements-v0.3.md` — แก้: ใส่ Done ให้รายการลบ batch และย้าย/ขยาย item จับคู่ชื่อแชทเดิมไว้ในหัวข้อพัสดุ ไม่สร้าง requirement ซ้ำหรือเปลี่ยน Reviewed
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — แก้: Linux backend release `rel-20261118160833-61ae17dbce7e` build บน Docker Desktop local ตรวจ checksum ตรง
+  - `.next/`, `frontend.sha256`, `frontend.tag`, `frontend-release.json` — แก้: Linux frontend standalone release `front-20261118160522-d8d0ebaf309f` พร้อม runtime/assets และ checksum สำหรับ Ubuntu
+- **การตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 85/85; frontend lint/TypeScript/tests ผ่าน 64/64 และ npm production build ผ่านบน local Docker Browser fixture `data/shipping-batch-check/` ผ่าน Chrome/WebKit 16 กรณีที่ 1440/375/320px รวมคงชื่อแชทหลังบันทึก/รีเฟรช ชื่อซ้ำ/หลายออเดอร์ ไม่มีผลตรง ยกเลิกลบ ลบล้มเหลวแล้วลองใหม่ batch ระหว่างอ่าน/ล้มเหลว ผล poll ค้างหลังลบ และ batch สุดท้าย ตรวจภาพ desktop/มือถือแล้ว ไม่มี page error/คำขอหลุด fixture หยุดและลบ MongoDB disposable แล้ว ไม่ส่ง LINE/สร้างออเดอร์จริง ไม่ commit/push/deploy
+
+## 2026-11-18 17:52 — ตรวจปุ่มดาวบน release ที่ใช้งานจริงและการ์ดสินค้ามีรูป
+- **คำอธิบาย:** ผู้ใช้แจ้งว่าการ์ดสินค้าตามภาพไม่มีดาว ตรวจ source/local/origin/Ubuntu ตรงกับ commit `186f521` และ frontend release `front-20261117022902-a5f67247c39d` ตรวจ HTTP จากโดเมนจริงพบ page JS และ CSS มีปุ่มดาวและ checksum ตรงกับ local release จึงไม่พบปัญหา server ส่ง release เก่า ณ เวลาตรวจ Backend จริงอ่านรายการโปรดได้ตามปกติ ภาพยังไม่ยืนยันว่าแท็บผู้ใช้ถือ assets รุ่นใด จึงแนะนำบันทึกงานก่อน reload โดยไม่สรุปว่าเป็น browser cache แน่นอน
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `product-favorites.md` — แก้: ระบุตำแหน่งดาวมุมขวาบนรูป ผลตรวจ live assets/backend วิธีโหลดหน้าใหม่โดยคงงานก่อนรีเฟรช และขอบเขตที่ยังต้องตรวจจาก browser ผู้ใช้
+  - `requirements-v0.3.md` — แก้: เพิ่มผลตรวจซ้ำใน item Favorite เดิม คงสถานะพัฒนาและทดสอบ Done ไม่เพิ่ม requirement ซ้ำหรือเปลี่ยน Reviewed ของผู้ใช้
+- **การตรวจสอบ:** `data/favorite-visible-check/` โหลด HTML/JS/CSS จากโดเมนจริง API/รูปสินค้าเป็น fixture เพื่อไม่แก้ข้อมูล production ทดสอบการ์ดมีรูป รหัส 0053MNANANA และมีอยู่ในตะกร้าแล้ว ผ่าน Chrome/WebKit 4 กรณี (desktop 1440px และมือถือ 375px) ตรวจ star ขนาด 44px/กดได้/elementFromPoint ไม่ถูกรูปบัง/aria-pressed หลังบันทึกและรายการโปรดปรากฏ ไม่มี page error หรือคำขอผิด fixture ตรวจภาพปุ่มแล้ว GET API รายการโปรดจริงผ่าน ไม่มี production mutation source โปรแกรมไม่เปลี่ยนจึงไม่ build release หรือรัน unit tests ซ้ำ ไม่ commit/push/deploy
+
 ## 2026-11-17 09:36 — ตรวจข้อความล่าสุดไม่ครบและแก้ประวัติแชทเกิน 200 ข้อความ
 - **คำอธิบาย:** ผู้ใช้ระบุว่าข้อความล่าสุดบางแชทไม่เข้า ตรวจ server แบบอ่านอย่างเดียวพบ health ปกติ LINE webhook active และ URL ถูกต้อง ไม่มี PENDING/PROCESSING/FAILED/NEEDS_ADMIN ณ เวลาตรวจ แต่ตัวเชื่อม OA ยัง NEEDS_LOGIN ต้องเข้าใหม่ด้วยบัญชีที่มีสิทธิ์ร้าน อีกจุดที่ทำซ้ำจากโค้ดได้คือหน้าเว็บอ่าน 200 ข้อความเก่าสุดและ poll ตามจำนวนหน้าที่เปิด ทำให้ข้อความใหม่อีกหน้าไม่แสดง แก้ให้เริ่มที่ล่าสุดและ refresh ครอบคลุมช่วงประวัติที่แอดมินเปิดอยู่ โดยยังไม่สรุปว่าสาเหตุนี้ตรงกับข้อความที่หายจริงเฉพาะรายจนกว่าจะมีชื่อ/เวลาตัวอย่าง
 - **โฟลเดอร์ `backend/src/`**

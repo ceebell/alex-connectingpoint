@@ -358,3 +358,303 @@ async fn receipt_ocr_matches_only_scoped_orders_and_sends_only_after_explicit_re
     state.db.drop().await.unwrap();
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
+async fn chat_names_find_old_orders_and_keep_duplicate_customers_separate() {
+    let state = AppState::connect(config()).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (bill, _) = seed_order(&state, "Different billing name", "old-user", "OLD-001").await;
+    state
+        .collection("alex_submissions")
+        .update_one(
+            doc! {"_id":bill},
+            doc! {"$set":{"created_at":DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    let mut user = state.scope();
+    user.insert("line_user_id", "old-user");
+    state
+        .collection("line_users")
+        .update_one(user.clone(), doc! {"$set":{"display_name":"น้องพิม"}})
+        .await
+        .unwrap();
+    user.extend(doc! {"_id":ObjectId::new(),"custom_name":"คุณพิมพ์นิภา","created_at":DateTime::now(),"updated_at":DateTime::now()});
+    state
+        .collection("customer_aliases")
+        .insert_one(user)
+        .await
+        .unwrap();
+    let fillers: Vec<_> = (0..1001).map(|n| {
+        let mut row=state.scope();
+        row.extend(doc! {"_id":ObjectId::new(),"status":"CONFIRMED","alex_order_id":format!("filler-{n}"),"line_user_id":"unused","customer":{"name":"Unrelated"},"group":{"branch_id":"branch-a"},"created_at":DateTime::now(),"updated_at":DateTime::now()});
+        row
+    }).collect();
+    state
+        .collection("alex_submissions")
+        .insert_many(fillers)
+        .await
+        .unwrap();
+    for query in ["พิมพ์นิภา", "น้องพิม", "Different billing name", "OLD-001"]
+    {
+        let result = shipping::candidates(&state, query).await.unwrap();
+        assert_eq!(result["orders"].as_array().unwrap().len(), 1, "{query}");
+        assert_eq!(result["orders"][0]["submission_id"], bill.to_hex());
+        assert_eq!(
+            result["orders"][0]["chat_customer"]["display_name"],
+            "คุณพิมพ์นิภา"
+        );
+        assert_eq!(
+            result["orders"][0]["match_score"],
+            if query == "OLD-001" { 110 } else { 100 }
+        );
+    }
+    let (other, _) = seed_order(&state, "Another billing name", "other-user", "OTHER-001").await;
+    let mut user = state.scope();
+    user.insert("line_user_id", "other-user");
+    state
+        .collection("line_users")
+        .update_one(user, doc! {"$set":{"display_name":"พิมพ์นิภา"}})
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "พิมพ์นิภา").await.unwrap();
+    assert_eq!(result["orders"].as_array().unwrap().len(), 2);
+    assert_ne!(
+        result["orders"][0]["line_user_id"],
+        result["orders"][1]["line_user_id"]
+    );
+    state
+        .collection("alex_submissions")
+        .update_one(
+            doc! {"_id":other},
+            doc! {"$set":{"group.branch_id":"branch-b"}},
+        )
+        .await
+        .unwrap();
+    let mut restricted = state.clone();
+    restricted.access = Some(crate::models::team::Access {
+        member_id: ObjectId::new(),
+        line_user_id: "staff".into(),
+        name: "Staff".into(),
+        role: crate::models::team::Role::Staff,
+        branch_ids: vec!["branch-a".into()],
+        version: 1,
+    });
+    let result = shipping::candidates(&restricted, "พิมพ์นิภา").await.unwrap();
+    assert_eq!(result["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(result["orders"][0]["submission_id"], bill.to_hex());
+    let mut other_shop = config();
+    other_shop.mongodb_db = state.config.mongodb_db.clone();
+    other_shop.shop_id = "another-shop".into();
+    let other_shop = AppState::connect(other_shop).await.unwrap();
+    assert!(
+        shipping::candidates(&other_shop, "พิมพ์นิภา").await.unwrap()["orders"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
+async fn deleted_batches_hide_every_row_block_old_actions_and_preserve_delivery_history() {
+    let state = AppState::connect(config()).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (bill, _) = seed_order(&state, "Customer", "user-a", "AR-001").await;
+    let id = ObjectId::new();
+    let now = DateTime::now();
+    let mut receipt = state.scope();
+    receipt.extend(doc! {"_id":id,"request_id":"receipt-request","content_hash":"receipt-image","status":"READY","name":"batch.png","extraction":mongodb::bson::to_document(&extraction()).unwrap(),"created_at":now,"updated_at":now});
+    state
+        .collection("shipping_receipts")
+        .insert_one(receipt)
+        .await
+        .unwrap();
+    let actor = crate::models::customer::Actor {
+        id: "admin".into(),
+        name: "Admin".into(),
+    };
+    let input = json!({"expected_version":0,"submission_id":bill.to_hex(),"recipient_name":"Customer","tracking_number":"JD333458790TH","postal_code":"10150","service":"EMS","shipping_fee_satang":2400,"message":"Tracking JD333458790TH"});
+    let saved = shipping::save(
+        &state,
+        id,
+        1,
+        serde_json::from_value(input.clone()).unwrap(),
+        &actor,
+    )
+    .await
+    .unwrap();
+    let tracking = ObjectId::parse_str(saved["tracking"]["_id"]["$oid"].as_str().unwrap()).unwrap();
+    let mut second = input.clone();
+    second["tracking_number"] = json!("JD333458809TH");
+    second["message"] = json!("Tracking JD333458809TH");
+    shipping::save(
+        &state,
+        id,
+        2,
+        serde_json::from_value(second).unwrap(),
+        &actor,
+    )
+    .await
+    .unwrap();
+    // An active save/send lease prevents deletion by another backend instance.
+    state.collection("shipping_receipts").update_one(doc! {"_id":id},doc! {"$set":{"operation_id":ObjectId::new(),"operation_until":DateTime::from_millis(now.timestamp_millis()+60_000)}}).await.unwrap();
+    assert!(matches!(
+        shipping::delete(&state, id, &actor).await,
+        Err(crate::error::AppError::RecordConflict)
+    ));
+    state
+        .collection("shipping_receipts")
+        .update_one(
+            doc! {"_id":id},
+            doc! {"$unset":{"operation_id":"","operation_until":""}},
+        )
+        .await
+        .unwrap();
+    let mut restricted = state.clone();
+    restricted.access = Some(crate::models::team::Access {
+        member_id: ObjectId::new(),
+        line_user_id: "staff".into(),
+        name: "Staff".into(),
+        role: crate::models::team::Role::Staff,
+        branch_ids: vec!["branch-b".into()],
+        version: 1,
+    });
+    let mut member = state.scope();
+    member.extend(doc! {"_id":restricted.access.as_ref().unwrap().member_id,"status":"ACTIVE","version":1_i64,"created_at":now,"updated_at":now});
+    state
+        .collection("team_memberships")
+        .insert_one(member)
+        .await
+        .unwrap();
+    assert!(matches!(
+        shipping::delete(&restricted, id, &actor).await,
+        Err(crate::error::AppError::AlexScope)
+    ));
+    let mut other = config();
+    other.mongodb_db = state.config.mongodb_db.clone();
+    other.channel_id = "another-channel".into();
+    let other = AppState::connect(other).await.unwrap();
+    assert!(matches!(
+        shipping::delete(&other, id, &actor).await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    let path = format!("/api/admin/shipping/receipts/{id}/delete");
+    assert_eq!(
+        request(&state, &path, "POST", Value::Null, false).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let mut outbound = state.scope();
+    outbound.extend(doc! {"_id":ObjectId::new(),"status":"DONE","text":"Tracking JD333458790TH","created_at":now,"updated_at":now});
+    state
+        .collection("outbound_messages")
+        .insert_one(outbound)
+        .await
+        .unwrap();
+    state
+        .collection("shipping_trackings")
+        .update_one(
+            doc! {"_id":tracking},
+            doc! {"$set":{"status":"SENT","delivery_started_at":now}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&state, &path, "POST", Value::Null, true).await.1["deleted"],
+        true
+    );
+    assert_eq!(
+        request(&state, &path, "POST", Value::Null, true).await.1["deleted"],
+        true
+    );
+    assert!(matches!(
+        shipping::delete(&restricted, id, &actor).await,
+        Err(crate::error::AppError::AlexScope)
+    ));
+    assert!(
+        shipping::list(&state, None).await.unwrap()["receipts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        shipping::get(&state, id).await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert!(matches!(
+        shipping::image(&state, id).await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert!(matches!(
+        shipping::save(
+            &state,
+            id,
+            1,
+            serde_json::from_value(input).unwrap(),
+            &actor
+        )
+        .await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert!(matches!(
+        shipping::send(&state, tracking, 1, &actor).await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert!(!shipping::work_one(&state).await.unwrap());
+    assert!(shipping::extract_again(&state, id, &actor).await.is_err());
+    assert_eq!(
+        state
+            .collection("shipping_trackings")
+            .count_documents(doc! {"receipt_id":id})
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        state
+            .collection("outbound_messages")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        state
+            .collection("alex_submissions")
+            .count_documents(doc! {"_id":bill})
+            .await
+            .unwrap(),
+        1
+    );
+    let deleted = state
+        .collection("shipping_receipts")
+        .find_one(doc! {"_id":id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleted.get_str("deleted_by").unwrap(), "internal-api");
+    assert!(!deleted.contains_key("operation_id"));
+    // Deletion works before OCR finishes, and the worker cannot resurrect the batch.
+    for status in ["QUEUED", "READING", "FAILED"] {
+        let id = ObjectId::new();
+        let mut row = state.scope();
+        row.extend(doc! {"_id":id,"status":status,"request_id":id.to_hex(),"content_hash":id.to_hex(),"created_at":now,"updated_at":now});
+        state
+            .collection("shipping_receipts")
+            .insert_one(row)
+            .await
+            .unwrap();
+        shipping::delete(&state, id, &actor).await.unwrap();
+    }
+    shipping::recover(&state).await.unwrap();
+    assert!(!shipping::work_one(&state).await.unwrap());
+    assert!(
+        shipping::list(&state, None).await.unwrap()["receipts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    state.db.drop().await.unwrap();
+}

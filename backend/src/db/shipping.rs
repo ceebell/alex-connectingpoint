@@ -48,17 +48,99 @@ fn safe(mut record: Document) -> Document {
         "requested_by_member",
         "requested_by_member_version",
         "delivery_request_id",
+        "operation_id",
+        "operation_until",
     ] {
         record.remove(key);
     }
     record
 }
 async fn receipt(state: &AppState, id: ObjectId) -> Result<Document, AppError> {
+    let mut filter = scoped(state, id);
+    filter.insert("status", doc! {"$ne":"DELETED"});
     state
+        .collection(RECEIPTS)
+        .find_one(filter)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+// Serialize deletion with saving and sending, including across backend replicas.
+async fn receipt_operation<F>(
+    state: &AppState,
+    id: ObjectId,
+    operation: impl FnOnce() -> F,
+) -> Result<Value, AppError>
+where
+    F: std::future::Future<Output = Result<Value, AppError>>,
+{
+    receipt(state, id).await?;
+    let token = ObjectId::new();
+    let mut filter = scoped(state, id);
+    let now = DateTime::now();
+    filter.extend(doc! {"status":{"$ne":"DELETED"},"$or":[{"operation_id":{"$exists":false}},{"operation_until":{"$lt":now}}]});
+    let duration = state.config.http_timeout().as_millis() as i64 * 2 + 120_000;
+    state.collection(RECEIPTS).find_one_and_update(filter, doc! {"$set":{"operation_id":token,"operation_until":DateTime::from_millis(now.timestamp_millis()+duration)}}).await?.ok_or(AppError::RecordConflict)?;
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_millis((duration - 30_000) as u64),
+        operation(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(AppError::RecordConflict),
+    };
+    let mut filter = scoped(state, id);
+    filter.insert("operation_id", token);
+    state
+        .collection(RECEIPTS)
+        .update_one(
+            filter,
+            doc! {"$unset":{"operation_id":"","operation_until":""}},
+        )
+        .await?;
+    result
+}
+
+pub async fn delete(state: &AppState, id: ObjectId, actor: &Actor) -> Result<Value, AppError> {
+    team::revalidate(state).await?;
+    // Keep a tombstone and delivery records so deletion cannot reset retry protection.
+    let existing = state
         .collection(RECEIPTS)
         .find_one(scoped(state, id))
         .await?
-        .ok_or(AppError::NotFound)
+        .ok_or(AppError::NotFound)?;
+    if existing.get_str("status").ok() == Some("DELETED") {
+        check_receipt_branches(state, id).await?;
+        return Ok(json!({"deleted":true,"receipt_id":id.to_hex()}));
+    }
+    receipt_operation(state, id, || async {
+        check_receipt_branches(state, id).await?;
+        team::revalidate(state).await?;
+        let now = DateTime::now();
+        state.collection(RECEIPTS).update_one(scoped(state,id), doc! {"$set":{"status":"DELETED","deleted_at":now,"deleted_by":&actor.name,"deleted_by_id":&actor.id,"updated_at":now}}).await?;
+        Ok(json!({"deleted":true,"receipt_id":id.to_hex()}))
+    }).await
+}
+
+async fn check_receipt_branches(state: &AppState, id: ObjectId) -> Result<(), AppError> {
+    let mut filter = state.scope();
+    filter.insert("receipt_id", id);
+    let rows: Vec<Document> = state
+        .collection(TRACKINGS)
+        .find(filter)
+        .await?
+        .try_collect()
+        .await?;
+    for row in &rows {
+        order(
+            state,
+            row.get_object_id("submission_id")
+                .map_err(|_| AppError::Data)?,
+        )
+        .await?;
+    }
+    Ok(())
 }
 async fn order(state: &AppState, id: ObjectId) -> Result<Document, AppError> {
     let mut f = scoped(state, id);
@@ -162,6 +244,7 @@ pub async fn upload(
 
 pub async fn list(state: &AppState, before: Option<ObjectId>) -> Result<Value, AppError> {
     let mut f = state.scope();
+    f.insert("status", doc! {"$ne":"DELETED"});
     if let Some(id) = before {
         f.insert("_id", doc! {"$lt":id});
     }
@@ -405,6 +488,30 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
             .collect::<Vec<_>>()
             .join("[\\s.]*");
         let literal = regex_literal(query.trim());
+        // Resolve chat names before limiting orders, so older orders are searchable too.
+        let mut chat_ids = Vec::new();
+        if !name.is_empty() {
+            for (collection, field) in [
+                ("line_users", "display_name"),
+                ("customer_aliases", "custom_name"),
+            ] {
+                let mut filter = state.scope();
+                filter.insert(field, doc! {"$regex":&name,"$options":"i"});
+                let customers: Vec<Document> = state
+                    .collection(collection)
+                    .find(filter)
+                    .projection(doc! {"line_user_id":1})
+                    .limit(1000)
+                    .await?
+                    .try_collect()
+                    .await?;
+                chat_ids.extend(
+                    customers
+                        .iter()
+                        .filter_map(|r| r.get_str("line_user_id").ok().map(String::from)),
+                );
+            }
+        }
         let mut search = f;
         search.insert(
             "$or",
@@ -413,6 +520,7 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
                 doc! {"alex_order_number":{"$regex":&literal,"$options":"i"}},
                 doc! {"alex_order_id":{"$regex":&literal,"$options":"i"}},
                 doc! {"customer.phone":{"$regex":&literal}},
+                doc! {"line_user_id":{"$in":chat_ids}},
             ],
         );
         let exact: Vec<Document> = state
@@ -432,10 +540,17 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
             .entry(item.get_object_id("_id").map_err(|_| AppError::Data)?)
             .or_insert(item);
     }
+    let ids = unique
+        .values()
+        .filter_map(|r| r.get_str("line_user_id").ok().map(String::from))
+        .collect::<Vec<_>>();
+    let profiles = users::profiles(state, ids.clone()).await?;
+    let aliases = super::customers::aliases(state, ids).await?;
     let mut scored: Vec<_> = unique
         .into_values()
         .filter_map(|bill| {
             let name = bill.get_document("customer").ok()?.get_str("name").ok()?;
+            let user = bill.get_str("line_user_id").ok()?;
             let score = if query.trim().is_empty() {
                 1
             } else if bill
@@ -446,7 +561,20 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
             {
                 110
             } else {
-                shipping::name_score(query, name)
+                [
+                    Some(name),
+                    profiles
+                        .get(user)
+                        .and_then(|p| p.get_str("display_name").ok()),
+                    aliases
+                        .get(user)
+                        .and_then(|a| a.get_str("custom_name").ok()),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|name| shipping::name_score(query, name))
+                .max()
+                .unwrap_or(0)
             };
             (score > 0).then_some((score, bill))
         })
@@ -461,12 +589,6 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
     });
     let total = scored.len();
     scored.truncate(15);
-    let ids = scored
-        .iter()
-        .filter_map(|(_, r)| r.get_str("line_user_id").ok().map(String::from))
-        .collect::<Vec<_>>();
-    let profiles = users::profiles(state, ids.clone()).await?;
-    let aliases = super::customers::aliases(state, ids).await?;
     let mut result = Vec::new();
     for (score, bill) in scored {
         let user = bill.get_str("line_user_id").map_err(|_| AppError::Data)?;
@@ -514,6 +636,19 @@ pub async fn save(
 ) -> Result<Value, AppError> {
     input.validate()?;
     team::revalidate(state).await?;
+    receipt_operation(state, receipt_id, || {
+        save_row(state, receipt_id, row, input, actor)
+    })
+    .await
+}
+
+async fn save_row(
+    state: &AppState,
+    receipt_id: ObjectId,
+    row: i64,
+    input: SaveInput,
+    actor: &Actor,
+) -> Result<Value, AppError> {
     let source = receipt(state, receipt_id).await?;
     if source.get_str("status").ok() != Some("READY") {
         return Err(AppError::RecordConflict);
@@ -597,6 +732,23 @@ pub async fn send(
         return Err(AppError::BadRequest);
     }
     team::revalidate(state).await?;
+    let original = state
+        .collection(TRACKINGS)
+        .find_one(scoped(state, id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let receipt_id = original
+        .get_object_id("receipt_id")
+        .map_err(|_| AppError::Data)?;
+    receipt_operation(state, receipt_id, || send_row(state, id, version, actor)).await
+}
+
+async fn send_row(
+    state: &AppState,
+    id: ObjectId,
+    version: i64,
+    actor: &Actor,
+) -> Result<Value, AppError> {
     let original = state
         .collection(TRACKINGS)
         .find_one(scoped(state, id))

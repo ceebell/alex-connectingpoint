@@ -1,7 +1,7 @@
 {
     "build_location":  "local",
     "platform":  "linux/amd64",
-    "sha256":  "8da78b08eb3c635a8340eb141681f18d2aa0c6cdc8a86264214c49150842ba33",
-    "tag":  "rel-20261117022748-8da78b08eb3c",
-    "built_at":  "2026-11-17T02:27:48.1296104Z"
+    "sha256":  "61ae17dbce7ed7a350dd609748ce8783c019529a6932dbb05a163de552c04272",
+    "tag":  "rel-20261118160833-61ae17dbce7e",
+    "built_at":  "2026-11-18T16:08:33.0619068Z"
 }

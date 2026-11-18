@@ -38,6 +38,10 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         )
         .route("/api/admin/shipping/receipts/{receipt}", get(shipping::get))
         .route(
+            "/api/admin/shipping/receipts/{receipt}/delete",
+            post(shipping::delete),
+        )
+        .route(
             "/api/admin/shipping/receipts/{receipt}/image",
             get(shipping::image),
         )
