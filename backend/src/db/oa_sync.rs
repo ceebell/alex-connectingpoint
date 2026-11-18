@@ -27,11 +27,18 @@ pub fn sort_messages(records: &mut [Document]) {
                 .map(|v| v.timestamp_millis())
                 .unwrap_or(0)
         };
-        time(a).cmp(&time(b)).then_with(|| {
-            a.get_str("event_id")
-                .unwrap_or("")
-                .cmp(b.get_str("event_id").unwrap_or(""))
-        })
+        time(a)
+            .cmp(&time(b))
+            .then_with(|| {
+                a.get_str("event_id")
+                    .unwrap_or("")
+                    .cmp(b.get_str("event_id").unwrap_or(""))
+            })
+            .then_with(|| {
+                a.get_object_id("_id")
+                    .ok()
+                    .cmp(&b.get_object_id("_id").ok())
+            })
     });
 }
 
@@ -40,9 +47,26 @@ pub async fn messages(
     inquiry: ObjectId,
     after: Option<ObjectId>,
 ) -> Result<Vec<Document>, AppError> {
+    message_page(state, inquiry, after, false).await
+}
+
+pub async fn recent_messages(
+    state: &AppState,
+    inquiry: ObjectId,
+    before: Option<ObjectId>,
+) -> Result<Vec<Document>, AppError> {
+    message_page(state, inquiry, before, true).await
+}
+
+async fn message_page(
+    state: &AppState,
+    inquiry: ObjectId,
+    cursor: Option<ObjectId>,
+    backwards: bool,
+) -> Result<Vec<Document>, AppError> {
     let mut filter = state.scope();
     filter.extend(doc! {"inquiry_id":inquiry,"status":"DONE","withdrawn":{"$ne":true}});
-    if let Some(id) = after {
+    if let Some(id) = cursor {
         let mut cursor_filter = state.scope();
         cursor_filter.extend(doc! {"_id":id,"inquiry_id":inquiry});
         let mut cursor = None;
@@ -60,21 +84,24 @@ pub async fn messages(
             .get_datetime("event_at")
             .map_err(|_| AppError::Data)?;
         let key = cursor.get_str("event_id").map_err(|_| AppError::Data)?;
+        let compare = if backwards { "$lt" } else { "$gt" };
         filter.insert(
             "$or",
             vec![
-                doc! {"event_at":{"$gt":at}},
-                doc! {"event_at":at,"event_id":{"$gt":key}},
+                doc! {"event_at":{compare:at}},
+                doc! {"event_at":at,"event_id":{compare:key}},
+                doc! {"event_at":at,"event_id":key,"_id":{compare:id}},
             ],
         );
     }
     let mut records = Vec::new();
+    let direction = if backwards { -1 } else { 1 };
     for name in MESSAGE_COLLECTIONS {
         records.extend(
             state
                 .collection(name)
                 .find(filter.clone())
-                .sort(doc! {"event_at":1,"event_id":1})
+                .sort(doc! {"event_at":direction,"event_id":direction,"_id":direction})
                 .limit(201)
                 .projection(doc! {"lease_token":0,"content_hash":0})
                 .await?
@@ -83,7 +110,13 @@ pub async fn messages(
         );
     }
     sort_messages(&mut records);
+    if backwards {
+        records.reverse();
+    }
     records.truncate(201);
+    if backwards {
+        records.reverse();
+    }
     Ok(records)
 }
 

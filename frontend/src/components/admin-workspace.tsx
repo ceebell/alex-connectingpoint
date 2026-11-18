@@ -1,5 +1,6 @@
 "use client";
-import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChatPage, mergeMessages, reconcileMessages, refreshChatWindow } from "@/lib/chat-history";
 import { AdminSummary, api, ApiError, Draft, DraftList, emptyFields, errorText, Evidence, fieldLabel, Fields, filledKeys, Inquiry, Job, LineEvent, Order, VersionState } from "@/lib/api";
 import DraftEditor from "./draft-editor";
 import SummaryImages from "./summary-images";
@@ -24,6 +25,13 @@ type LoginOptions = { line: boolean; password: boolean };
 // The login screen renders only after the session check, so reading the URL here cannot cause a hydration mismatch.
 const loginParams = () => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
 type OaStatus = { state: string; synced?: number; pending?: number };
+
+async function chatRequest<T>(path: string, timeout = 15000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try { return await api<T>(path, { signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
 // The admin can drag the chat/draft divider; the width is a per-browser convenience only.
 const draftWidthKey = "workspace.draft-width";
 function storedDraftWidth() { try { const value = Number(window.localStorage.getItem(draftWidthKey)); return value >= 320 ? value : null; } catch { return null; } }
@@ -33,9 +41,6 @@ function clampDraftWidth(workspace: HTMLElement | null, width: number) {
   if (!workspace) return width;
   const list = (workspace.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
   return Math.round(Math.max(320, Math.min(width, workspace.clientWidth - list - 260)));
-}
-function mergeMessages(previous: LineEvent[], incoming: LineEvent[]) {
-  return [...new Map([...previous, ...incoming].map(message => [message._id, message])).values()].sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime() || (a.event_id ?? a._id).localeCompare(b.event_id ?? b._id));
 }
 const inquiryActivity = (inquiry: Inquiry) => new Date(inquiry.last_activity_at ?? inquiry.created_at).getTime();
 function mergeInquiries(previous: Inquiry[], incoming: Inquiry[]) {
@@ -89,6 +94,12 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
   const mobilePanel = route.page === "chats" ? route.panel : "inquiries";
   const [messages, setMessages] = useState<LineEvent[]>([]);
   const messagesRef = useRef<LineEvent[]>([]);
+  const historyRevision = useRef(0);
+  const loadingOlder = useRef(false);
+  const chatStream = useRef<HTMLDivElement>(null);
+  const chatScroll = useRef<{ top: number; height: number } | "bottom" | null>(null);
+  const [chatError, setChatError] = useState("");
+  const [oaChatState, setOaChatState] = useState("");
   const readPending = useRef(new Set<string>());
   const lastReadMessage = useRef("");
   const [nextMessage, setNextMessage] = useState<string | null>(null);
@@ -129,6 +140,12 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
     if (mobilePanel !== "chat" && control instanceof HTMLElement && control.closest(".chat-panel")) control.blur();
   }, [mobilePanel]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useLayoutEffect(() => {
+    const pane = chatStream.current, adjustment = chatScroll.current;
+    if (!pane || !adjustment || !pane.clientHeight) return;
+    pane.scrollTop = adjustment === "bottom" ? pane.scrollHeight : adjustment.top + pane.scrollHeight - adjustment.height;
+    chatScroll.current = null;
+  }, [messages, mobilePanel]);
   useEffect(() => { inquiriesRef.current = inquiries; }, [inquiries]);
   useEffect(() => {
     if (!session) return;
@@ -299,11 +316,13 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
   useEffect(() => {
     if (!selected || !session) return;
     let cancelled = false;
-    Promise.all([api<{ batches: LineEvent[][]; next: string | null }>(`/api/inquiries/${selected}/context`), api<DraftList>(`/api/inquiries/${selected}/drafts`), api<{ order: Order | null }>(`/api/inquiries/${selected}/order`)]).then(([context, result, approved]) => {
+    historyRevision.current++;
+    Promise.all([chatRequest<ChatPage>(`/api/inquiries/${selected}/context?latest=true`), api<DraftList>(`/api/inquiries/${selected}/drafts`), api<{ order: Order | null }>(`/api/inquiries/${selected}/order`)]).then(([context, result, approved]) => {
       if (cancelled) return;
       setOrder(approved.order);
       setAttachments(result.attachments ?? []);
-      setMessages(context.batches.flat()); setNextMessage(context.next);
+      chatScroll.current = "bottom"; setChatError("");
+      setMessages(context.batches.flat()); setNextMessage(context.previous ?? null);
       setDrafts(result.drafts); setVersion(result.version);
       setContextHash(result.context_hash);
       if (!summaryDirty.current) {
@@ -335,22 +354,26 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
     let cancelled = false;
     let polling = false;
     async function poll() {
-      if (cancelled || polling || document.hidden) return;
+      if (cancelled || polling || document.hidden || loadingOlder.current) return;
       polling = true;
+      const revision = historyRevision.current;
       try {
-        await api<OaStatus>("/api/line/oa-sync/status");
+        const oa = await chatRequest<OaStatus>("/api/line/oa-sync/status", 5000).catch(cause => {
+          if (cause instanceof ApiError && cause.status === 401) throw cause;
+          return { state: "UNAVAILABLE" };
+        });
         if (cancelled) return;
+        setOaChatState(oa.state);
         if (selected) {
-          let cursor: string | null = null;
-          const records: LineEvent[] = [];
-          const pageCount = Math.max(1, Math.ceil(messagesRef.current.length / 200));
-          for (let n = 0; n < pageCount; n++) {
-            const result: { batches: LineEvent[][]; next: string | null } = await api(`/api/inquiries/${selected}/context${cursor ? `?after=${cursor}` : ""}`);
-            if (cancelled) return;
-            records.push(...result.batches.flat()); cursor = result.next;
-            if (!cursor) break;
-          }
-          setMessages(records); setNextMessage(cursor);
+          const snapshot = messagesRef.current;
+          const historyWindow = await refreshChatWindow(async before => {
+            if (cancelled || revision !== historyRevision.current || loadingOlder.current) throw new Error("Chat request superseded");
+            return chatRequest<ChatPage>(`/api/inquiries/${selected}/context?latest=true${before ? `&before=${before}` : ""}`);
+          }, snapshot[0]);
+          if (cancelled || revision !== historyRevision.current || loadingOlder.current) return;
+          const pane = chatStream.current;
+          if (pane && pane.scrollHeight - pane.scrollTop - pane.clientHeight < 100) chatScroll.current = "bottom";
+          setMessages(previous => reconcileMessages(previous, snapshot, historyWindow.records)); setNextMessage(historyWindow.previous); setChatError("");
           const [result, approved] = await Promise.all([api<DraftList>(`/api/inquiries/${selected}/drafts`), api<{ order: Order | null }>(`/api/inquiries/${selected}/order`)]);
           if (!cancelled) {
             setDrafts(result.drafts); setVersion(result.version); setContextHash(result.context_hash); setOrder(approved.order); setAttachments(result.attachments ?? []);
@@ -360,8 +383,9 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
           }
         }
       } catch (cause) {
-        if (!cancelled) {
+        if (!cancelled && revision === historyRevision.current && !loadingOlder.current) {
           if (cause instanceof ApiError && cause.status === 401) setSession(null);
+          else setChatError("โหลดข้อความล่าสุดไม่สำเร็จ ข้อความเดิมยังอยู่ ระบบจะลองใหม่อีกครั้ง");
         }
       } finally { polling = false; }
     }
@@ -535,12 +559,18 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
   }
 
   async function moreMessages() {
-    if (!selected || !nextMessage) return;
+    if (!selected || !nextMessage || loadingOlder.current) return;
+    const revision = ++historyRevision.current;
+    loadingOlder.current = true;
     setBusy(true);
     try {
-      const result = await api<{ batches: LineEvent[][]; next: string | null }>(`/api/inquiries/${selected}/context?after=${nextMessage}`);
-      setMessages(previous => mergeMessages(previous, result.batches.flat())); setNextMessage(result.next);
-    } catch (cause) { setError(errorText(cause)); } finally { setBusy(false); }
+      const result = await chatRequest<ChatPage>(`/api/inquiries/${selected}/context?latest=true&before=${nextMessage}`);
+      if (revision !== historyRevision.current) return;
+      const pane = chatStream.current;
+      if (pane) chatScroll.current = { top: pane.scrollTop, height: pane.scrollHeight };
+      setMessages(previous => mergeMessages(previous, result.batches.flat())); setNextMessage(result.previous ?? null);
+    } catch (cause) { if (revision === historyRevision.current) setError(errorText(cause)); }
+    finally { loadingOlder.current = false; historyRevision.current++; setBusy(false); }
   }
 
   async function moreInquiries() {
@@ -581,10 +611,10 @@ export default function AdminWorkspace({ access, route }: { access?: AdminSessio
         {inquiries.length >= 100 && <button className="text-button full" disabled={busy} onClick={moreInquiries}>โหลดเรื่องก่อนหน้า</button>}
       </div></section>
       <section tabIndex={-1} id="mobile-chat" aria-label="แชทลูกค้า" className="chat-panel">
-        <div className="chat-stream" aria-busy={loading}>
-          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <>{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความถัดไป</button>}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
+        <div className="chat-stream" ref={chatStream} aria-busy={loading}>
+          {!selected ? <div className="empty"><div className="empty-symbol" aria-hidden="true">☰</div><h3>เริ่มจากเลือกบทสนทนา</h3><p>อ่านแชทและรูปจากลูกค้า<br />แล้วใส่สรุปเพื่อเตรียมร่างออเดอร์</p></div> : loading ? <p className="muted" role="status">กำลังโหลดบทสนทนา…</p> : <>{oaChatState === "NEEDS_LOGIN" && <p className="muted small" role="status">LINE OA รอเข้าสู่ระบบใหม่ · ข้อความแอดมินจาก OA อาจไม่ครบ</p>}{chatError && <p className="muted small" role="status">{chatError}</p>}{nextMessage && <button className="button secondary full" disabled={working} onClick={moreMessages}>โหลดข้อความก่อนหน้า</button>}{messages.map(message => <ChatMessage key={message._id} message={message} customer={current?.customer} selectedImages={images} disabled={working} onToggleImage={(id, checked) => { summaryDirty.current = true; setSummaryEdited(true); setImages(previous => checked ? [...previous, id] : previous.filter(value => value !== id)); }} />)}{!messages.length && <p className="muted">ยังไม่มีข้อความที่ประมวลผลเสร็จ กรุณาโหลดข้อมูลอีกครั้ง</p>}</>}
         </div>
-        {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => setMessages(previous => mergeMessages(previous, [message]))} onUnauthorized={() => setSession(null)} />}
+        {current && !loading && <ReplyComposer key={current._id} inquiryId={current._id} canReply={!!current.line_user_id} onSent={message => { chatScroll.current = "bottom"; setMessages(previous => mergeMessages(previous, [message])); }} onUnauthorized={() => setSession(null)} />}
       </section>
       <section tabIndex={-1} id="mobile-draft" aria-label="เตรียมออเดอร์" className="draft-panel"><div className="panel-resizer" role="separator" aria-orientation="vertical" aria-label="ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้างแชทกับร่างออเดอร์ (ดับเบิลคลิกหรือกด Home เพื่อคืนค่าเดิม)" title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิกเพื่อคืนค่าเดิม" aria-valuenow={draftWidth ?? undefined} tabIndex={0} onPointerDown={startResize} onKeyDown={keyResize} onDoubleClick={() => { setDraftWidth(null); saveDraftWidth(null); }} /><div className="panel-heading customer-panel-heading"><h2>{current ? current.customer?.display_name || "ลูกค้า LINE" : "เลือกลูกค้า"}</h2><div className="customer-heading-badges">{current && <span className="line-badge">LINE OA</span>}{version > 0 && <span className="version-badge">v{version}</span>}</div></div><div className="tabs" role="tablist" aria-label="ส่วนจัดการร่าง">{([["summary", "สรุปแอดมิน"], ["draft", "ร่างล่าสุด"], ["checkout", "สรุปบิลล่าสุด"], ["history", "เวอร์ชันก่อนหน้า"], ["notes", "Note"]] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
         <div className="draft-content">{!selected ? <div className="empty compact"><span aria-hidden="true">✎</span><h3>รอเลือก inquiry</h3><p>สรุปแอดมินและร่างออเดอร์<br />จะผูกกับเรื่องที่เลือก</p></div> : loading ? <p role="status" className="muted">กำลังโหลดร่าง…</p> : <>

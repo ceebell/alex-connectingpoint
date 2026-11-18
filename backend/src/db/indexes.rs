@@ -3,7 +3,32 @@ use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 
 pub async fn ensure(state: &AppState) -> Result<(), AppError> {
     for (collection, keys, partial) in [
+        (
+            "product_favorites",
+            doc! {"shop_id":1,"channel_id":1,"branch_id":1,"product_item_id":1},
+            None,
+        ),
         ("shop_settings", doc! {"shop_id":1,"channel_id":1}, None),
+        (
+            "shipping_receipts",
+            doc! {"shop_id":1,"channel_id":1,"request_id":1},
+            None,
+        ),
+        (
+            "shipping_receipts",
+            doc! {"shop_id":1,"channel_id":1,"content_hash":1},
+            None,
+        ),
+        (
+            "shipping_trackings",
+            doc! {"shop_id":1,"channel_id":1,"receipt_id":1,"row":1},
+            None,
+        ),
+        (
+            "shipping_trackings",
+            doc! {"shop_id":1,"channel_id":1,"carrier":1,"tracking_number":1},
+            None,
+        ),
         ("team_settings", doc! {"shop_id":1,"channel_id":1}, None),
         (
             "admin_accounts",
@@ -47,6 +72,21 @@ pub async fn ensure(state: &AppState) -> Result<(), AppError> {
             .await?;
     }
     for (collection, keys, unique) in [
+        (
+            "line_events",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"event_at":1,"event_id":1,"_id":1},
+            false,
+        ),
+        (
+            "oa_messages",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"event_at":1,"event_id":1,"_id":1},
+            false,
+        ),
+        (
+            "outbound_messages",
+            doc! {"shop_id":1,"channel_id":1,"inquiry_id":1,"event_at":1,"event_id":1,"_id":1},
+            false,
+        ),
         (
             "quick_replies",
             doc! {"shop_id":1,"channel_id":1,"created_by_id":1,"request_id":1},

@@ -60,8 +60,15 @@ pub struct Rental {
 
 // Alex's own "receiving method" choices; store pickup is the first one.
 pub const STORE_PICKUP: &str = "มารับเอง";
-pub const RECEIVING_METHODS: [&str; 6] =
-    [STORE_PICKUP, "Line Man", "Grab", "Kerry", "Flash", "ขนส่งอื่น"];
+pub const RECEIVING_METHODS: [&str; 7] = [
+    STORE_PICKUP,
+    "Line Man",
+    "Grab",
+    "Kerry",
+    "Flash",
+    "EMS",
+    "ขนส่งอื่น",
+];
 
 // Maps a carrier name as written (e.g. "flash express", "เคอรี่") to an Alex receiving method.
 pub fn receiving_method(carrier: &str) -> Option<&'static str> {
@@ -75,6 +82,7 @@ pub fn receiving_method(carrier: &str) -> Option<&'static str> {
         "kerry" | "kerryexpress" | "เคอรี่" => Some("Kerry"),
         "grab" | "grabexpress" | "แกร็บ" => Some("Grab"),
         "lineman" | "ไลน์แมน" => Some("Line Man"),
+        "ems" | "ไปรษณีย์ไทย" | "thailandpost" => Some("EMS"),
         "ขนส่งอื่น" => Some("ขนส่งอื่น"),
         _ => None,
     }

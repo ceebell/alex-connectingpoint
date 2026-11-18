@@ -119,6 +119,7 @@ fn image_only_requests_accept_five_and_keep_order_level_fields() {
         ("flash express", "Flash", None),
         ("เคอรี่", "Kerry", None),
         ("Line Man", "Line Man", None),
+        ("EMS", "EMS", None),
         ("J&T", "ขนส่งอื่น", Some("เข็มกลัด\nขนส่ง: J&T")),
     ] {
         let mut fields = DraftFields {

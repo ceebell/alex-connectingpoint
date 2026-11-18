@@ -4,7 +4,7 @@ import { workspaceRoute } from "../src/lib/workspace-navigation.ts";
 
 const id = "0123456789abcdef01234567";
 test("top-level destinations do not retain a previous conversation", () => {
-  for (const page of ["home", "chats", "team", "settings"]) {
+  for (const page of ["home", "chats", "team", "settings", "shipping"]) {
     assert.deepEqual(workspaceRoute(`#${page}`, `?inquiry=${id}`), { page, inquiryId: null, panel: "inquiries" });
   }
   assert.equal(workspaceRoute("").page, "home");

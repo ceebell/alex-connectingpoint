@@ -7,6 +7,7 @@ import TeamWorkspace from "./team-workspace";
 import TeamWelcome from "./team-welcome";
 import { workspaceRoute } from "@/lib/workspace-navigation";
 import ShopSettings from "./shop-settings";
+import ShippingWorkspace from "./shipping-workspace";
 
 export default function AdminPortal() {
   const [session, setSession] = useState<AdminSession | null>(null);
@@ -110,5 +111,6 @@ export default function AdminPortal() {
     if (!canManageTeam(session)) return <main className="team-access-message"><h1>บัญชีนี้ไม่มีสิทธิ์ตั้งค่าร้าน</h1><a className="button secondary" href="#home">กลับหน้าหลัก</a></main>;
     return <ShopSettings session={session} onLogout={() => logout()} />;
   }
+  if (route.page === "shipping" && session) return <ShippingWorkspace session={session} onLogout={() => logout()} />;
   return <AdminWorkspace key={session?.membership ? `${session.membership.id}:${session.membership.version}` : "legacy"} access={session} route={route} />;
 }

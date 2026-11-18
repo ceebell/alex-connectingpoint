@@ -9,9 +9,11 @@ mod inbox;
 mod mcp;
 mod oa_inbox;
 mod oa_sync;
+mod product_favorites;
 mod products;
 mod quick_replies;
 mod session;
+mod shipping;
 mod shop_settings;
 mod team;
 mod users;
@@ -28,6 +30,30 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub fn router(state: AppState) -> Result<Router, AppError> {
     let admin = Router::new()
+        .route(
+            "/api/admin/shipping/receipts",
+            get(shipping::list)
+                .post(shipping::upload)
+                .layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
+        .route("/api/admin/shipping/receipts/{receipt}", get(shipping::get))
+        .route(
+            "/api/admin/shipping/receipts/{receipt}/image",
+            get(shipping::image),
+        )
+        .route(
+            "/api/admin/shipping/receipts/{receipt}/extract",
+            post(shipping::extract),
+        )
+        .route(
+            "/api/admin/shipping/receipts/{receipt}/rows/{row}",
+            post(shipping::save),
+        )
+        .route("/api/admin/shipping/orders", get(shipping::candidates))
+        .route(
+            "/api/admin/shipping/trackings/{tracking}/send",
+            post(shipping::send),
+        )
         .route(
             "/api/admin/quick-replies",
             get(quick_replies::list)
@@ -106,6 +132,18 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
         .route("/api/admin/alex/categories", get(products::categories))
         .route("/api/admin/alex/colors", get(products::colors))
         .route("/api/inquiries/{id}/products", get(products::list))
+        .route(
+            "/api/inquiries/{id}/favorites",
+            get(product_favorites::list).post(product_favorites::save),
+        )
+        .route(
+            "/api/inquiries/{id}/favorites/{favorite}",
+            delete(product_favorites::remove),
+        )
+        .route(
+            "/api/inquiries/{id}/favorites/{favorite}/cart",
+            post(product_favorites::add_to_cart),
+        )
         .route(
             "/api/inquiries/{id}/products/search",
             post(products::search),

@@ -14,6 +14,7 @@ import "../components/team.css";
 import "../components/brand-combobox.css";
 import "../components/shop-dashboard.css";
 import "../components/shop-settings.css";
+import "../components/shipping-workspace.css";
 
 const mitr = Mitr({ subsets: ["thai", "latin"], weight: ["300", "400", "500", "600", "700"], variable: "--font-mitr", display: "swap" });
 export const metadata: Metadata = { title: "Alex | หลังบ้านแอดมิน", description: "จัดการแชทลูกค้าและเตรียมร่างออเดอร์", robots: { index: false, follow: false } };

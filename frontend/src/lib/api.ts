@@ -85,11 +85,11 @@ export type LineEvent = { _id: string; event_at: string; event_id?: string; stat
 export type Rental = { pickup_date: string | null; return_date: string | null; fulfillment_method: string | null; delivery_provider?: string | null };
 // Alex's own receiving-method choices; the shop ships by Flash unless told otherwise.
 export const STORE_PICKUP = "มารับเอง";
-export const RECEIVING_METHODS = [STORE_PICKUP, "Line Man", "Grab", "Kerry", "Flash", "ขนส่งอื่น"];
+export const RECEIVING_METHODS = [STORE_PICKUP, "Line Man", "Grab", "Kerry", "Flash", "EMS", "ขนส่งอื่น"];
 // Alex's own payment choices for rent and deposit; "ยังไม่ชำระ" is the default.
 export const UNPAID = "ยังไม่ชำระ";
 export const PAYMENT_METHODS = [UNPAID, "เงินสด", "โอนเงิน", "Alipay/wechat", "บัตรเครดิต", "ช่องทางอื่น"];
-const carriers: Record<string, string> = { flash: "Flash", flashexpress: "Flash", "แฟลช": "Flash", kerry: "Kerry", kerryexpress: "Kerry", "เคอรี่": "Kerry", grab: "Grab", grabexpress: "Grab", "แกร็บ": "Grab", lineman: "Line Man", "ไลน์แมน": "Line Man", "ขนส่งอื่น": "ขนส่งอื่น" };
+const carriers: Record<string, string> = { ems: "EMS", thailandpost: "EMS", flash: "Flash", flashexpress: "Flash", "แฟลช": "Flash", kerry: "Kerry", kerryexpress: "Kerry", "เคอรี่": "Kerry", grab: "Grab", grabexpress: "Grab", "แกร็บ": "Grab", lineman: "Line Man", "ไลน์แมน": "Line Man", "ขนส่งอื่น": "ขนส่งอื่น" };
 export const receivingMethod = (carrier: string): string | undefined => carriers[carrier.replace(/\s/g, "").toLowerCase()];
 export type Amounts = { rental_fee_satang: number | null; deposit_satang: number | null; shipping_fee_satang?: number | null; rental_discount_satang?: number | null; deposit_discount_satang?: number | null };
 // rental/amounts/notes per item are retired; older drafts may still return them and the editor lifts them to the order.

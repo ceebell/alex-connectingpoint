@@ -52,7 +52,10 @@ async fn push(
 }
 
 // The 1:1 chat's LINE user and conversation; groups and rooms are never pushed to.
-async fn recipient(state: &AppState, inquiry: &Document) -> Result<(String, ObjectId), AppError> {
+pub(crate) async fn recipient(
+    state: &AppState,
+    inquiry: &Document,
+) -> Result<(String, ObjectId), AppError> {
     let user = inquiry
         .get_str("line_user_id")
         .map_err(|_| AppError::ReplyUnavailable)?

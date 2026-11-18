@@ -1,4 +1,4 @@
-/* A single-row composer; attachment panels float above it instead of taking chat space. */
+/* Grow the focused draft to eight lines; attachment panels float above it. */
 .app-shell .workspace .reply-box {
   position: relative;
   padding: 8px;
@@ -6,7 +6,7 @@
   max-height: none;
   overflow: visible;
 }
-.reply-box .reply-row { align-items: center; gap: 6px; }
+.reply-box .reply-row { align-items: flex-end; gap: 6px; }
 .reply-add, .reply-box .tool-button {
   display: inline-flex;
   align-items: center;
@@ -37,14 +37,14 @@
 .app-shell .workspace .reply-row textarea {
   height: 44px;
   min-height: 44px;
-  max-height: 44px;
+  max-height: calc(8 * 24px + 20px);
   padding: 9px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 22px;
   background: #f8fafc;
   line-height: 24px;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   scroll-margin-block: 0;
 }
 .app-shell .workspace .reply-row .reply-send {
@@ -74,6 +74,9 @@
 .reply-box > .notice { max-height: 120px; overflow-y: auto; }
 @media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
   .app-shell .workspace .reply-box { padding: 6px 8px; }
-  /* A 17px phone input prevents focus zoom while keeping the box at one line. */
-  .app-shell .workspace .reply-row textarea { font-size: calc(16px + var(--mobile-text-increment, 0px)); }
+  /* A 17px phone input prevents focus zoom at every composer height. */
+  .app-shell .workspace .reply-row textarea {
+    font-size: calc(16px + var(--mobile-text-increment, 0px));
+    max-height: min(calc(8 * 24px + 20px), max(44px, calc(var(--app-height, 100dvh) - 120px)));
+  }
 }

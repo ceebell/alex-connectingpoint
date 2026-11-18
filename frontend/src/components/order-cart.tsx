@@ -5,6 +5,7 @@ import { api, ApiError, Attachment, Availability, Candidate, CartItem, codeLabel
 import { formatDateTime } from "@/lib/dates";
 import { brandLabel, matchBrand } from "@/lib/brand-matching";
 import BrandCombobox from "./brand-combobox";
+import { FavoriteButton, ProductFavorite, ProductFavorites, useProductFavorites } from "./product-favorites";
 
 type Search = { search_id: string; branch_id: string; item_index?: number; page: number; has_more: boolean; method: string; candidates: Candidate[]; mode?: Mode; query?: string | null; color?: string | null; size?: string | null; category?: string | null };
 type Suggestion = { item_index: number; status: string; selected_product_item_id?: string; search?: Search };
@@ -43,8 +44,9 @@ function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemov
   </article>;
 }
 
-function CandidateTile({ candidate, inCart, colorName, disabled, onAdd }: { candidate: Candidate; inCart: number; colorName: string; disabled: boolean; onAdd: () => void }) {
+function CandidateTile({ candidate, inCart, colorName, disabled, onAdd, favorite, favoriteDisabled, onFavorite }: { candidate: Candidate; inCart: number; colorName: string; disabled: boolean; onAdd: () => void; favorite: boolean; favoriteDisabled: boolean; onFavorite: () => void }) {
   return <article className="candidate-tile">
+    <FavoriteButton name={candidate.name} selected={favorite} disabled={disabled || favoriteDisabled} onClick={onFavorite} />
     <div className="candidate-image">{candidate.image_url ? <img src={candidate.image_url} alt={`รูปสินค้า ${candidate.name}`} loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.hidden = true; }} /> : <span aria-hidden="true">👗</span>}</div>
     <strong>{candidate.name}</strong>
     <span className="candidate-code">({candidate.code})</span>
@@ -63,6 +65,9 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
   const [policyRetry, setPolicyRetry] = useState(0);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [branch, setBranch] = useState("");
+  const favorites = useProductFavorites(inquiryId, branch, onUnauthorized);
+  const [favoriteAdding, setFavoriteAdding] = useState("");
+  const [favoriteCartNotice, setFavoriteCartNotice] = useState("");
   const [mode, setMode] = useState<Mode>(items[0]?.product_code ? "code" : "text");
   const [query, setQuery] = useState(items[0]?.product_code ?? items[0]?.product_name ?? "");
   // Alex color code; Alex filters by code (P) while images and chats name the color (ชมพู).
@@ -160,6 +165,23 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
     catch (cause) { fail(cause); } finally { setBusy(false); }
   }
 
+  async function addFavorite(favorite: ProductFavorite) {
+    if (working) return;
+    setBusy(true); setError(""); setFavoriteAdding(favorite.id); setFavoriteCartNotice("");
+    try {
+      keep(await api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/favorites/${favorite.id}/cart`, { method: "POST" }));
+      setFavoriteCartNotice(`เพิ่ม ${favorite.candidate.name} ลงตะกร้าแล้ว`);
+      favorites.reload();
+    } catch (cause) {
+      fail(cause);
+      await api<{ items: CartItem[] }>(`/api/inquiries/${inquiryId}/cart`).then(keep).catch(() => {});
+    } finally { setBusy(false); setFavoriteAdding(""); }
+  }
+
+  function favoriteProps(candidate: Candidate & { search_id: string }) {
+    return { favorite: favorites.items.some(item => item.candidate.product_item_id === candidate.product_item_id), favoriteDisabled: favorites.busy || favorites.loading || !!favorites.error, onFavorite: () => void favorites.toggle(candidate) };
+  }
+
   async function update(item: CartItem, quantity: number | null, isShipping?: boolean) {
     if (working) return;
     setBusy(true); setError("");
@@ -176,17 +198,18 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       {policyResult.key === policyKey && <>
         {policyResult.loading && <p className="muted small" role="status">กำลังค้นหาสินค้าของร้าน…</p>}
         {policyResult.error && <p className="notice warning" role="alert">{policyResult.error}<button type="button" className="text-button" onClick={() => setPolicyRetry(value => value + 1)}>ค้นหาอีกครั้ง</button></p>}
-        {policyResult.searches.map((search, index) => <div key={search.search_id}><p className="muted small">{settings.billing_searches?.[index]?.query}</p>{!search.candidates.length && <p className="muted small">ยังไม่พบสินค้า ลองค้นหาชื่อหรือรหัสด้านล่าง</p>}<div className="candidate-grid">{search.candidates.map(candidate => <CandidateTile key={candidate.product_item_id} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add({ ...candidate, search_id: search.search_id })} />)}</div></div>)}
+        {policyResult.searches.map((search, index) => <div key={search.search_id}><p className="muted small">{settings.billing_searches?.[index]?.query}</p>{!search.candidates.length && <p className="muted small">ยังไม่พบสินค้า ลองค้นหาชื่อหรือรหัสด้านล่าง</p>}<div className="candidate-grid">{search.candidates.map(candidate => <CandidateTile key={candidate.product_item_id} candidate={candidate} {...favoriteProps({ ...candidate, search_id: search.search_id })} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add({ ...candidate, search_id: search.search_id })} />)}</div></div>)}
       </>}
     </section>}
     <section className="order-section section-search">
       <h3 className="form-heading"><span aria-hidden="true">🔎</span> ค้นหาชุดจาก Alex</h3>
+      <ProductFavorites key={branch} branch={branch} controller={favorites} colors={colors} disabled={working} adding={favoriteAdding} cartNotice={favoriteCartNotice} onAdd={favorite => void addFavorite(favorite)} />
       {loading && <p role="status" className="muted small">กำลังโหลดตะกร้าและสาขา…</p>}
       {settings && !settings.configured && <div className="notice warning">ยังไม่เชื่อมบัญชี Alex กรุณาให้ผู้ดูแลระบบตั้งค่าการเชื่อมต่อก่อนค้นสินค้า</div>}
       {error && <div className="notice warning" role="alert">{error}</div>}
       {items.length > 0 && <div className="request-list"><span className="muted small">สิ่งที่ลูกค้าขอจากรูป/สรุป (กดเพื่อค้น):</span>{items.map((item, index) => { const lookup = suggestions.find(value => value.item_index === index); return <button type="button" key={index} className="request-chip" disabled={working} onClick={() => pickRequest(item, index)}>{[item.category && `แบรนด์ ${item.category}`, item.product_code || item.product_name, item.color, item.size].filter(Boolean).join(" · ") || "ไม่มีชื่อ"}{lookup && <span> · {lookupStates[lookup.status] ?? lookup.status}</span>}</button>; })}</div>}
       <div className="field-grid search-grid">
-        {(settings?.branches.length ?? 0) > 1 && <label className="span-2">สาขา Alex<select autoComplete="off" value={branch} disabled={working} onChange={e => setBranch(e.target.value)}><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}
+        {(settings?.branches.length ?? 0) > 1 && <label className="span-2">สาขา Alex<select autoComplete="off" value={branch} disabled={working} onChange={e => { setBranch(e.target.value); setResult(null); setChoices([]); setFavoriteCartNotice(""); }}><option value="">เลือกสาขา</option>{settings?.branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}
         <label>ค้นหาจาก<select autoComplete="off" value={mode} disabled={working} onChange={e => setMode(e.target.value as Mode)}><option value="text">ชื่อหรือคำบรรยาย</option><option value="code">รหัสสินค้าแบบตรงตัว</option><option value="product_url" disabled={!settings?.product_url_configured}>ลิงก์สินค้า</option><option value="image" disabled={!settings?.image_search_configured}>รูปจากแชท/รูปแนบ</option></select></label>
         {mode === "image" ? <label>รูปอ้างอิง<select autoComplete="off" value={image} disabled={working} onChange={e => setImage(e.target.value)}><option value="">เลือกรูป</option>{images.map((image, i) => <option key={image._id} value={image._id}>รูปที่ {i + 1} · {formatDateTime(image.event_at)}</option>)}</select></label>
           : <label>{mode === "product_url" ? "ลิงก์สินค้า" : mode === "code" ? "รหัสสินค้า" : "ชื่อชุด"}<input autoComplete="off" maxLength={500} value={query} disabled={working} onKeyDown={enter} onChange={e => setQuery(e.target.value)} placeholder={mode === "text" ? "เว้นว่างเพื่อดูทั้งหมดในแบรนด์/สาขา" : "เช่น 0291FRLDBRM"} /></label>}
@@ -198,7 +221,7 @@ export default function OrderCart({ inquiryId, draft, items, messages, attachmen
       <button type="button" className="button search full" disabled={working || !branch || (mode === "image" && !image)} onClick={() => search()}><span aria-hidden="true">🔎</span> {busy ? "กำลังค้นหา…" : "ค้นหาสินค้าใน Alex"}</button>
       {result && <p className="muted small">พบ {choices.length} ตัวเลือก · หน้าที่ {result.page}{result.method === "admin_input" ? " · ผลค้นอัตโนมัติจากรูป/สรุป" : result.method === "image_code" ? " · อ่านรหัสจากรูปแล้วยืนยันใน Alex" : result.method === "image_similarity" ? " · เรียงตามความคล้ายของรูป" : ""}</p>}
       {result && !choices.length && <div className="notice info">ยังไม่พบตัวเลือก ลองปรับชื่อ สี หรือไซซ์{result.has_more ? " หรือโหลดหน้าถัดไป" : ""}</div>}
-      {choices.length > 0 && <div className="candidate-grid">{choices.map(candidate => <CandidateTile key={`${candidate.search_id}:${candidate.product_item_id}`} candidate={candidate} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add(candidate)} />)}</div>}
+      {choices.length > 0 && <div className="candidate-grid">{choices.map(candidate => <CandidateTile key={`${candidate.search_id}:${candidate.product_item_id}`} candidate={candidate} {...favoriteProps(candidate)} inCart={cart.find(item => item.product_item_id === candidate.product_item_id)?.quantity ?? 0} colorName={codeLabel(candidate.color, colors)} disabled={working} onAdd={() => add(candidate)} />)}</div>}
       {result?.has_more && <button type="button" className="text-button full" disabled={working} onClick={() => search(true)}>โหลดหน้าถัดไป</button>}
     </section>
     <section className="order-section section-cart">

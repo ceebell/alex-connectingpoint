@@ -10,6 +10,8 @@ pub mod oa_sync;
 pub mod outbound;
 pub mod payment_slip;
 pub mod product;
+pub mod product_favorites;
 pub mod quick_replies;
+pub mod shipping;
 pub mod shop_settings;
 pub mod team;

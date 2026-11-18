@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { navigateWorkspace } from "@/lib/workspace-navigation";
+import { WorkspaceIcon } from "./workspace-navigation";
 
 type Panel = "inquiries" | "chat" | "draft";
 type Menu = "chat" | "info" | "account" | "settings";
@@ -16,6 +18,7 @@ type Props = {
   onManageTeam?: () => void;
   teamActive?: boolean;
   homeActive?: boolean;
+  shippingActive?: boolean;
   onHome?: () => void;
 };
 
@@ -37,7 +40,7 @@ const destinations: { panel: Panel; label: string }[] = [
   { panel: "draft", label: "ร่างออเดอร์" },
 ];
 
-export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout, onManageTeam, teamActive, homeActive, onHome }: Props) {
+export default function WorkspaceSidebar({ inquiryCount, username, login, activePanel, onNavigate, onLogout, onManageTeam, teamActive, homeActive, shippingActive, onHome }: Props) {
   const [open, setOpen] = useState<Menu | null>(null);
   const sidebar = useRef<HTMLElement>(null);
 
@@ -88,7 +91,7 @@ export default function WorkspaceSidebar({ inquiryCount, username, login, active
     <nav className="rail-navigation" aria-label="พื้นที่ทำงาน">
       {onHome && <button type="button" className={`rail-button ${homeActive ? "is-active" : ""}`} aria-label="หน้าหลัก" aria-current={homeActive ? "page" : undefined} onClick={onHome}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" /><path d="M9 21v-7h6v7" /></svg></button>}
       <div className="rail-group" {...groupEvents("chat")}>
-        <button type="button" className={`rail-button ${teamActive || homeActive ? "" : "is-active"}`} aria-label={inquiryCount === undefined ? "แชทและ inquiry" : `แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
+        <button type="button" className={`rail-button ${teamActive || homeActive || shippingActive ? "" : "is-active"}`} aria-label={inquiryCount === undefined ? "แชทและ inquiry" : `แชทและ inquiry ${inquiryCount} เรื่อง`} aria-expanded={open === "chat"} aria-controls="rail-chat-menu" onClick={() => setOpen("chat")}>
           <RailIcon name="chat" />{inquiryCount !== undefined && <span className="rail-count" aria-hidden="true">{inquiryCount > 99 ? "99+" : inquiryCount}</span>}
         </button>
         {open === "chat" && <div className="rail-flyout" id="rail-chat-menu" role="region" aria-labelledby="rail-chat-heading">
@@ -96,6 +99,7 @@ export default function WorkspaceSidebar({ inquiryCount, username, login, active
           <div className="rail-menu">{destinations.map(({ panel, label }) => <button key={panel} type="button" className="rail-menu-item" aria-current={activePanel === panel ? "location" : undefined} onClick={() => { setOpen(null); onNavigate(panel); }}><RailIcon name={panel} /><span>{label}</span></button>)}</div>
         </div>}
       </div>
+      <button type="button" className={`rail-button ${shippingActive ? "is-active" : ""}`} aria-label="พัสดุและ Tracking" aria-current={shippingActive ? "page" : undefined} onClick={() => navigateWorkspace("shipping")}><WorkspaceIcon name="shipping" /></button>
     </nav>
     <div className="rail-utilities">
       {onManageTeam && <div className="rail-group rail-group-bottom" {...groupEvents("settings")}><button type="button" className={`rail-button ${teamActive ? "is-active" : ""}`} aria-label="ตั้งค่าร้าน" aria-expanded={open === "settings"} aria-controls="rail-settings-menu" onClick={() => setOpen("settings")}><RailIcon name="settings" /></button>{open === "settings" && <div className="rail-flyout" id="rail-settings-menu" role="region" aria-labelledby="rail-settings-heading"><h2 id="rail-settings-heading">ตั้งค่าร้าน</h2><button type="button" className="rail-menu-item" aria-current={teamActive ? "page" : undefined} onClick={() => { setOpen(null); onManageTeam(); }}><RailIcon name="account" /><span>จัดการทีม</span></button></div>}</div>}

@@ -35,11 +35,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::connect(config).await?;
     db::indexes::ensure(&state).await?;
     db::team::bootstrap(&state).await?;
+    db::shipping::recover(&state).await?;
     let router = routes::router(state.clone())?;
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     let shutdown_tx = stop_tx.clone();
     let draft_worker = tokio::spawn(draft_worker::run(state.clone(), stop_rx.clone()));
+    let shipping_worker = tokio::spawn(db::shipping::run(state.clone(), stop_rx.clone()));
     let worker = tokio::spawn(worker::run(state, stop_rx));
     tracing::info!(port, "LINE inquiry receiver listening");
     let result = axum::serve(listener, router)
@@ -51,6 +53,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = stop_tx.send(true);
     worker.await?;
     draft_worker.await?;
+    shipping_worker.await?;
     result?;
     Ok(())
 }

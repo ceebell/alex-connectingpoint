@@ -1,6 +1,6 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Sticker CDN and uploaded previews are plain images. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, errorText, LineEvent } from "@/lib/api";
 import { stickerIds, stickerPackages, stickerUrl } from "@/lib/stickers";
 import { matchingQuickReplies, slashQuery, type QuickReply } from "@/lib/quick-replies";
@@ -48,6 +48,40 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const quickVisible = focused && query !== null && !quickDismissed && !working && !quickLibrary;
   const quickIndex = Math.max(0, Math.min(quickActive, quickMatches.length - 1));
   const quickListId = `quick-replies-${inquiryId}`;
+
+  useLayoutEffect(() => {
+    const field = textRef.current;
+    if (!field) return;
+    function resize() {
+      if (!field) return;
+      const style = getComputedStyle(field);
+      const collapsed = parseFloat(style.minHeight) || 44;
+      const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+      field.style.overflowY = "hidden";
+      field.style.height = `${collapsed}px`;
+      if (focused && !busy) {
+        const natural = field.scrollHeight + border;
+        field.style.height = `${Math.max(collapsed, natural)}px`;
+        field.style.overflowY = "auto";
+      } else {
+        field.scrollTop = 0;
+      }
+    }
+    resize();
+    let width = field.getBoundingClientRect().width;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = field.getBoundingClientRect().width;
+      if (Math.abs(nextWidth - width) > .5) {
+        width = nextWidth;
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(resize);
+      }
+    });
+    observer.observe(field);
+    document.fonts.addEventListener("loadingdone", resize);
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); document.fonts.removeEventListener("loadingdone", resize); };
+  }, [text, focused, busy]);
 
   useEffect(() => {
     if (quickVisible) document.getElementById(`${quickListId}-${quickIndex}`)?.scrollIntoView({ block: "nearest" });
@@ -132,6 +166,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     if (quickVisible) { if (quickMatches[quickIndex]) chooseQuickText(quickMatches[quickIndex]); return; }
     if (!text.trim() || working) return;
     const requestId = textId ?? crypto.randomUUID();
+    collapse();
     setTextId(requestId);
     if (await deliver(requestId, { text }, "ข้อความ")) { setText(""); setTextId(null); }
   }

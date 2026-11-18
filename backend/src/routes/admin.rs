@@ -6,7 +6,10 @@ use crate::{
 use axum::{
     Json,
     body::Body,
-    extract::{Path, Query, Request, State, rejection::JsonRejection},
+    extract::{
+        Path, Query, Request, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -208,13 +211,16 @@ pub async fn events(
 #[derive(Deserialize)]
 pub struct ContextQuery {
     pub after: Option<String>,
+    pub before: Option<String>,
+    pub latest: Option<bool>,
 }
 
 pub async fn context(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<ContextQuery>,
+    query: Result<Query<ContextQuery>, QueryRejection>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let Query(query) = query.map_err(|_| AppError::BadRequest)?;
     let inquiry_id = object_id(&id)?;
     let mut filter = state.scope();
     filter.insert("_id", inquiry_id);
@@ -224,10 +230,31 @@ pub async fn context(
         .await?
         .ok_or(AppError::NotFound)?;
     let after = query.after.as_deref().map(object_id).transpose()?;
-    let mut messages = crate::db::oa_sync::messages(&state, inquiry_id, after).await?;
+    let before = query.before.as_deref().map(object_id).transpose()?;
+    let latest = query.latest.unwrap_or(false);
+    if (latest && after.is_some()) || (!latest && before.is_some()) {
+        return Err(AppError::BadRequest);
+    }
+    let mut messages = if latest {
+        crate::db::oa_sync::recent_messages(&state, inquiry_id, before).await?
+    } else {
+        crate::db::oa_sync::messages(&state, inquiry_id, after).await?
+    };
     let has_more = messages.len() > 200;
-    messages.truncate(200);
-    let next = if has_more {
+    if latest && has_more {
+        messages.remove(0);
+    } else {
+        messages.truncate(200);
+    }
+    let previous = if latest && has_more {
+        messages
+            .first()
+            .and_then(|message| message.get_object_id("_id").ok())
+            .map(|id| id.to_hex())
+    } else {
+        None
+    };
+    let next = if has_more && !latest {
         messages
             .last()
             .and_then(|m| m.get_object_id("_id").ok())
@@ -246,7 +273,7 @@ pub async fn context(
     }
     crate::db::events::hide_read_tokens(&mut visible);
     Ok(Json(
-        serde_json::json!({"inquiry":inquiry, "batches":inquiries::batches(visible, state.config.burst_ms), "next":next}),
+        serde_json::json!({"inquiry":inquiry, "batches":inquiries::batches(visible, state.config.burst_ms), "next":next, "previous":previous}),
     ))
 }
 

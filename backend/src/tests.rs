@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "tests_billing_guidance.rs"]
 mod billing_guidance_tests;
+#[path = "tests_chat_history.rs"]
+mod chat_history_tests;
 #[path = "tests_customer_notes.rs"]
 mod customer_notes_tests;
 #[path = "tests_customers.rs"]
@@ -30,12 +32,16 @@ mod draft_catalog_tests;
 mod line_tests;
 #[path = "tests_oa_sync.rs"]
 mod oa_sync_tests;
+#[path = "tests_product_favorites.rs"]
+mod product_favorite_tests;
 #[path = "tests_products.rs"]
 mod product_tests;
 #[path = "tests_quick_replies.rs"]
 mod quick_reply_tests;
 #[path = "tests_rental.rs"]
 mod rental_tests;
+#[path = "tests_shipping.rs"]
+mod shipping_tests;
 #[path = "tests_shop_settings.rs"]
 mod shop_settings_tests;
 #[path = "tests_step2.rs"]
