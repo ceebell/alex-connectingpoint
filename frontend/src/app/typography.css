@@ -12,17 +12,17 @@
 .app-shell .draft-footer,
 .app-shell .step-caption p,
 .app-shell .form-heading > span:not([aria-hidden]) {
-  font-size: calc(12px + var(--mobile-text-increment, 0px));
+  font-size: calc(13px + var(--mobile-text-increment, 0px));
   color: var(--color-description);
 }
 
 .app-shell .inquiry-card .inquiry-preview {
-  font-size: calc(13px + var(--mobile-text-increment, 0px));
+  font-size: calc(14px + var(--mobile-text-increment, 0px));
   color: #475569;
 }
 
 :is(.app-shell, .invoice-dialog, .login-page) .notice p {
-  font-size: calc(12px + var(--mobile-text-increment, 0px));
+  font-size: calc(13px + var(--mobile-text-increment, 0px));
 }
 
 :is(.app-shell, .invoice-dialog) .notice.soft p {
@@ -31,7 +31,7 @@
 
 input::placeholder,
 textarea::placeholder {
-  font-size: calc(12px + var(--mobile-text-increment, 0px));
+  font-size: calc(13px + var(--mobile-text-increment, 0px));
   color: var(--color-placeholder);
   opacity: 1;
 }
@@ -41,12 +41,12 @@ textarea::placeholder {
 .app-shell .step-caption h3,
 .app-shell .form-heading,
 .app-shell .empty h3 {
-  font-size: calc(16px + var(--mobile-text-increment, 0px));
+  font-size: calc(17px + var(--mobile-text-increment, 0px));
   font-weight: 500;
 }
 
 .app-shell .summary-label,
 .app-shell .field-grid label,
 .invoice-dialog label {
-  font-size: calc(14px + var(--mobile-text-increment, 0px));
+  font-size: calc(15px + var(--mobile-text-increment, 0px));
 }

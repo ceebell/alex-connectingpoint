@@ -464,9 +464,18 @@ fn regex_literal(value: &str) -> String {
 
 type CustomerNames = HashMap<String, Vec<(&'static str, String)>>;
 
+fn name_source_priority(source: &str) -> u8 {
+    match source {
+        "alex_submission" => 0,
+        "customer_note" | "profile_note" => 2,
+        _ => 1,
+    }
+}
+
 async fn matching_names(
     state: &AppState,
     pattern: &str,
+    query: &str,
 ) -> Result<(CustomerNames, bool), AppError> {
     let mut names = CustomerNames::new();
     let mut more = false;
@@ -477,11 +486,17 @@ async fn matching_names(
         ("line_users", "display_name", "line_profile"),
         ("customer_aliases", "custom_name", "chat_alias"),
         ("customer_profiles", "display_name", "customer_profile"),
+        ("customer_notes", "text", "customer_note"),
+        ("customer_profiles", "notes", "profile_note"),
     ];
     if state.config.oa_connector_enabled {
         sources.push(("line_users", "oa_display_name", "oa_name"));
     }
     for (collection, field, source) in sources {
+        if name_source_priority(source) == 2 && shipping::normalized_name(query).chars().count() < 3
+        {
+            continue;
+        }
         let mut filter = state.scope();
         filter.insert(field, doc! {"$regex":pattern,"$options":"i"});
         let mut projection = doc! {"line_user_id":1};
@@ -499,10 +514,15 @@ async fn matching_names(
         rows.truncate(1000);
         for row in rows {
             if let (Ok(user), Ok(name)) = (row.get_str("line_user_id"), row.get_str(field)) {
-                names
-                    .entry(user.into())
-                    .or_default()
-                    .push((source, name.into()));
+                let name = if name_source_priority(source) == 2 {
+                    let Some(excerpt) = shipping::note_excerpt(query, name) else {
+                        continue;
+                    };
+                    excerpt
+                } else {
+                    name.into()
+                };
+                names.entry(user.into()).or_default().push((source, name));
             }
         }
     }
@@ -644,7 +664,11 @@ async fn matching_chats(
             continue;
         };
         for (source, name) in names.get(user).into_iter().flatten() {
-            let score = shipping::name_score(query, name);
+            let score = if name_source_priority(source) == 2 {
+                80
+            } else {
+                shipping::name_score(query, name)
+            };
             if score > 0 {
                 matches.push(ChatNameMatch {
                     user: user.into(),
@@ -661,8 +685,9 @@ async fn matching_chats(
         }
     }
     matches.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
+        name_source_priority(a.source)
+            .cmp(&name_source_priority(b.source))
+            .then_with(|| b.score.cmp(&a.score))
             .then_with(|| b.at.cmp(&a.at))
             .then_with(|| a.user.cmp(&b.user))
     });
@@ -712,7 +737,7 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
         .map(|c| regex_literal(&c.to_string()))
         .collect::<Vec<_>>()
         .join("[\\s.]*");
-    let (chat_names, names_more) = matching_names(state, &pattern).await?;
+    let (chat_names, names_more) = matching_names(state, &pattern, query).await?;
     let mut f = state.scope();
     f.extend(doc!{"status":"CONFIRMED","alex_order_id":{"$type":"string"},"line_user_id":{"$type":"string"}});
     if let Some(a) = &state.access
@@ -784,8 +809,8 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
             {
                 110
             } else {
-                [
-                    Some(name),
+                let bill_score = shipping::name_score(query, name);
+                let profile_score = [
                     profiles
                         .get(user)
                         .and_then(|p| p.get_str("display_name").ok()),
@@ -803,11 +828,25 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
                         .get(user)
                         .into_iter()
                         .flatten()
+                        .filter(|(source, _)| name_source_priority(source) != 2)
                         .map(|(_, name)| name.as_str()),
                 )
                 .map(|name| shipping::name_score(query, name))
                 .max()
-                .unwrap_or(0)
+                .unwrap_or(0);
+                if bill_score > 0 {
+                    bill_score
+                } else if profile_score > 0 {
+                    profile_score
+                } else if chat_names.get(user).is_some_and(|names| {
+                    names
+                        .iter()
+                        .any(|(source, _)| name_source_priority(source) == 2)
+                }) {
+                    80
+                } else {
+                    0
+                }
             };
             (score > 0).then_some((score, bill))
         })

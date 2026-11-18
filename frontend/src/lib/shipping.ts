@@ -4,7 +4,7 @@ export type ShippingOrder = { submission_id: string; inquiry_id: string; line_us
 export type Tracking = { chat_customer?: Customer; _id: string; row: number; version: number; status: "READY" | "SENDING" | "SEND_FAILED" | "SENT"; submission_id: string; inquiry_id: string; customer: ShippingOrder["customer"]; alex_order_id: string; alex_order_number: string | null; recipient_name: string; tracking_number: string; postal_code: string; service: string; shipping_fee_satang: number | null; message: string; delivery_started_at?: string; sent_at?: string; sent_by?: string; updated_at: string; updated_by?: string; error_code?: string };
 export type Receipt = { _id: string; name: string; status: "QUEUED" | "READING" | "READY" | "FAILED"; created_at: string; created_by: string; error_code?: string; total_mismatch?: boolean; image_url?: string; extraction?: { carrier: string; receipt_number: string | null; receipt_date: string | null; total_satang: number | null; parcels: Parcel[] } };
 export type ReceiptResult = { receipt: Receipt; trackings: Tracking[] };
-export type ShippingCustomerMatch = { line_user_id: string; inquiry_id: string; chat_customer: Customer; matched_name: string; match_source: "alex_submission" | "customer_profile" | "chat_alias" | "line_profile" | "oa_name"; match_score: number; submission_status: string | null };
+export type ShippingCustomerMatch = { line_user_id: string; inquiry_id: string; chat_customer: Customer; matched_name: string; match_source: "alex_submission" | "customer_profile" | "chat_alias" | "line_profile" | "oa_name" | "customer_note" | "profile_note"; match_score: number; submission_status: string | null };
 export type ShippingSearchResult = { orders: ShippingOrder[]; more: boolean; customer_matches?: ShippingCustomerMatch[]; customers_more?: boolean };
 export function suggestedChatOrder(orders: ShippingOrder[], more: boolean, customers: ShippingCustomerMatch[] = []): ShippingOrder | undefined {
   if (more || !orders.length) return;
@@ -17,7 +17,7 @@ export function suggestedChatOrder(orders: ShippingOrder[], more: boolean, custo
 }
 export const normalizeTracking = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
 export const validTracking = (value: string) => /^[A-Z]{2}\d{9}TH$/.test(normalizeTracking(value));
-export const trackingMessage = (number: string, service: string, order?: string | null) => `แจ้งเลขพัสดุ${order ? `สำหรับออเดอร์ ${order}` : ""} ค่ะ\nไปรษณีย์ไทย${service ? ` · ${service}` : ""}\nเลข Tracking: ${normalizeTracking(number)}\nตรวจสอบสถานะได้ที่ https://track.thailandpost.co.th/`;
+export const trackingMessage = (number: string) => `ส่งของเรียบร้อยค่ะ ✨ (ems)\nเลขที่ Tracking: ${normalizeTracking(number)}\n\nสามารถเช็คสถานะได้ที่ https://track.thailandpost.co.th`;
 export function feeSatang(value: string): number | null {
   if (!value.trim()) return null;
   if (!/^\d{1,7}(?:\.\d{1,2})?$/.test(value.trim())) return NaN;

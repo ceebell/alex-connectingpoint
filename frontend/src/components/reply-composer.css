@@ -32,7 +32,7 @@
 }
 .reply-add[aria-expanded="true"] svg { transform: rotate(45deg); }
 .reply-box .reply-tools { display: flex; flex-direction: row; gap: 8px; }
-.reply-box .tool-button { width: auto; gap: 8px; font-size: calc(12px + var(--mobile-text-increment, 0px)); }
+.reply-box .tool-button { width: auto; gap: 8px; font-size: calc(13px + var(--mobile-text-increment, 0px)); }
 .reply-box .tool-button svg { flex-shrink: 0; }
 .app-shell .workspace .reply-row textarea {
   height: 44px;
@@ -76,7 +76,7 @@
   .app-shell .workspace .reply-box { padding: 6px 8px; }
   /* A 17px phone input prevents focus zoom at every composer height. */
   .app-shell .workspace .reply-row textarea {
-    font-size: calc(16px + var(--mobile-text-increment, 0px));
+    font-size: calc(17px + var(--mobile-text-increment, 0px));
     max-height: min(calc(8 * 24px + 20px), max(44px, calc(var(--app-height, 100dvh) - 120px)));
   }
 }

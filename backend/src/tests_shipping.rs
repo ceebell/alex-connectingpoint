@@ -685,6 +685,204 @@ async fn unconfirmed_bill_and_edited_contact_names_find_chat_without_authorizing
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB"]
+async fn name_fallback_prefers_bills_then_profiles_then_current_scoped_notes() {
+    let state = AppState::connect(config()).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (bill, inquiry) = seed_order(
+        &state,
+        "Example Recipient Fullname",
+        "note-user",
+        "NOTE-001",
+    )
+    .await;
+    let now = DateTime::now();
+    let mut profile = state.scope();
+    profile.extend(doc! {"_id":ObjectId::new(),"line_user_id":"note-user","display_name":"Example Recipient","notes":"","created_at":now,"updated_at":now});
+    state
+        .collection("customer_profiles")
+        .insert_one(profile)
+        .await
+        .unwrap();
+    let note_id = ObjectId::new();
+    let mut note = state.scope();
+    note.extend(doc! {"_id":note_id,"line_user_id":"note-user","text":"ชื่อผู้รับ Example Recipient นัดส่งวันจันทร์","version":1_i64,"images":[],"history":[],"created_by":"Fixture Admin","updated_by":"Fixture Admin","created_at":now,"updated_at":now});
+    state
+        .collection("customer_notes")
+        .insert_one(note.clone())
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Example Recipient")
+        .await
+        .unwrap();
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "alex_submission"
+    );
+    assert_eq!(
+        result["customer_matches"][0]["matched_name"],
+        "Example Recipient Fullname"
+    );
+    assert_eq!(result["orders"][0]["match_score"], 85);
+    state
+        .collection("alex_submissions")
+        .update_one(
+            doc! {"_id":bill},
+            doc! {"$set":{"customer.name":"Completely Other"}},
+        )
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Example Recipient")
+        .await
+        .unwrap();
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "customer_profile"
+    );
+    assert_eq!(result["orders"][0]["match_score"], 100);
+    state
+        .collection("customer_profiles")
+        .update_one(
+            doc! {"line_user_id":"note-user"},
+            doc! {"$set":{"display_name":"Unrelated Contact"}},
+        )
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Example Recipient")
+        .await
+        .unwrap();
+    assert_eq!(result["customer_matches"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "customer_note"
+    );
+    assert_eq!(result["customer_matches"][0]["match_score"], 80);
+    assert_eq!(
+        result["customer_matches"][0]["chat_customer"]["display_name"],
+        "LINE note-user"
+    );
+    assert_eq!(
+        result["customer_matches"][0]["chat_customer"]["picture_url"],
+        "https://example.test/customer.png"
+    );
+    assert_eq!(
+        result["customer_matches"][0]["inquiry_id"],
+        inquiry.to_hex()
+    );
+    assert_eq!(result["orders"][0]["match_score"], 80);
+    assert!(
+        result["customer_matches"][0]["matched_name"]
+            .as_str()
+            .unwrap()
+            .contains("Example Recipient")
+    );
+    // A spelling resemblance in free text is not name evidence.
+    assert!(
+        shipping::candidates(&state, "Exampel Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // Search only current note text, never an older revision or attached images.
+    state.collection("customer_notes").update_one(doc! {"_id":note_id},doc! {"$set":{"text":"ติดต่อเรียบร้อยแล้ว","images":[{"name":"Example Recipient.png"}],"history":[{"text":"Example Recipient"}]}}).await.unwrap();
+    assert!(
+        shipping::candidates(&state, "Example Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    state
+        .collection("customer_profiles")
+        .update_one(
+            doc! {"line_user_id":"note-user"},
+            doc! {"$set":{"notes":"ผู้รับ Example Recipient แจ้งเปลี่ยนวันรับ"}},
+        )
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Example Recipient")
+        .await
+        .unwrap();
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "profile_note"
+    );
+    assert_eq!(result["customer_matches"][0]["match_score"], 80);
+    let mut restricted = state.clone();
+    restricted.access = Some(crate::models::team::Access {
+        member_id: ObjectId::new(),
+        line_user_id: "staff".into(),
+        name: "Staff".into(),
+        role: crate::models::team::Role::Staff,
+        branch_ids: vec!["branch-b".into()],
+        version: 1,
+    });
+    let result = shipping::candidates(&restricted, "Example Recipient")
+        .await
+        .unwrap();
+    assert!(result["orders"].as_array().unwrap().is_empty());
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "profile_note"
+    );
+    // Notes share the existing shop-wide chat scope; another shop/channel remains isolated.
+    note.insert("_id", ObjectId::new());
+    note.insert("channel_id", "other-channel");
+    note.insert("text", "Other Channel Recipient");
+    state
+        .collection("customer_notes")
+        .insert_one(note.clone())
+        .await
+        .unwrap();
+    note.insert("_id", ObjectId::new());
+    note.insert("channel_id", state.config.channel_id.clone());
+    note.insert("shop_id", "other-shop");
+    note.insert("text", "Other Shop Recipient");
+    state
+        .collection("customer_notes")
+        .insert_one(note)
+        .await
+        .unwrap();
+    for query in ["Other Channel Recipient", "Other Shop Recipient"] {
+        let result = shipping::candidates(&state, query).await.unwrap();
+        assert!(result["customer_matches"].as_array().unwrap().is_empty());
+    }
+    let mut other = config();
+    other.mongodb_db = state.config.mongodb_db.clone();
+    other.channel_id = "unrelated-channel".into();
+    let other = AppState::connect(other).await.unwrap();
+    assert!(
+        shipping::candidates(&other, "Example Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // Looking up a note is read-only and cannot create a tracking or message.
+    assert_eq!(
+        state
+            .collection("shipping_trackings")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        state
+            .collection("outbound_messages")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
 async fn deleted_batches_hide_every_row_block_old_actions_and_preserve_delivery_history() {
     let state = AppState::connect(config()).await.unwrap();
     crate::db::indexes::ensure(&state).await.unwrap();

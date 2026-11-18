@@ -16,11 +16,8 @@ test("shipping charges are optional exact satang and stay separate from the orde
   assert.equal(Number.isNaN(feeSatang("24.999")), true);
   assert.equal(Number.isNaN(feeSatang("-1")), true);
 });
-test("the prepared customer message contains the selected order and normalized tracking", () => {
-  const message = trackingMessage("JD 3334 5879 0 TH", "EMS", "AR-0001");
-  assert.match(message, /AR-0001/); assert.match(message, /JD333458790TH/);
-  assert.match(message, /EMS/); assert.match(message, /https:\/\/track\.thailandpost\.co\.th\//);
-  assert.doesNotMatch(message, /undefined|null/);
+test("the prepared EMS message uses the requested wording and the parcel's normalized tracking", () => {
+  assert.equal(trackingMessage("JD 3334 5879 0 TH"), "ส่งของเรียบร้อยค่ะ ✨ (ems)\nเลขที่ Tracking: JD333458790TH\n\nสามารถเช็คสถานะได้ที่ https://track.thailandpost.co.th");
 });
 
 test("chat name suggestions distinguish customers from multiple orders and incomplete results", () => {
@@ -40,4 +37,10 @@ test("an eligible order is not recommended when an equally matching chat has an 
   assert.equal(suggestedChatOrder([order], false, [pending]), undefined);
   assert.equal(suggestedChatOrder([order], false, [{ ...pending, line_user_id: "user-a" }]), order);
   assert.equal(suggestedChatOrder([], false, [pending]), undefined);
+});
+
+test("a note-only name match requires review rather than an automatic order recommendation", () => {
+  const order = { submission_id: "order-a", line_user_id: "user-a", match_score: 80, chat_customer: { display_name: "Chat A" } };
+  const note = { line_user_id: "user-a", inquiry_id: "inquiry-a", match_score: 80, chat_customer: order.chat_customer, matched_name: "Recipient Example Recipient", match_source: "customer_note", submission_status: null };
+  assert.equal(suggestedChatOrder([order], false, [note]), undefined);
 });

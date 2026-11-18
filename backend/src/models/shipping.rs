@@ -159,6 +159,39 @@ pub fn name_score(written: &str, customer: &str) -> i32 {
     if score >= 60 { score.min(80) } else { 0 }
 }
 
+// Notes are supporting evidence only: require a literal name, never fuzzy similarity.
+pub fn note_excerpt(query: &str, text: &str) -> Option<String> {
+    let needle = normalized_name(query);
+    if needle.chars().count() < 3 {
+        return None;
+    }
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<_> = collapsed.chars().collect();
+    let mut normalized = String::new();
+    let mut positions = Vec::new();
+    for (index, c) in chars.iter().enumerate() {
+        for lower in c.to_lowercase() {
+            if lower.is_alphanumeric() || ('\u{0e00}'..='\u{0e7f}').contains(&lower) {
+                normalized.push(lower);
+                positions.push(index);
+            }
+        }
+    }
+    let byte = normalized.find(&needle)?;
+    let offset = normalized[..byte].chars().count();
+    let start = positions.get(offset)?.saturating_sub(24);
+    let end = (positions.get(offset + needle.chars().count() - 1)? + 25)
+        .min(chars.len())
+        .min(start + 240);
+    let excerpt: String = chars[start..end].iter().collect();
+    Some(format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        excerpt,
+        if end < chars.len() { "…" } else { "" }
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveInput {
@@ -216,5 +249,32 @@ mod tests {
         assert_eq!(name_score("", "กัญญาณัฐ"), 0);
         assert_eq!(name_score("Alice", "Bob"), 0);
         assert_ne!(normalized_name("พิณ"), normalized_name("พิน"));
+    }
+
+    #[test]
+    fn note_matching_requires_literal_names_and_returns_a_bounded_current_excerpt() {
+        assert_eq!(
+            note_excerpt("สมมติ ใจดี", "ชื่อผู้รับ: คุณสมมติ\nใจดี ส่งวันจันทร์"),
+            Some("ชื่อผู้รับ: คุณสมมติ ใจดี ส่งวันจันทร์".into())
+        );
+        assert_eq!(
+            note_excerpt("K. Alice Smith", "Recipient: ALICE  SMITH"),
+            Some("Recipient: ALICE SMITH".into())
+        );
+        assert_eq!(note_excerpt("Alice", "Alicia"), None);
+        assert_eq!(note_excerpt("เอ", "ชื่อ เอ"), None);
+        assert_eq!(note_excerpt("คุณ", "ชื่อผู้รับ"), None);
+        let excerpt = note_excerpt(
+            "Example Recipient",
+            &format!(
+                "{} Example Recipient {}",
+                "before ".repeat(500),
+                "after ".repeat(500)
+            ),
+        )
+        .unwrap();
+        assert!(excerpt.contains("Example Recipient"));
+        assert!(excerpt.chars().count() <= 242);
+        assert!(excerpt.starts_with('…') && excerpt.ends_with('…'));
     }
 }

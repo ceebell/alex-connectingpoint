@@ -3,6 +3,70 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-19 00:48 — ฟอนต์ไทยมีหัวและเพิ่มตัวอักษรทุกจออีก 1px
+- **คำอธิบาย:** เปลี่ยน Mitr เป็น Noto Sans Thai Looped ให้รูปทรงตัวไทยมีหัวใกล้ภาพ LINE OA โดยยังไม่ยืนยันว่าเป็นฟอนต์จริงของ LINE ตั้งน้ำหนักเนื้อหาหลักเป็น regular 400 และเพิ่มค่า font-size เดิม 327 จุดอีก 1px คงส่วนเพิ่มสำหรับมือถือเดิมไว้ จึงเพิ่มขึ้นอีก 1px ทั้งมือถือและเดสก์ท็อป โหลดฟอนต์ผ่าน next/font และให้บริการจากแอป
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `layout.tsx` — แก้: โหลด Noto Sans Thai Looped subsets thai/latin น้ำหนัก 300–700 และผูก CSS variable ใหม่
+  - `globals.css` — แก้: เปลี่ยนฟอนต์หลัก/Tailwind sans เนื้อหาเป็น 17px น้ำหนัก 400 พร้อมเพิ่มขนาดข้อความส่วนกลาง
+  - `mobile.css` — แก้: เพิ่มฐานขนาดตัวอักษรของ responsive อีก 1px คง mobile-text-increment เดิม
+  - `typography.css` — แก้: เพิ่มข้อความรอง หัวข้อ label และ placeholder อีก 1px
+  - `workspace-layout.css` — แก้: เพิ่มข้อความส่วนจัดวาง workspace อีก 1px
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `brand-combobox.css` — แก้: เพิ่มขนาดตัวอักษรในตัวเลือกแบรนด์อีก 1px
+  - `chat-linked-content.css` — แก้: เพิ่มข้อความเนื้อหาแนบในแชทอีก 1px
+  - `customer-notes.css` — แก้: เพิ่มข้อความโน้ตลูกค้าอีก 1px
+  - `date-input.css` — แก้: เพิ่มข้อความปฏิทินอีก 1px
+  - `inquiry-list.css` — แก้: เพิ่มข้อความรายการแชทอีก 1px
+  - `invoice.css` — แก้: เพิ่มข้อความใบสรุป/บิลอีก 1px
+  - `order-cart.css` — แก้: เพิ่มข้อความค้นหาสินค้าและตะกร้าอีก 1px
+  - `quick-replies.css` — แก้: เพิ่มข้อความตอบกลับด่วนอีก 1px
+  - `rental-summary.css` — แก้: เพิ่มข้อความสรุปค่าเช่าอีก 1px
+  - `reply-composer.css` — แก้: เพิ่มข้อความช่องตอบแชทอีก 1px
+  - `shipping-workspace.css` — แก้: เพิ่มข้อความพัสดุ/Tracking ทั้งจอใหญ่และมือถืออีก 1px
+  - `shop-dashboard.css` — แก้: เพิ่มข้อความหน้าหลักอีก 1px
+  - `shop-settings.css` — แก้: เพิ่มข้อความตั้งค่าร้านอีก 1px
+  - `team.css` — แก้: เพิ่มข้อความจัดการทีมอีก 1px
+  - `workspace-sidebar.css` — แก้: เพิ่มข้อความเมนูด้านข้างอีก 1px
+- **โฟลเดอร์ราก**
+  - `AGENTS.md` — แก้: ปรับกฎฟอนต์และขนาดตัวอักษรให้ตรงคำสั่งผู้ใช้ล่าสุด
+- **โฟลเดอร์ `prompts/`**
+  - `requirements-v0.3.md` — แก้: ใส่ Done พร้อมเวลาจริงให้สองข้อเรื่องฟอนต์และขนาด ระบุผลพัฒนาและทดสอบ คงรายการอื่นของผู้ใช้ไว้
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - `.next/`, `frontend-release.json`, `frontend.sha256`, `frontend.tag` — แก้: Linux production release สร้างด้วย build-frontend.bat บน local tag `front-20261118174607-27c34d295ce8`
+- **การตรวจสอบ:** frontend lint ผ่าน, tests 66/66 ผ่าน, Next.js Linux production build รวม TypeScript ผ่าน; audit CSS 327 จุดเพิ่มตรง 1px และไม่เปลี่ยนค่า inherit/ส่วนเพิ่มมือถือ; browser Chrome/WebKit รวม 42 กรณีในหน้าหลัก รายการแชท แชท ออเดอร์ พัสดุ ตั้งค่าร้าน และทีม ที่ 320/375/1440px เทียบ computed font-size ก่อน–หลัง 1,098 จุดเพิ่มตรง 1px ฟอนต์โหลดสำเร็จและไม่ล้นแนวนอน ตรวจภาพหน้าจอจริงด้วย assets จาก release และ API จำลอง; หน้าพัสดุชุดเดิมอีก 20 กรณีผ่าน ไม่ส่งข้อความจริง บันทึกหลักฐาน local ใน data/typography-check/ และ data/shipping-message-check/
+- **งานต่อของ Developer:** Windows ใช้ rungit.bat เพื่อ commit/push; Ubuntu ใช้ cd ~/alex-connectingpoint แล้ว bash ./deploy-all.sh main; งานนี้ยังไม่ได้ commit/push/deploy
+
+## 2026-11-19 00:36 — ข้อความ EMS ตามแบบและปุ่มส่งใต้ข้อความรายลูกค้า
+- **คำอธิบาย:** เปลี่ยนข้อความเตรียมส่งเป็นแบบที่ผู้ใช้ให้ พร้อมแทนเลข Tracking ของพัสดุแต่ละรายการ ย้ายปุ่มส่งไว้ใต้ช่องข้อความ ให้เลือกออเดอร์แล้วบันทึก/ส่งในคลิกเดียว หรือบันทึกไว้ก่อนโดยยังไม่ส่ง ข้อความที่แอดมินแก้/เคยบันทึกไม่ถูกแทนที่เอง มีปุ่มใช้ข้อความมาตรฐานเพื่อเปลี่ยนกลับ
+- **โฟลเดอร์ `frontend/src/lib/`, `frontend/src/components/`, `frontend/tests/`**
+  - `shipping.ts` — แก้: trackingMessage ใช้ข้อความ "ส่งของเรียบร้อยค่ะ ✨ (ems)" บรรทัดเลขที่ Tracking บรรทัดว่าง และลิงก์ https://track.thailandpost.co.th ตามแบบ ไม่เติมเลขออเดอร์หรือข้อความอื่น
+  - `shipping-workspace.tsx` — แก้: ปุ่มส่งข้อความให้ลูกค้าคนนี้อยู่ถัดจากช่องข้อความ เตรียม/บันทึกข้อมูลปัจจุบันก่อนส่งเฉพาะเมื่อจำเป็น ใช้ id/version จากผลบันทึก ถ้าบันทึกไม่ผ่านจะไม่เรียกส่ง คง retry ของข้อความที่เริ่มส่งแล้ว เพิ่มปุ่มใช้ข้อความมาตรฐานและขยายช่องเป็น 6 บรรทัด ยังคงการตรวจผู้รับ/ออเดอร์/เลข Tracking และป้องกันคลิกซ้ำขณะดำเนินการ
+  - `shipping-workspace.css` — แก้: เป้ากดปุ่มใต้ข้อความอย่างน้อย 44px รองรับมือถือ
+  - `shipping.test.mjs` — แก้: ตรวจข้อความตรงรูปแบบที่ขอและ Tracking ที่ normalize แล้ว
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: รูปแบบข้อความ วิธีส่งตรง/บันทึกไว้ก่อน/คืนข้อความมาตรฐาน และผลทดสอบ
+  - `requirements-v0.3.md` — แก้: ใส่ Done และรายละเอียดใน item ข้อความ EMS เดิม คงข้อความตัวอย่างและ requirement อื่นที่ผู้ใช้กำลังแก้ ไม่เปลี่ยน Reviewed
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - `.next/`, `frontend.sha256`, `frontend.tag`, `frontend-release.json` — แก้: Linux frontend standalone release `front-20261118173325-2464b0b36118` build บน local Docker Desktop พร้อม runtime/assets และ checksum
+- **การตรวจสอบ:** frontend lint/TypeScript/tests ผ่าน 66/66 และ npm production build ผ่านบน local Docker Browser fixture `data/shipping-message-check/` ผ่าน Chrome/WebKit 20 กรณีที่ 1440/375/320px รวมส่งตรง บันทึกไว้ก่อนแล้วส่ง ข้อความที่เคยแก้/บันทึก ปุ่มคืนข้อความมาตรฐาน ข้อความแก้ใหม่พร้อมค่าขนส่ง บันทึกล้มเหลว/ข้อความไม่มีเลขแล้วไม่ส่ง retry ไม่บันทึกทับ ผลตอบกลับขาดช่วง และพัสดุคนที่สองไม่ปะปนลูกค้าคนแรก ตรวจภาพ desktop/มือถือแล้ว ไม่มี page error/คำขอหลุด fixture ไม่ส่ง LINE จริง Backend ไม่เปลี่ยนในรอบนี้จึงไม่ build/test ซ้ำ คง release จากงานก่อน ไม่ commit/push/deploy
+
+## 2026-11-19 00:21 — จับคู่ชื่อผู้รับจากโปรไฟล์และโน้ตเมื่อไม่พบชื่อในบิล
+- **คำอธิบาย:** เพิ่มหลักฐานสำรองจากข้อความโน้ตที่แอดมินบันทึกในแชทและโน้ตโปรไฟล์ จัดลำดับต่อลูกค้าเป็นชื่อในบิล → โปรไฟล์/ชื่อแชท → โน้ต แสดงชื่อ/รูปแชทเดิมและข้อความอ้างอิงให้ตรวจ ไม่แก้ชื่อ/บิล/โน้ตหรือเลือกออเดอร์จากโน้ตให้อัตโนมัติ
+- **โฟลเดอร์ `backend/src/`**
+  - `db/shipping.rs` — แก้: ค้น customer_notes.text และ customer_profiles.notes ภายในร้าน/ช่อง/LINE user เดิม เพิ่มลำดับแหล่งชื่อทั้งผลออเดอร์และผลแชท เลือกบิลก่อนโปรไฟล์ก่อนโน้ตเมื่อแหล่งนั้นตรงกับชื่อที่ค้น ผลจากโน้ตใช้คะแนน 80 เพื่อให้ตรวจเอง ไม่ค้นข้อความใน history หรือชื่อไฟล์แนบ และคงสิทธิ์บิลตามสาขา
+  - `models/shipping.rs` — แก้: note_excerpt จับชื่อตรงที่ปรากฏจริงในข้อความ อย่างน้อย 3 ตัวอักษรหลัง normalize คืนข้อความรอบชื่อสูงสุด 242 ตัวอักษรรวมเครื่องหมายตัดข้อความ รองรับไทย/อังกฤษ/ช่องว่างข้ามบรรทัด ไม่ fuzzy หรือเรียก AI
+  - `tests_shipping.rs` — แก้: ทดสอบลำดับบิลก่อนโปรไฟล์แม้โปรไฟล์สะกดตรงกว่า โน้ตเป็นทางเลือกสุดท้าย การแสดงชื่อ/รูปแชทเดิม โน้ตปัจจุบันเท่านั้น ชื่อสะกดคล้าย/history/ชื่อไฟล์ไม่ถูกใช้ แยกร้าน/ช่อง/สิทธิ์สาขา และค้นแล้วไม่มี mutation
+- **โฟลเดอร์ `frontend/src/components/`, `frontend/src/lib/`, `frontend/tests/`**
+  - `shipping-workspace.tsx` — แก้: ช่องค้นและป้ายแหล่งข้อความรองรับโน้ต แสดงกรอบข้อความโน้ตให้ตรวจแม้มีออเดอร์พร้อมแล้ว พร้อมลิงก์เปิดแชทและคำแนะนำให้เลือกออเดอร์เอง
+  - `shipping.ts`, `shipping.test.mjs` — แก้: เพิ่มแหล่ง customer_note/profile_note และทดสอบว่าออเดอร์ที่พบจากโน้ตไม่กลายเป็นคำแนะนำอัตโนมัติ
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: แหล่งโน้ต ลำดับ fallback ขีดจำกัดข้อความ/ความยาวชื่อ การตรวจหลักฐาน และผลทดสอบ
+  - `requirements-v0.3.md` — แก้: ใส่ Done และรายละเอียดเฉพาะ item เพิ่มเติมเรื่องโปรไฟล์/โน้ตตามคำขอนี้ คงข้อความและงานอื่นที่ผู้ใช้กำลังแก้ในไฟล์ไว้ ไม่เพิ่ม requirement ซ้ำหรือเปลี่ยน Reviewed
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — แก้: Linux backend release `rel-20261118171950-fba8ea39331e` build บน local Docker Desktop ตรวจ checksum ตรง
+  - `.next/`, `frontend.sha256`, `frontend.tag`, `frontend-release.json` — แก้: Linux frontend standalone release `front-20261118171741-1bb5d22a04ad` พร้อม runtime/assets และ checksum
+- **การตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 88/88; frontend lint/TypeScript/tests ผ่าน 66/66 และ Linux production build ผ่าน Browser fixture `data/shipping-notes-check/` ผ่าน Chrome/WebKit 8 กรณี และชุดบิล/โปรไฟล์เดิม `data/shipping-profile-check/` ผ่าน 12 กรณี รวม 20 กรณีที่ 1440/375/320px ครอบคลุมโน้ตแชท/โปรไฟล์ ไม่มีออเดอร์ ออเดอร์พร้อมแต่ให้ตรวจข้อความ/เลือกเอง ชื่อซ้ำและการคงข้อมูลหลังรีเฟรช ตรวจภาพ desktop/มือถือแล้ว ไม่มี page error/คำขอหลุด fixture หยุดและลบ MongoDB disposable แล้ว ไม่ส่งข้อความหรือแก้ production ไม่ commit/push/deploy
+
 ## 2026-11-18 23:49 — จับคู่ชื่อจากบิลและโปรไฟล์กับแชทแม้บิลยังไม่ยืนยัน
 - **คำอธิบาย:** ผู้ใช้ให้ค้นชื่อผู้รับจาก alex_submissions.customer.name หรือชื่อโปรไฟล์ที่แอดมินแก้ แล้วแสดงชื่อ/รูปเดียวกับแชท ตรวจกรณีที่ระบุผ่าน GET จริงพบร่าง SENT มีชื่อลูกค้า แต่บิลยัง SUBMIT_UNKNOWN และไม่มี Alex Order ID/Number จึงถูกตัวกรองออเดอร์ CONFIRMED เดิมตัดออก แยกผลจับคู่แชทออกจากออเดอร์ที่พร้อมผูก Tracking โดยไม่เปลี่ยนสถานะบิลหรือชื่อแชทจริง
 - **โฟลเดอร์ `backend/src/`**

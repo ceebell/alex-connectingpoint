@@ -16,7 +16,7 @@
 | Backend | Rust (stable), axum, tokio, serde, tracing, tower-http, dotenvy, thiserror |
 | Database | MongoDB (dev: ติดตั้งในเครื่อง) ผ่าน official crate `mongodb` |
 | Frontend | Next.js (App Router) + TypeScript + Tailwind CSS · จัดการแพ็กเกจด้วย **npm** |
-| Font | **Mitr** (Google Fonts) เป็นหลัก |
+| Font | **Noto Sans Thai Looped** (Google Fonts) เป็นหลัก |
 | Deploy | Docker + Docker Swarm (`docker-stack.yml`) |
 
 ## 3. โครงสร้างโฟลเดอร์
@@ -81,8 +81,8 @@
 
 **โครงสร้าง:** ใช้ `src/app` (App Router) · component ไว้ `src/components` · helper/fetch wrapper ไว้ `src/lib/api.ts`
 
-**Font:** โหลด Mitr ด้วย `next/font/google` (subsets `thai` + `latin`, weights 300/400/500/600/700)
-ผูกกับ `--font-mitr` และตั้งเป็น sans หลักของ Tailwind
+**Font:** โหลด Noto Sans Thai Looped (ตัวไทยมีหัวตามภาพอ้างอิง LINE OA) ด้วย `next/font/google` (subsets `thai` + `latin`, weights 300/400/500/600/700)
+ผูกกับ `--font-noto-sans-thai-looped` และตั้งเป็น sans หลักของ Tailwind
 
 **สีและพื้นหลัง:**
 
@@ -98,7 +98,7 @@
 | `highlight` ชมพู (option) | ป้ายเวอร์ชัน, ไฮไลต์รอง | `pink-500` (พื้นอ่อน `pink-50`) | `pink-700` |
 
 - ตัวอักษรบนพื้นสีให้ใช้เฉดเข้ม (700) เพื่อให้ contrast ผ่าน WCAG AA — `*-500` ใช้กับพื้นผิว/ขอบ/ป้าย
-- ขนาดตัวอักษร: เนื้อหาหลัก 16px, ข้อความรอง/ป้ายไม่ต่ำกว่า 12px (เวลาในแชทอย่างน้อย 11px)
+- ขนาดตัวอักษร: เนื้อหาหลัก 17px, ข้อความรอง/ป้ายไม่ต่ำกว่า 13px (เวลาในแชทอย่างน้อย 12px); คงส่วนเพิ่ม 1px สำหรับมือถือในกฎ responsive เดิม
 - ข้อความหลัก `slate-900` · ข้อความรอง `slate-500`/`slate-600`
 
 **Emoji:** ใช้ประกอบหัวข้อ, ปุ่ม, empty state และ badge ตามสมควร (ไม่เกิน 1 ตัว/หัวข้อ)
