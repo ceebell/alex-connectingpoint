@@ -33,3 +33,11 @@ test("chat name suggestions distinguish customers from multiple orders and incom
   assert.equal(suggestedChatOrder([{ ...first, match_score: 110 }], false), undefined);
   assert.equal(suggestedChatOrder([], false), undefined);
 });
+
+test("an eligible order is not recommended when an equally matching chat has an unconfirmed bill", () => {
+  const order = { submission_id: "order-a", line_user_id: "user-a", match_score: 100, chat_customer: { display_name: "Chat A" } };
+  const pending = { line_user_id: "user-b", inquiry_id: "inquiry-b", match_score: 100, chat_customer: { display_name: "Chat B" }, matched_name: "Example Recipient", match_source: "alex_submission", submission_status: "SUBMIT_UNKNOWN" };
+  assert.equal(suggestedChatOrder([order], false, [pending]), undefined);
+  assert.equal(suggestedChatOrder([order], false, [{ ...pending, line_user_id: "user-a" }]), order);
+  assert.equal(suggestedChatOrder([], false, [pending]), undefined);
+});

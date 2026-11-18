@@ -386,6 +386,21 @@ async fn chat_names_find_old_orders_and_keep_duplicate_customers_separate() {
         .insert_one(user)
         .await
         .unwrap();
+    let mut profile = state.scope();
+    profile.extend(doc! {"_id":ObjectId::new(),"line_user_id":"old-user","display_name":"Admin Edited Profile","created_at":DateTime::now(),"updated_at":DateTime::now()});
+    state
+        .collection("customer_profiles")
+        .insert_one(profile)
+        .await
+        .unwrap();
+    state
+        .collection("line_users")
+        .update_one(
+            doc! {"line_user_id":"old-user"},
+            doc! {"$set":{"oa_display_name":"OA Current Name"}},
+        )
+        .await
+        .unwrap();
     let fillers: Vec<_> = (0..1001).map(|n| {
         let mut row=state.scope();
         row.extend(doc! {"_id":ObjectId::new(),"status":"CONFIRMED","alex_order_id":format!("filler-{n}"),"line_user_id":"unused","customer":{"name":"Unrelated"},"group":{"branch_id":"branch-a"},"created_at":DateTime::now(),"updated_at":DateTime::now()});
@@ -396,8 +411,14 @@ async fn chat_names_find_old_orders_and_keep_duplicate_customers_separate() {
         .insert_many(fillers)
         .await
         .unwrap();
-    for query in ["พิมพ์นิภา", "น้องพิม", "Different billing name", "OLD-001"]
-    {
+    for query in [
+        "พิมพ์นิภา",
+        "น้องพิม",
+        "Admin Edited Profile",
+        "OA Current Name",
+        "Different billing name",
+        "OLD-001",
+    ] {
         let result = shipping::candidates(&state, query).await.unwrap();
         assert_eq!(result["orders"].as_array().unwrap().len(), 1, "{query}");
         assert_eq!(result["orders"][0]["submission_id"], bill.to_hex());
@@ -453,6 +474,211 @@ async fn chat_names_find_old_orders_and_keep_duplicate_customers_separate() {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+    state.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
+async fn unconfirmed_bill_and_edited_contact_names_find_chat_without_authorizing_tracking() {
+    let state = AppState::connect(config()).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (bill, inquiry) = seed_order(
+        &state,
+        "K. Example Recipient",
+        "user-pending",
+        "PENDING-001",
+    )
+    .await;
+    state.collection("alex_submissions").update_one(doc! {"_id":bill},doc! {"$set":{"status":"SUBMIT_UNKNOWN"},"$unset":{"alex_order_id":"","alex_order_number":""}}).await.unwrap();
+    state
+        .collection("line_users")
+        .update_one(
+            doc! {"line_user_id":"user-pending"},
+            doc! {"$set":{"display_name":"Chat A"}},
+        )
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Example Recipient")
+        .await
+        .unwrap();
+    assert!(result["orders"].as_array().unwrap().is_empty());
+    let matched = &result["customer_matches"][0];
+    assert_eq!(matched["chat_customer"]["display_name"], "Chat A");
+    assert_eq!(
+        matched["chat_customer"]["picture_url"],
+        "https://example.test/customer.png"
+    );
+    assert_eq!(matched["matched_name"], "K. Example Recipient");
+    assert_eq!(matched["match_source"], "alex_submission");
+    assert_eq!(matched["submission_status"], "SUBMIT_UNKNOWN");
+    assert_eq!(matched["inquiry_id"], inquiry.to_hex());
+    assert!(matched.get("customer").is_none());
+    // Older submissions may have saved their customer only in the reviewed form or payload.
+    for fields in [
+        doc! {"review_input":{"customer_name":"Example Recipient"}},
+        doc! {"input":{"customer_name":"Example Recipient"}},
+        doc! {"payload":{"orderDetail":{"customerName":"Example Recipient"}}},
+    ] {
+        state
+            .collection("alex_submissions")
+            .update_one(
+                doc! {"_id":bill},
+                doc! {"$unset":{"customer":"","review_input":"","input":"","payload":""}},
+            )
+            .await
+            .unwrap();
+        state
+            .collection("alex_submissions")
+            .update_one(doc! {"_id":bill}, doc! {"$set":fields})
+            .await
+            .unwrap();
+        let result = shipping::candidates(&state, "Example Recipient")
+            .await
+            .unwrap();
+        assert_eq!(
+            result["customer_matches"][0]["line_user_id"],
+            "user-pending"
+        );
+        assert!(result["orders"].as_array().unwrap().is_empty());
+    }
+    let (profile_bill, profile_inquiry) = seed_order(
+        &state,
+        "Unrelated Billing Name",
+        "user-profile",
+        "PROFILE-001",
+    )
+    .await;
+    state
+        .collection("alex_submissions")
+        .delete_one(doc! {"_id":profile_bill})
+        .await
+        .unwrap();
+    let now = DateTime::now();
+    let mut profile = state.scope();
+    profile.extend(doc! {"_id":ObjectId::new(),"line_user_id":"user-profile","display_name":"Edited Contact Recipient","created_at":now,"updated_at":now});
+    state
+        .collection("customer_profiles")
+        .insert_one(profile)
+        .await
+        .unwrap();
+    let mut alias = state.scope();
+    alias.extend(doc! {"_id":ObjectId::new(),"line_user_id":"user-profile","custom_name":"Chat B Custom","created_at":now,"updated_at":now});
+    state
+        .collection("customer_aliases")
+        .insert_one(alias)
+        .await
+        .unwrap();
+    let result = shipping::candidates(&state, "Edited Contact Recipient")
+        .await
+        .unwrap();
+    assert!(result["orders"].as_array().unwrap().is_empty());
+    assert_eq!(
+        result["customer_matches"][0]["match_source"],
+        "customer_profile"
+    );
+    assert_eq!(
+        result["customer_matches"][0]["chat_customer"]["display_name"],
+        "Chat B Custom"
+    );
+    assert_eq!(
+        result["customer_matches"][0]["inquiry_id"],
+        profile_inquiry.to_hex()
+    );
+    assert_eq!(
+        result["customer_matches"][0]["chat_customer"]["picture_url"],
+        "https://example.test/customer.png"
+    );
+    // A mismatched submission must never associate another customer's chat with this name.
+    state
+        .collection("alex_submissions")
+        .update_one(
+            doc! {"_id":bill},
+            doc! {"$set":{"inquiry_id":profile_inquiry}},
+        )
+        .await
+        .unwrap();
+    assert!(
+        shipping::candidates(&state, "Example Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    state
+        .collection("alex_submissions")
+        .update_one(doc! {"_id":bill}, doc! {"$set":{"inquiry_id":inquiry}})
+        .await
+        .unwrap();
+    let mut restricted = state.clone();
+    restricted.access = Some(crate::models::team::Access {
+        member_id: ObjectId::new(),
+        line_user_id: "staff".into(),
+        name: "Staff".into(),
+        role: crate::models::team::Role::Staff,
+        branch_ids: vec!["branch-b".into()],
+        version: 1,
+    });
+    assert!(
+        shipping::candidates(&restricted, "Example Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut other = config();
+    other.mongodb_db = state.config.mongodb_db.clone();
+    other.channel_id = "other-channel".into();
+    let other = AppState::connect(other).await.unwrap();
+    assert!(
+        shipping::candidates(&other, "Edited Contact Recipient")
+            .await
+            .unwrap()["customer_matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let receipt_id = ObjectId::new();
+    let mut receipt = state.scope();
+    receipt.extend(doc! {"_id":receipt_id,"request_id":"fixture-request","content_hash":"fixture-image","status":"READY","extraction":mongodb::bson::to_document(&extraction()).unwrap(),"created_at":now,"updated_at":now});
+    state
+        .collection("shipping_receipts")
+        .insert_one(receipt)
+        .await
+        .unwrap();
+    let actor = crate::models::customer::Actor {
+        id: "fixture-admin".into(),
+        name: "Fixture Admin".into(),
+    };
+    let input = json!({"expected_version":0,"submission_id":bill.to_hex(),"recipient_name":"Example Recipient","tracking_number":"JD333458790TH","postal_code":"10150","service":"EMS","shipping_fee_satang":2400,"message":"Tracking JD333458790TH"});
+    assert!(matches!(
+        shipping::save(
+            &state,
+            receipt_id,
+            1,
+            serde_json::from_value(input).unwrap(),
+            &actor
+        )
+        .await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert_eq!(
+        state
+            .collection("shipping_trackings")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        state
+            .collection("outbound_messages")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
     );
     state.db.drop().await.unwrap();
 }

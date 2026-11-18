@@ -3,6 +3,22 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-18 23:49 — จับคู่ชื่อจากบิลและโปรไฟล์กับแชทแม้บิลยังไม่ยืนยัน
+- **คำอธิบาย:** ผู้ใช้ให้ค้นชื่อผู้รับจาก alex_submissions.customer.name หรือชื่อโปรไฟล์ที่แอดมินแก้ แล้วแสดงชื่อ/รูปเดียวกับแชท ตรวจกรณีที่ระบุผ่าน GET จริงพบร่าง SENT มีชื่อลูกค้า แต่บิลยัง SUBMIT_UNKNOWN และไม่มี Alex Order ID/Number จึงถูกตัวกรองออเดอร์ CONFIRMED เดิมตัดออก แยกผลจับคู่แชทออกจากออเดอร์ที่พร้อมผูก Tracking โดยไม่เปลี่ยนสถานะบิลหรือชื่อแชทจริง
+- **โฟลเดอร์ `backend/src/`**
+  - `db/shipping.rs` — แก้: ค้น customer_profiles.display_name, ชื่อ LINE/OA/alias และชื่อจากประวัติบิลทุกสถานะ รองรับชื่อใน review_input/input/payload ของบิลเก่า เพิ่ม customer_matches/customers_more พร้อมแหล่งชื่อ/สถานะและชื่อรูปแชทจาก LINE user เดิม ตรวจร้าน/ช่อง สาขาบิล และ user/inquiry/บทสนทนา 1:1 ให้ตรง จำกัดผลและแจ้งเมื่อถึงเพดาน ส่วน orders/save/send ยังคงรับเฉพาะออเดอร์ที่ยืนยันพร้อม ID
+  - `tests_shipping.rs` — แก้: เพิ่มโปรไฟล์ที่แอดมินแก้และชื่อ OA ในกรณีออเดอร์เก่านอก 1,000 รายการ เพิ่มกรณีบิลไม่ยืนยัน/ไม่มีเลข ชื่อบิล legacy โปรไฟล์ที่ยังไม่มีออเดอร์ แสดงชื่อ/รูปแชทปัจจุบัน ข้อมูลเชื่อมคนละ user/inquiry แยกช่อง/สาขา และไม่อนุญาตให้บันทึกหรือส่ง Tracking จากผลจับคู่แชทอย่างเดียว
+- **โฟลเดอร์ `frontend/src/components/`, `frontend/src/lib/`, `frontend/tests/`**
+  - `shipping-workspace.tsx`, `shipping-workspace.css` — แก้: ช่องค้นรวมชื่อโปรไฟล์ แสดงการ์ดแชทพร้อมรูป ชื่อที่ใช้จับคู่/แหล่งข้อมูล และปุ่มเปิดแชทเมื่อยังไม่มีออเดอร์ที่พร้อม แสดงคำอธิบายเมื่อบิล SUBMIT_UNKNOWN ไม่แสดงเป็นตัวเลือกผูกบิล และคงสถานะปุ่มบันทึกตามออเดอร์จริง รองรับมือถือ
+  - `shipping.ts`, `shipping.test.mjs` — แก้: type ผลจับคู่แชท และไม่แนะนำออเดอร์รายเดียวเมื่อมีอีกลูกค้าชื่อตรงพอ ๆ กันแต่บิลยังไม่ยืนยัน คงการอ่านผลจาก backend รุ่นก่อนที่ไม่มี customer_matches ได้
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: แหล่งชื่อ ฟิลด์ API ความต่างระหว่างหาแชทกับผูกออเดอร์ สถานะ SENT/SUBMIT_UNKNOWN ขอบเขตสิทธิ์ ขีดจำกัด และผลทดสอบ
+  - `requirements-v0.3.md` — แก้: ขยาย item จับคู่ชื่อเดิมด้วยแหล่งโปรไฟล์/ประวัติบิลและกรณีไม่มี Order ID อัปเดต Done และผลทดสอบ ไม่เพิ่ม requirement ซ้ำหรือเปลี่ยน Reviewed
+- **โฟลเดอร์ `dist/line-linux/`, `dist/frontend-linux/`**
+  - `backend`, `backend.sha256`, `release.tag`, `release.json` — แก้: Linux backend release `rel-20261118164659-1a2ffab00a30` build บน Docker Desktop local และตรวจ checksum ตรง
+  - `.next/`, `frontend.sha256`, `frontend.tag`, `frontend-release.json` — แก้: Linux frontend standalone release `front-20261118164420-1c209ae394b9` พร้อม runtime/assets และ checksum
+- **การตรวจสอบ:** cargo fmt --check, cargo clippy --all-targets -- -D warnings และ cargo test -- --include-ignored ผ่าน 86/86; frontend lint/TypeScript/tests ผ่าน 65/65 และ Linux production build ผ่าน Browser fixture `data/shipping-profile-check/` ผ่าน Chrome/WebKit 12 กรณีที่ 1440/375/320px รวมบิลยังไม่ยืนยัน ชื่อโปรไฟล์ที่ต่างจากแชท/บิล ชื่อซ้ำระหว่างลูกค้าที่ออเดอร์พร้อมกับยังไม่พร้อม ผลค้นไม่ครบ การคงข้อมูลหลังรีเฟรช และผลค้นเก่ากลับมาช้า ชุดลบ batch เดิม `data/shipping-batch-check/` ผ่านซ้ำ 16 กรณี รวม 28 กรณี ตรวจภาพ desktop/มือถือแล้ว ไม่มี page error/คำขอหลุด fixture ตรวจ production ผ่าน GET เท่านั้น ไม่แก้บิล/สถานะหรือส่งข้อความจริง หยุดและลบ MongoDB disposable แล้ว ไม่ commit/push/deploy
+
 ## 2026-11-18 23:11 — ลบ Tracking batch และจับคู่ชื่อจากแชทลูกค้า
 - **คำอธิบาย:** เพิ่มลบใบเสร็จที่อัปโหลดพร้อมพัสดุทั้ง batch ออกจากการใช้งาน มีการยืนยัน เก็บผู้ลบ/เวลาและประวัติภายในเพื่อคงการป้องกันส่งซ้ำ ไม่ลบออเดอร์ Alex หรือข้อความที่ส่งแล้ว พร้อมค้น/จัดอันดับจากชื่อ LINE และชื่อที่แอดมินตั้งในแชทเพิ่มเติมจากชื่อในบิล แสดงชื่อ/รูปแชทที่แนะนำเฉพาะเมื่อลูกค้าตรงชัดเจนคนเดียว แยกชื่อบนใบเสร็จและยังให้แอดมินเลือกออเดอร์/กดส่งเอง
 - **โฟลเดอร์ `backend/src/`**

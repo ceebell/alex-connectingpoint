@@ -461,10 +461,258 @@ fn regex_literal(value: &str) -> String {
         })
         .collect()
 }
+
+type CustomerNames = HashMap<String, Vec<(&'static str, String)>>;
+
+async fn matching_names(
+    state: &AppState,
+    pattern: &str,
+) -> Result<(CustomerNames, bool), AppError> {
+    let mut names = CustomerNames::new();
+    let mut more = false;
+    if pattern.is_empty() {
+        return Ok((names, more));
+    }
+    let mut sources = vec![
+        ("line_users", "display_name", "line_profile"),
+        ("customer_aliases", "custom_name", "chat_alias"),
+        ("customer_profiles", "display_name", "customer_profile"),
+    ];
+    if state.config.oa_connector_enabled {
+        sources.push(("line_users", "oa_display_name", "oa_name"));
+    }
+    for (collection, field, source) in sources {
+        let mut filter = state.scope();
+        filter.insert(field, doc! {"$regex":pattern,"$options":"i"});
+        let mut projection = doc! {"line_user_id":1};
+        projection.insert(field, 1);
+        let mut rows: Vec<Document> = state
+            .collection(collection)
+            .find(filter)
+            .projection(projection)
+            .sort(doc! {"updated_at":-1,"_id":-1})
+            .limit(1001)
+            .await?
+            .try_collect()
+            .await?;
+        more |= rows.len() > 1000;
+        rows.truncate(1000);
+        for row in rows {
+            if let (Ok(user), Ok(name)) = (row.get_str("line_user_id"), row.get_str(field)) {
+                names
+                    .entry(user.into())
+                    .or_default()
+                    .push((source, name.into()));
+            }
+        }
+    }
+    Ok((names, more))
+}
+
+async fn contact_profiles(
+    state: &AppState,
+    ids: Vec<String>,
+) -> Result<HashMap<String, Document>, AppError> {
+    let mut filter = state.scope();
+    filter.insert("line_user_id", doc! {"$in":ids});
+    let rows: Vec<Document> = state
+        .collection("customer_profiles")
+        .find(filter)
+        .projection(doc! {"line_user_id":1,"display_name":1})
+        .await?
+        .try_collect()
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| Some((row.get_str("line_user_id").ok()?.into(), row)))
+        .collect())
+}
+
+struct ChatNameMatch {
+    user: String,
+    inquiry: ObjectId,
+    name: String,
+    source: &'static str,
+    score: i32,
+    at: i64,
+    submission_status: Option<String>,
+}
+
+// Finding a customer is independent of confirming that their Alex order can accept Tracking.
+async fn matching_chats(
+    state: &AppState,
+    query: &str,
+    pattern: &str,
+    names: &CustomerNames,
+    mut more: bool,
+) -> Result<(Vec<Value>, bool), AppError> {
+    if pattern.is_empty() {
+        return Ok((vec![], false));
+    }
+    let ids: Vec<_> = names.keys().cloned().collect();
+    let mut filter = state.scope();
+    filter.insert(
+        "$or",
+        vec![
+            doc! {"customer.name":{"$regex":pattern,"$options":"i"}},
+            doc! {"review_input.customer_name":{"$regex":pattern,"$options":"i"}},
+            doc! {"input.customer_name":{"$regex":pattern,"$options":"i"}},
+            doc! {"payload.orderDetail.customerName":{"$regex":pattern,"$options":"i"}},
+            doc! {"line_user_id":{"$in":&ids}},
+        ],
+    );
+    if let Some(access) = &state.access
+        && access.role != crate::models::team::Role::Owner
+    {
+        filter.insert("group.branch_id", doc! {"$in":&access.branch_ids});
+    }
+    let mut bills: Vec<Document> = state
+        .collection("alex_submissions")
+        .find(filter)
+        .projection(
+            doc! {"customer.name":1,"review_input.customer_name":1,"input.customer_name":1,"payload.orderDetail.customerName":1,"inquiry_id":1,"line_user_id":1,"status":1,"created_at":1},
+        )
+        .sort(doc! {"created_at":-1,"_id":-1})
+        .limit(101)
+        .await?
+        .try_collect()
+        .await?;
+    more |= bills.len() > 100;
+    bills.truncate(100);
+    let mut matches = Vec::new();
+    for bill in bills {
+        let name = bill
+            .get_document("customer")
+            .ok()
+            .and_then(|c| c.get_str("name").ok())
+            .or_else(|| {
+                bill.get_document("review_input")
+                    .ok()
+                    .and_then(|c| c.get_str("customer_name").ok())
+            })
+            .or_else(|| {
+                bill.get_document("input")
+                    .ok()
+                    .and_then(|c| c.get_str("customer_name").ok())
+            })
+            .or_else(|| {
+                bill.get_document("payload")
+                    .ok()
+                    .and_then(|c| c.get_document("orderDetail").ok())
+                    .and_then(|c| c.get_str("customerName").ok())
+            });
+        let (Ok(user), Ok(inquiry), Some(name)) = (
+            bill.get_str("line_user_id"),
+            bill.get_object_id("inquiry_id"),
+            name,
+        ) else {
+            continue;
+        };
+        let score = shipping::name_score(query, name);
+        if score > 0 {
+            matches.push(ChatNameMatch {
+                user: user.into(),
+                inquiry,
+                name: name.into(),
+                source: "alex_submission",
+                score,
+                at: bill
+                    .get_datetime("created_at")
+                    .map_or(0, |at| at.timestamp_millis()),
+                submission_status: bill.get_str("status").ok().map(String::from),
+            });
+        }
+    }
+    let mut filter = state.scope();
+    filter.insert("line_user_id", doc! {"$in":ids});
+    let mut inquiries: Vec<Document> = state
+        .collection("inquiries")
+        .find(filter)
+        .projection(doc! {"line_user_id":1,"last_activity_at":1})
+        .sort(doc! {"last_activity_at":-1,"_id":-1})
+        .limit(101)
+        .await?
+        .try_collect()
+        .await?;
+    more |= inquiries.len() > 100;
+    inquiries.truncate(100);
+    for inquiry in inquiries {
+        let (Ok(user), Ok(id)) = (
+            inquiry.get_str("line_user_id"),
+            inquiry.get_object_id("_id"),
+        ) else {
+            continue;
+        };
+        for (source, name) in names.get(user).into_iter().flatten() {
+            let score = shipping::name_score(query, name);
+            if score > 0 {
+                matches.push(ChatNameMatch {
+                    user: user.into(),
+                    inquiry: id,
+                    name: name.clone(),
+                    source,
+                    score,
+                    at: inquiry
+                        .get_datetime("last_activity_at")
+                        .map_or(0, |at| at.timestamp_millis()),
+                    submission_status: None,
+                });
+            }
+        }
+    }
+    matches.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| b.at.cmp(&a.at))
+            .then_with(|| a.user.cmp(&b.user))
+    });
+    let ids: Vec<_> = matches.iter().map(|m| m.user.clone()).collect();
+    let profiles = users::profiles(state, ids.clone()).await?;
+    let aliases = super::customers::aliases(state, ids).await?;
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for matched in matches {
+        if seen.contains(&matched.user) {
+            continue;
+        }
+        let inquiry = match drafts::inquiry(state, matched.inquiry).await {
+            Ok(inquiry) => inquiry,
+            Err(AppError::NotFound) => continue,
+            Err(error) => return Err(error),
+        };
+        if inquiry.get_str("line_user_id").ok() != Some(matched.user.as_str())
+            || outbound::recipient(state, &inquiry).await.is_err()
+        {
+            continue;
+        }
+        seen.insert(matched.user.clone());
+        let profile = profiles.get(&matched.user);
+        let name = aliases
+            .get(&matched.user)
+            .and_then(|a| a.get_str("custom_name").ok())
+            .or_else(|| profile.and_then(|p| p.get_str("display_name").ok()));
+        result.push(json!({"line_user_id":matched.user,"inquiry_id":matched.inquiry.to_hex(),
+            "chat_customer":{"display_name":name,"picture_url":profile.and_then(|p|p.get_str("picture_url").ok())},
+            "matched_name":matched.name,"match_source":matched.source,"match_score":matched.score,"submission_status":matched.submission_status}));
+        if result.len() > 15 {
+            more = true;
+            break;
+        }
+    }
+    result.truncate(15);
+    Ok((result, more))
+}
+
 pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError> {
     if query.chars().count() > 200 || query.chars().any(char::is_control) {
         return Err(AppError::BadRequest);
     }
+    let pattern = shipping::normalized_name(query)
+        .chars()
+        .map(|c| regex_literal(&c.to_string()))
+        .collect::<Vec<_>>()
+        .join("[\\s.]*");
+    let (chat_names, names_more) = matching_names(state, &pattern).await?;
     let mut f = state.scope();
     f.extend(doc!{"status":"CONFIRMED","alex_order_id":{"$type":"string"},"line_user_id":{"$type":"string"}});
     if let Some(a) = &state.access
@@ -482,36 +730,10 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
         .try_collect()
         .await?;
     if !query.trim().is_empty() {
-        let name = shipping::normalized_name(query)
-            .chars()
-            .map(|c| regex_literal(&c.to_string()))
-            .collect::<Vec<_>>()
-            .join("[\\s.]*");
+        let name = &pattern;
         let literal = regex_literal(query.trim());
         // Resolve chat names before limiting orders, so older orders are searchable too.
-        let mut chat_ids = Vec::new();
-        if !name.is_empty() {
-            for (collection, field) in [
-                ("line_users", "display_name"),
-                ("customer_aliases", "custom_name"),
-            ] {
-                let mut filter = state.scope();
-                filter.insert(field, doc! {"$regex":&name,"$options":"i"});
-                let customers: Vec<Document> = state
-                    .collection(collection)
-                    .find(filter)
-                    .projection(doc! {"line_user_id":1})
-                    .limit(1000)
-                    .await?
-                    .try_collect()
-                    .await?;
-                chat_ids.extend(
-                    customers
-                        .iter()
-                        .filter_map(|r| r.get_str("line_user_id").ok().map(String::from)),
-                );
-            }
-        }
+        let chat_ids: Vec<_> = chat_names.keys().cloned().collect();
         let mut search = f;
         search.insert(
             "$or",
@@ -545,6 +767,7 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
         .filter_map(|r| r.get_str("line_user_id").ok().map(String::from))
         .collect::<Vec<_>>();
     let profiles = users::profiles(state, ids.clone()).await?;
+    let contacts = contact_profiles(state, ids.clone()).await?;
     let aliases = super::customers::aliases(state, ids).await?;
     let mut scored: Vec<_> = unique
         .into_values()
@@ -569,9 +792,19 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
                     aliases
                         .get(user)
                         .and_then(|a| a.get_str("custom_name").ok()),
+                    contacts
+                        .get(user)
+                        .and_then(|p| p.get_str("display_name").ok()),
                 ]
                 .into_iter()
                 .flatten()
+                .chain(
+                    chat_names
+                        .get(user)
+                        .into_iter()
+                        .flatten()
+                        .map(|(_, name)| name.as_str()),
+                )
                 .map(|name| shipping::name_score(query, name))
                 .max()
                 .unwrap_or(0)
@@ -613,7 +846,11 @@ pub async fn candidates(state: &AppState, query: &str) -> Result<Value, AppError
             .or_else(|| profile.and_then(|p| p.get_str("display_name").ok()));
         result.push(json!({"submission_id":bill.get_object_id("_id").map_err(|_|AppError::Data)?.to_hex(),"inquiry_id":inquiry_id.to_hex(),"line_user_id":user,"customer":bill.get("customer"),"chat_customer":{"display_name":name,"picture_url":profile.and_then(|p|p.get_str("picture_url").ok())},"alex_order_id":bill.get_str("alex_order_id").ok(),"alex_order_number":bill.get_str("alex_order_number").ok(),"draft_version":bill.get_i64("draft_version").ok(),"pickup_date":bill.get_document("group").ok().and_then(|g|g.get_str("pickup_date").ok()),"created_at":bill.get_datetime("created_at").ok(),"match_score":score}));
     }
-    Ok(json!({"orders":result,"more":total>15}))
+    let (customers, customers_more) =
+        matching_chats(state, query, &pattern, &chat_names, names_more).await?;
+    Ok(
+        json!({"orders":result,"more":total>15,"customer_matches":customers,"customers_more":customers_more}),
+    )
 }
 
 fn delivery_key(id: ObjectId, version: i64) -> Result<String, AppError> {

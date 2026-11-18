@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, errorText } from "@/lib/api";
 import { canManageTeam, type AdminSession } from "@/lib/team-api";
 import { formatDate, formatDateTime } from "@/lib/dates";
-import { feeSatang, normalizeTracking, prepareReceipt, suggestedChatOrder, trackingMessage, validTracking, type Parcel, type Receipt, type ReceiptResult, type ShippingOrder, type Tracking } from "@/lib/shipping";
+import { feeSatang, normalizeTracking, prepareReceipt, suggestedChatOrder, trackingMessage, validTracking, type Parcel, type Receipt, type ReceiptResult, type ShippingCustomerMatch, type ShippingOrder, type ShippingSearchResult, type Tracking } from "@/lib/shipping";
 import { navigateWorkspace } from "@/lib/workspace-navigation";
 import { CustomerAvatar } from "./chat-message";
 import WorkspaceNavigation, { WorkspaceIcon } from "./workspace-navigation";
@@ -13,6 +13,7 @@ import { useTeamViewport } from "./team-workspace";
 const statuses = { QUEUED: "รออ่านใบเสร็จ", READING: "กำลังอ่านใบเสร็จ", READY: "พร้อมตรวจสอบ", FAILED: "อ่านไม่สำเร็จ" };
 const money = (satang: number | null | undefined) => satang == null ? "อ่านยอดไม่ได้" : `${(satang / 100).toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`;
 const endpoint = "/api/admin/shipping";
+const matchSources = { alex_submission: "ชื่อในประวัติบิล", customer_profile: "ชื่อในโปรไฟล์ลูกค้า", chat_alias: "ชื่อที่แอดมินตั้งในแชท", line_profile: "ชื่อโปรไฟล์ LINE", oa_name: "ชื่อใน LINE OA" };
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 90000);
   try { return await api<T>(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); }
@@ -28,6 +29,8 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   const [editedMessage, setEditedMessage] = useState(!!saved);
   const [query, setQuery] = useState(saved?.chat_customer?.display_name ?? saved?.customer.name ?? parcel.recipient_name ?? "");
   const [orders, setOrders] = useState<ShippingOrder[]>([]);
+  const [customers, setCustomers] = useState<ShippingCustomerMatch[]>([]);
+  const [customersMore, setCustomersMore] = useState(false);
   const [selected, setSelected] = useState(saved?.submission_id ?? "");
   const [searching, setSearching] = useState(true);
   const [more, setMore] = useState(false);
@@ -36,14 +39,15 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   const [dirty, setDirty] = useState(false);
   const locked = !!saved?.delivery_started_at;
   const chosen = orders.find(order => order.submission_id === selected);
-  const suggested = !selected && !searching ? suggestedChatOrder(orders, more) : undefined;
+  const suggested = !selected && !searching ? suggestedChatOrder(orders, more || customersMore, customers) : undefined;
+  const customerOnly = customers.filter(customer => !orders.some(order => order.line_user_id === customer.line_user_id));
   const chatName = chosen?.chat_customer.display_name || saved?.chat_customer?.display_name;
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
       setSearching(true);
-      void api<{ orders: ShippingOrder[]; more: boolean }>(`${endpoint}/orders?query=${encodeURIComponent(query)}`).then(value => {
-        if (!cancelled) { setOrders(value.orders); setMore(value.more); setError(""); }
+      void api<ShippingSearchResult>(`${endpoint}/orders?query=${encodeURIComponent(query)}`).then(value => {
+        if (!cancelled) { setOrders(value.orders); setMore(value.more); setCustomers(value.customer_matches ?? []); setCustomersMore(!!value.customers_more); setError(""); }
       }).catch(cause => { if (!cancelled) setError(errorText(cause)); }).finally(() => { if (!cancelled) setSearching(false); });
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -82,9 +86,11 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
       <label>บริการ<input autoComplete="off" value={service} maxLength={100} onChange={e => { setService(e.target.value); changeMessage(number, e.target.value, chosen); setDirty(true); }} /></label>
       <label>รหัสไปรษณีย์<input autoComplete="off" inputMode="numeric" maxLength={5} value={postcode} onChange={e => { setPostcode(e.target.value); setDirty(true); }} /></label>
     </fieldset>
-    {!locked && <section className="shipping-order-search" aria-label={`เลือกออเดอร์รายการ ${parcel.row}`}><label>ค้นหาชื่อในแชท ชื่อในบิล หรือเลขออเดอร์<input autoComplete="off" value={query} disabled={busy || batchBusy} maxLength={200} onChange={e => setQuery(e.target.value)} placeholder="ชื่อ LINE ชื่อที่ตั้งในแชท หรือ Order Number" /></label>
+    {!locked && <section className="shipping-order-search" aria-label={`เลือกออเดอร์รายการ ${parcel.row}`}><label>ค้นหาชื่อในแชท โปรไฟล์ลูกค้า ชื่อในบิล หรือเลขออเดอร์<input autoComplete="off" value={query} disabled={busy || batchBusy} maxLength={200} onChange={e => { setQuery(e.target.value); setSearching(true); }} placeholder="ชื่อผู้รับ ชื่อโปรไฟล์ หรือ Order Number" /></label>
       {searching && <p role="status">กำลังค้นหาออเดอร์…</p>}
-      {!searching && !orders.length && <p className="shipping-description">ไม่พบออเดอร์ที่ตรงกัน ลองชื่อในแชท ชื่อในบิล หรือเลขออเดอร์ ต้องเป็นออเดอร์ที่ส่งเข้า Alex สำเร็จแล้ว</p>}
+      {!searching && !orders.length && <p className="shipping-description">{customers.length ? "พบแชทลูกค้าที่ชื่อตรงกัน แต่ยังไม่มีออเดอร์ยืนยันพร้อม Alex Order ID ในผลค้นหานี้" : "ไม่พบออเดอร์ที่ตรงกัน ลองชื่อผู้รับ ชื่อโปรไฟล์ลูกค้า ชื่อในแชท หรือเลขออเดอร์"}</p>}
+      {!searching && customerOnly.length > 0 && <section className="shipping-customer-matches" aria-label={`แชทที่ตรงกับชื่อผู้รับรายการ ${parcel.row}`}><h4>พบชื่อในข้อมูลลูกค้า</h4>{customerOnly.map(customer => <div key={customer.line_user_id} className="shipping-recipient-check"><CustomerAvatar customer={customer.chat_customer} /><div><strong>{customer.chat_customer.display_name || "ลูกค้าในแชท"}</strong><p>{matchSources[customer.match_source]}: {customer.matched_name}</p><p className="shipping-description">{customer.match_score === 100 ? "ชื่อตรงกัน" : "ชื่อใกล้เคียง โปรดตรวจสอบ"}</p>{customer.submission_status === "SUBMIT_UNKNOWN" && <p className="shipping-unconfirmed">บิลนี้ยังยืนยันผลจาก Alex ไม่ได้ กรุณาตรวจเลขออเดอร์ในแชทก่อนผูก Tracking</p>}</div><a className="text-button" href={`#chat/${customer.inquiry_id}`}>เปิดแชท</a></div>)}</section>}
+      {customersMore && <p className="shipping-description">ยังมีแชทที่อาจตรงกันเพิ่มเติม กรุณาพิมพ์ชื่อเต็มเพื่อให้เจาะจงขึ้น</p>}
       <div className="shipping-order-options" role="radiogroup" aria-label={`ออเดอร์ของผู้รับรายการ ${parcel.row}`}>{orders.map(order => <label key={order.submission_id} className={`shipping-customer-option ${selected === order.submission_id ? "is-selected" : ""}`}><input type="radio" name={`shipping-order-${parcel.row}`} checked={selected === order.submission_id} disabled={busy || batchBusy} onChange={() => { setSelected(order.submission_id); changeMessage(number, service, order); setDirty(true); }} /><CustomerAvatar customer={order.chat_customer} /><span><strong>{order.chat_customer.display_name || order.customer.name}</strong><span>ชื่อในบิล: {order.customer.name}</span><span>{order.alex_order_number || order.alex_order_id}{order.draft_version ? ` · ร่าง v${order.draft_version}` : ""}{order.pickup_date ? ` · รับชุด ${formatDate(order.pickup_date)}` : ""}</span><span>{order.match_score === 100 ? "ชื่อตรงกัน" : order.match_score >= 60 && order.match_score <= 100 ? "ชื่อใกล้เคียง โปรดตรวจสอบ" : "ผลการค้นหา"}</span></span></label>)}</div>
       {orders.length > 1 && <p className="shipping-description">พบหลายออเดอร์ เลือกออเดอร์ที่จะใช้เลขพัสดุนี้ ระบบจะไม่เลือกจากชื่อเพียงอย่างเดียว</p>}{more && <p className="shipping-description">มีผลเพิ่มเติม พิมพ์ชื่อหรือเลขออเดอร์ให้เจาะจงขึ้น</p>}
     </section>}

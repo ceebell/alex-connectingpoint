@@ -4,12 +4,15 @@ export type ShippingOrder = { submission_id: string; inquiry_id: string; line_us
 export type Tracking = { chat_customer?: Customer; _id: string; row: number; version: number; status: "READY" | "SENDING" | "SEND_FAILED" | "SENT"; submission_id: string; inquiry_id: string; customer: ShippingOrder["customer"]; alex_order_id: string; alex_order_number: string | null; recipient_name: string; tracking_number: string; postal_code: string; service: string; shipping_fee_satang: number | null; message: string; delivery_started_at?: string; sent_at?: string; sent_by?: string; updated_at: string; updated_by?: string; error_code?: string };
 export type Receipt = { _id: string; name: string; status: "QUEUED" | "READING" | "READY" | "FAILED"; created_at: string; created_by: string; error_code?: string; total_mismatch?: boolean; image_url?: string; extraction?: { carrier: string; receipt_number: string | null; receipt_date: string | null; total_satang: number | null; parcels: Parcel[] } };
 export type ReceiptResult = { receipt: Receipt; trackings: Tracking[] };
-export function suggestedChatOrder(orders: ShippingOrder[], more: boolean): ShippingOrder | undefined {
+export type ShippingCustomerMatch = { line_user_id: string; inquiry_id: string; chat_customer: Customer; matched_name: string; match_source: "alex_submission" | "customer_profile" | "chat_alias" | "line_profile" | "oa_name"; match_score: number; submission_status: string | null };
+export type ShippingSearchResult = { orders: ShippingOrder[]; more: boolean; customer_matches?: ShippingCustomerMatch[]; customers_more?: boolean };
+export function suggestedChatOrder(orders: ShippingOrder[], more: boolean, customers: ShippingCustomerMatch[] = []): ShippingOrder | undefined {
   if (more || !orders.length) return;
   const score = Math.max(...orders.map(order => order.match_score));
   if (score < 85 || score > 100) return;
   const matches = orders.filter(order => order.match_score === score);
   if (new Set(matches.map(order => order.line_user_id)).size !== 1) return;
+  if (customers.some(customer => customer.match_score >= score && customer.line_user_id !== matches[0].line_user_id)) return;
   return matches.find(order => !!order.chat_customer.display_name);
 }
 export const normalizeTracking = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
