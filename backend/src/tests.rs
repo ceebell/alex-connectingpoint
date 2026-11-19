@@ -22,6 +22,8 @@ use tower::ServiceExt;
 mod billing_guidance_tests;
 #[path = "tests_chat_history.rs"]
 mod chat_history_tests;
+#[path = "tests_customer_contacts.rs"]
+mod customer_contacts_tests;
 #[path = "tests_customer_notes.rs"]
 mod customer_notes_tests;
 #[path = "tests_customers.rs"]

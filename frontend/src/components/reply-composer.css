@@ -7,7 +7,7 @@
   overflow: visible;
 }
 .reply-box .reply-row { align-items: flex-end; gap: 6px; }
-.reply-add, .reply-box .tool-button {
+.reply-add, .reply-emoji-button, .reply-box .tool-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -20,8 +20,8 @@
   border-radius: 8px;
   padding: 8px;
 }
-.reply-add:hover:enabled, .reply-box .tool-button:hover:enabled { background: #eff6ff; color: var(--color-primary-ink); }
-.reply-add svg, .reply-tools svg, .reply-send svg {
+.reply-add:hover:enabled, .reply-emoji-button:hover:enabled, .reply-box .tool-button:hover:enabled { background: #eff6ff; color: var(--color-primary-ink); }
+.reply-add svg, .reply-tools svg, .reply-send svg, .reply-emoji-button svg, .reply-emoji-heading svg {
   width: 24px;
   height: 24px;
   fill: none;
@@ -72,8 +72,23 @@
 .reply-attachments .image-draft { flex-wrap: wrap; margin: 0; }
 .reply-attachments .image-draft > div { flex: 1; min-width: 100px; }
 .reply-box > .notice { max-height: 120px; overflow-y: auto; }
+.reply-emoji-button { width: 44px; }
+.reply-emoji-button[aria-expanded="true"] { color: var(--color-primary-ink); background: #eff6ff; }
+.reply-emoji-panel { position: absolute; z-index: 22; bottom: calc(100% + 6px); left: 8px; width: min(390px, calc(100% - 16px)); height: min(390px, 55dvh); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: white; box-shadow: 0 8px 28px #0f172a24; }
+.reply-emoji-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 14px; flex-shrink: 0; }
+.reply-emoji-heading strong { font-size: 15px; font-weight: 500; }
+.reply-emoji-content { flex: 1; min-height: 0; }
+.reply-emoji-content > p { padding: 14px; font-size: 14px; }
+.reply-emoji-content .chat-emoji-picker { --epr-picker-border-color: transparent; --epr-emoji-size: 28px; --epr-skin-tone-size: 32px; --epr-emoji-padding: 8px; --epr-highlight-color: #1d4ed8; --epr-hover-bg-color: #eff6ff; --epr-focus-bg-color: #dbeafe; --epr-font-family: var(--font-noto-sans-thai-looped), sans-serif; border: 0; border-radius: 0; }
+.reply-emoji-content .chat-emoji-picker [data-epr-part="search-input"] { font-size: 16px; }
+.reply-emoji-content .chat-emoji-picker [data-epr-part="skin-tone"] { --epr-skin-tone-size: 32px; }
+.reply-emoji-content .chat-emoji-picker [data-epr-part="skin-tone-button"] { border-radius: 50%; }
+.app-shell .workspace .reply-box[data-emoji-open="true"] .reply-row textarea { max-height: 96px; }
 @media (max-width: 767px), (max-width: 1024px) and (max-height: 600px) {
   .app-shell .workspace .reply-box { padding: 6px 8px; }
+  .reply-emoji-panel { height: min(390px, calc(var(--app-height, 100dvh) - 120px)); }
+  .reply-emoji-content .chat-emoji-picker [data-epr-part="skin-tone"] { --epr-skin-tone-size: 44px; }
+  .app-shell .workspace .reply-box[data-emoji-open="true"] .reply-row textarea { max-height: 44px; }
   /* A 17px phone input prevents focus zoom at every composer height. */
   .app-shell .workspace .reply-row textarea {
     font-size: calc(17px + var(--mobile-text-increment, 0px));

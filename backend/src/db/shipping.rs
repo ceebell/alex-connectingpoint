@@ -509,6 +509,9 @@ async fn matching_names(
         }
         let mut filter = state.scope();
         filter.insert(field, doc! {"$regex":pattern,"$options":"i"});
+        if collection == "customer_notes" {
+            filter.insert("deleted_at", doc! {"$exists":false});
+        }
         let mut projection = doc! {"line_user_id":1};
         projection.insert(field, 1);
         let mut rows: Vec<Document> = state

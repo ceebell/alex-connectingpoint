@@ -147,6 +147,21 @@ pub struct EditInput {
     pub images: Vec<ImageInput>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteInput {
+    pub expected_version: i64,
+}
+
+impl DeleteInput {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.expected_version < 1 {
+            return Err(AppError::BadRequest);
+        }
+        Ok(())
+    }
+}
+
 impl EditInput {
     pub fn validate(&self) -> Result<NoteContent, AppError> {
         if self.expected_version < 1 {

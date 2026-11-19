@@ -1,3 +1,5 @@
+:root { --customer-message-font-size: 14px; }
+
 .notification-button svg {
   width: 20px;
   height: 20px;
@@ -15,7 +17,7 @@
 
 /* Fill the desktop viewport; each workspace panel owns its scrolling. */
 .app-shell .workspace .message-bubble {
-  font-size: calc(14px + var(--mobile-text-increment, 0px));
+  font-size: calc(var(--customer-message-font-size) + var(--mobile-text-increment, 0px));
   color: #0f172a;
 }
 

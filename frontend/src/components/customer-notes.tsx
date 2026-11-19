@@ -8,10 +8,10 @@ type PendingImage = { key: string; name: string; image_base64: string; url: stri
 type FormImage = NoteImage | PendingImage;
 const pending = (image: FormImage): image is PendingImage => "image_base64" in image;
 const imageBody = (image: FormImage) => pending(image) ? { name: image.name, image_base64: image.image_base64 } : { id: image.id };
-function mergeNotes(previous: CustomerNote[], incoming: CustomerNote[]) {
+function mergeNotes(previous: CustomerNote[], incoming: CustomerNote[], deleted: Set<string> = new Set()) {
   const merged = new Map(previous.map(note => [note._id, note]));
   for (const note of incoming) if ((merged.get(note._id)?.version ?? 0) <= note.version) merged.set(note._id, note);
-  return [...merged.values()].sort((a, b) => b.created_at.localeCompare(a.created_at) || b._id.localeCompare(a._id));
+  return [...merged.values()].filter(note => !deleted.has(note._id)).sort((a, b) => b.created_at.localeCompare(a.created_at) || b._id.localeCompare(a._id));
 }
 
 async function encode(file: File): Promise<PendingImage> {
@@ -73,6 +73,7 @@ function Editor({ text, images, busy, onText, onImages, onError, onBusy, childre
 
 export default function CustomerNotes({ userId, active, onUnauthorized }: { userId: string; active: boolean; onUnauthorized: () => void }) {
   const [notes, setNotes] = useState<CustomerNote[]>([]);
+  const deletedNotes = useRef(new Set<string>());
   const [next, setNext] = useState<string | null>(null);
   const [text, setText] = useState(""); const [images, setImages] = useState<FormImage[]>([]);
   const [editing, setEditing] = useState<CustomerNote | null>(null);
@@ -85,13 +86,13 @@ export default function CustomerNotes({ userId, active, onUnauthorized }: { user
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    api<{ notes: CustomerNote[]; next: string | null }>(endpoint).then(value => { if (!cancelled) { setNotes(current => mergeNotes(current, value.notes)); setNext(value.next); setError(""); } }).catch(cause => { if (!cancelled) setError(fail(cause)); }).finally(() => { if (!cancelled) setLoading(false); });
+    api<{ notes: CustomerNote[]; next: string | null }>(endpoint).then(value => { if (!cancelled) { setNotes(current => mergeNotes(current, value.notes, deletedNotes.current)); setNext(value.next); setError(""); } }).catch(cause => { if (!cancelled) setError(fail(cause)); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [active, endpoint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function more() {
     setLoading(true); setError("");
-    try { const value = await api<{ notes: CustomerNote[]; next: string | null }>(`${endpoint}${next ? `?before=${next}` : ""}`); setNotes(current => mergeNotes(current, value.notes)); setNext(value.next); }
+    try { const value = await api<{ notes: CustomerNote[]; next: string | null }>(`${endpoint}${next ? `?before=${next}` : ""}`); setNotes(current => mergeNotes(current, value.notes, deletedNotes.current)); setNext(value.next); }
     catch (cause) { setError(fail(cause)); } finally { setLoading(false); }
   }
   async function create() {
@@ -99,7 +100,7 @@ export default function CustomerNotes({ userId, active, onUnauthorized }: { user
     const request_id = requestId ?? crypto.randomUUID(); setRequestId(request_id); setBusy(true); setSaveError("");
     try {
       const value = await api<{ note: CustomerNote }>(endpoint, { method: "POST", body: JSON.stringify({ request_id, text, images: images.map(imageBody) }) });
-      setNotes(current => mergeNotes(current, [value.note])); setText(""); setImages([]); setRequestId(null);
+      setNotes(current => mergeNotes(current, [value.note], deletedNotes.current)); setText(""); setImages([]); setRequestId(null);
     } catch (cause) { setSaveError(fail(cause)); } finally { setBusy(false); }
   }
   async function save() {
@@ -107,15 +108,29 @@ export default function CustomerNotes({ userId, active, onUnauthorized }: { user
     setBusy(true); setSaveError("");
     try {
       const value = await api<{ note: CustomerNote }>(`${endpoint}/${editing._id}`, { method: "POST", body: JSON.stringify({ expected_version: editing.version, text: editText, images: editImages.map(imageBody) }) });
-      setNotes(current => mergeNotes(current, [value.note])); setEditing(null);
+      setNotes(current => mergeNotes(current, [value.note], deletedNotes.current)); setEditing(null);
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === "RECORD_CONFLICT") {
         setSaveError("โน้ตนี้มีแอดมินแก้ไขแล้ว ข้อความที่คุณกรอกยังอยู่ กดยกเลิกเพื่อดูเวอร์ชันล่าสุดก่อนแก้ไขใหม่");
-        try { const latest = await api<{ note: CustomerNote }>(`${endpoint}/${editing._id}`); setNotes(current => mergeNotes(current, [latest.note])); } catch (cause) { fail(cause); /* Keep the unsaved edit if reloading fails. */ }
+        try { const latest = await api<{ note: CustomerNote }>(`${endpoint}/${editing._id}`); setNotes(current => mergeNotes(current, [latest.note], deletedNotes.current)); } catch (cause) { fail(cause); /* Keep the unsaved edit if reloading fails. */ }
       } else setSaveError(fail(cause));
     } finally { setBusy(false); }
   }
   const working = busy || encoding;
+  async function remove(note: CustomerNote) {
+    if (working || editing || !window.confirm("ต้องการลบโน้ตนี้ใช่ไหม?")) return;
+    setBusy(true); setError("");
+    try {
+      await api(`${endpoint}/${note._id}`, { method: "DELETE", body: JSON.stringify({ expected_version: note.version }) });
+      deletedNotes.current.add(note._id);
+      setNotes(current => current.filter(item => item._id !== note._id));
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === "RECORD_CONFLICT") {
+        setError("โน้ตนี้ถูกแก้ไขแล้ว กรุณาตรวจเวอร์ชันล่าสุดก่อนลบอีกครั้ง");
+        try { const value = await api<{ note: CustomerNote }>(`${endpoint}/${note._id}`); setNotes(current => mergeNotes(current, [value.note], deletedNotes.current)); } catch (cause) { fail(cause); }
+      } else setError(fail(cause));
+    } finally { setBusy(false); }
+  }
   return <section className="customer-notes" aria-label="โน้ตลูกค้า">
     <div className="new-customer-note"><Editor text={text} images={images} busy={working || !!editing} onText={value => { setText(value); setRequestId(null); }} onImages={value => { setImages(value); setRequestId(null); }} onBusy={setEncoding} onError={setSaveError}><button type="button" className="button primary" disabled={working || !!editing || (!text.trim() && !images.length)} onClick={() => void create()}><span aria-hidden="true">＋</span> {busy && !editing ? "กำลังบันทึก…" : "เพิ่มโน้ต"}</button></Editor></div>
     {saveError && !editing && <div className="notice warning" role="alert">{saveError}</div>}
@@ -123,7 +138,7 @@ export default function CustomerNotes({ userId, active, onUnauthorized }: { user
     {loading && <p className="muted small" role="status">กำลังโหลดโน้ต…</p>}
     {!loading && !notes.length && !error && <p className="muted small">ยังไม่มีโน้ตของลูกค้าคนนี้</p>}
     {notes.map(note => <article className="customer-note" key={note._id}>
-      <div className="note-meta"><span>เพิ่มโดย {note.created_by} · {formatDateTime(note.created_at)}</span><button type="button" className="text-button" disabled={working || !!editing} aria-label={`แก้ไขโน้ต ${formatDateTime(note.created_at)}`} onClick={() => { setEditing(note); setEditText(note.text); setEditImages(note.images); setSaveError(""); }}>แก้ไข</button></div>
+      <div className="note-meta"><span>เพิ่มโดย {note.created_by} · {formatDateTime(note.created_at)}</span><div className="note-actions"><button type="button" className="text-button" disabled={working || !!editing} aria-label={`แก้ไขโน้ต ${formatDateTime(note.created_at)}`} onClick={() => { setEditing(note); setEditText(note.text); setEditImages(note.images); setSaveError(""); }}>แก้ไข</button><button type="button" className="text-button note-delete" disabled={working || !!editing} aria-label={`ลบโน้ต ${formatDateTime(note.created_at)}`} onClick={() => void remove(note)}>ลบ</button></div></div>
       {editing?._id === note._id ? <><Editor text={editText} images={editImages} busy={working} onText={setEditText} onImages={setEditImages} onBusy={setEncoding} onError={setSaveError}><button type="button" className="text-button" disabled={working} onClick={() => { setEditing(null); setSaveError(""); }}>ยกเลิก</button><button type="button" className="button primary" disabled={working || (!editText.trim() && !editImages.length)} onClick={() => void save()}>{busy ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}</button></Editor>{saveError && <div className="notice warning" role="alert">{saveError}</div>}</> : <><p className="note-text">{note.text}</p><NoteImages images={note.images} /></>}
       {note.version > 1 && <><p className="muted small">แก้ไขโดย {note.updated_by} · {formatDateTime(note.updated_at)}</p><History key={`${note._id}-${note.version}`} noteId={note._id} endpoint={endpoint} initial={note.history} onUnauthorized={onUnauthorized} /></>}
     </article>)}

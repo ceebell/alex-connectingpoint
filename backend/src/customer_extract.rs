@@ -13,20 +13,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fields {
     pub display_name: Option<String>,
     pub phone: Option<String>,
     pub address: Option<String>,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Conflict {
     pub field: String,
     pub message: String,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Extraction {
     pub fields: Fields,
@@ -42,6 +42,14 @@ fn normalized(value: &str) -> String {
 }
 
 pub fn validate(result: &Extraction, sources: &BTreeMap<String, String>) -> Result<(), AppError> {
+    validate_tier(result, sources, "line_event")
+}
+
+pub(crate) fn validate_tier(
+    result: &Extraction,
+    sources: &BTreeMap<String, String>,
+    kind: &str,
+) -> Result<(), AppError> {
     ProfileInput {
         display_name: result.fields.display_name.clone(),
         phone: result.fields.phone.clone(),
@@ -63,7 +71,7 @@ pub fn validate(result: &Extraction, sources: &BTreeMap<String, String>) -> Resu
     ]);
     let mut quotes: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for evidence in &result.evidence {
-        if evidence.source_type != "line_event"
+        if evidence.source_type != kind
             || !values.contains_key(evidence.field.as_str())
             || evidence.quote.is_empty()
             || evidence.quote.len() > 6000
@@ -84,7 +92,11 @@ pub fn validate(result: &Extraction, sources: &BTreeMap<String, String>) -> Resu
         if let Some(value) = value
             && (value.trim().is_empty()
                 || !quotes.get(*field).is_some_and(|quotes| {
-                    normalized(&quotes.join(" ")).contains(&normalized(value))
+                    if *field == "phone" {
+                        normalize_phone(&quotes.join(" ")).contains(&normalize_phone(value))
+                    } else {
+                        normalized(&quotes.join(" ")).contains(&normalized(value))
+                    }
                 }))
         {
             return Err(AppError::Validation(
@@ -302,16 +314,25 @@ pub async fn extract(state: &AppState, id: ObjectId) -> Result<Value, AppError> 
         return Err(AppError::DraftWaiting);
     }
     let (messages, sources) = chat_sources(&snapshot, user)?;
-    if messages.is_empty() {
+    let contacts = crate::customer_contacts::load(state, user).await?;
+    if messages.is_empty() && !contacts.has_priority() {
         return Ok(
             json!({"fields":Fields::default(),"evidence":[],"conflicts":[],"questions":["ยังไม่พบข้อมูลลูกค้าในข้อความของเรื่องนี้"],"context_hash":snapshot.hash}),
         );
     }
-    let result:Extraction=serde_json::from_value(ask_hermes_json(state,ObjectId::new(),id,PROMPT,
-        vec![json!({"type":"text","text":serde_json::to_string(&json!({"messages":messages})).map_err(|_|AppError::Data)?})]).await?).map_err(|_|AppError::HermesFailed)?;
-    validate(&result, &sources)?;
+    let result = if contacts.has_priority() {
+        crate::customer_contacts::resolve(state, id, &contacts, &snapshot).await?
+    } else {
+        let result: Extraction=serde_json::from_value(ask_hermes_json(state,ObjectId::new(),id,PROMPT,
+            vec![json!({"type":"text","text":serde_json::to_string(&json!({"messages":messages})).map_err(|_|AppError::Data)?})]).await?).map_err(|_|AppError::HermesFailed)?;
+        validate(&result, &sources)?;
+        result
+    };
     let fresh = drafts::snapshot(state, &inquiry).await?;
-    if fresh.pending || fresh.hash != snapshot.hash {
+    if fresh.pending
+        || fresh.hash != snapshot.hash
+        || crate::customer_contacts::load(state, user).await?.hash != contacts.hash
+    {
         return Err(AppError::ContextChanged);
     }
     let mut result = serde_json::to_value(result).map_err(|_| AppError::Data)?;

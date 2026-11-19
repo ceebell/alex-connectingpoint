@@ -196,8 +196,9 @@
     display: none;
   }
 
+  .app-shell { --customer-message-font-size: 17px; }
   .workspace .message-bubble {
-    font-size: calc(17px + var(--mobile-text-increment, 0px));
+    font-size: calc(var(--customer-message-font-size) + var(--mobile-text-increment, 0px));
   }
 
   .workspace .reply-box {

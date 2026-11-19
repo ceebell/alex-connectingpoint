@@ -35,8 +35,15 @@ pub async fn list(
 ) -> Result<(Vec<Document>, Option<String>), AppError> {
     customers::ensure_user(state, user).await?;
     let mut filter = scope(state, user);
+    filter.insert("deleted_at", doc! {"$exists":false});
     if let Some(before) = before {
-        let cursor = get(state, user, before).await?;
+        let mut cursor_filter = scope(state, user);
+        cursor_filter.insert("_id", before);
+        let cursor = state
+            .collection("customer_notes")
+            .find_one(cursor_filter)
+            .await?
+            .ok_or(AppError::NotFound)?;
         let at = *cursor
             .get_datetime("created_at")
             .map_err(|_| AppError::Data)?;
@@ -74,6 +81,7 @@ pub async fn list(
 pub async fn get(state: &AppState, user: &str, id: ObjectId) -> Result<Document, AppError> {
     let mut filter = scope(state, user);
     filter.insert("_id", id);
+    filter.insert("deleted_at", doc! {"$exists":false});
     state
         .collection("customer_notes")
         .find_one(filter)
@@ -167,7 +175,9 @@ pub async fn create(
         .find_one(identity.clone())
         .await?
     {
-        return if existing.get_str("content_hash").ok() == Some(hash.as_str()) {
+        return if existing.contains_key("deleted_at") {
+            Err(AppError::RecordConflict)
+        } else if existing.get_str("content_hash").ok() == Some(hash.as_str()) {
             Ok(public(existing))
         } else {
             Err(AppError::RecordConflict)
@@ -194,7 +204,9 @@ pub async fn create(
                 .find_one(identity)
                 .await?
                 .ok_or(AppError::Data)?;
-            if existing.get_str("content_hash").ok() == Some(hash.as_str()) {
+            if existing.contains_key("deleted_at") {
+                Err(AppError::RecordConflict)
+            } else if existing.get_str("content_hash").ok() == Some(hash.as_str()) {
                 Ok(public(existing))
             } else {
                 Err(AppError::RecordConflict)
@@ -219,7 +231,7 @@ pub async fn edit(
     let (images, created) = store_images(state, user, id, content.images).await?;
     let now = DateTime::now();
     let mut filter = scope(state, user);
-    filter.extend(doc! {"_id":id,"version":expected});
+    filter.extend(doc! {"_id":id,"version":expected,"deleted_at":{"$exists":false}});
     let update = doc! {"$set":{"version":next,"text":&content.text,"images":&images,"updated_at":now,"updated_by":&actor.name,"updated_by_id":&actor.id},"$push":{"history":revision(next,&content.text,&images,actor,now)}};
     match state
         .collection("customer_notes")
@@ -248,6 +260,14 @@ pub async fn read_image(
         .await?
         .ok_or(AppError::NotFound)?;
     let metadata = file.metadata.ok_or(AppError::Data)?;
+    get(
+        state,
+        user,
+        metadata
+            .get_object_id("note_id")
+            .map_err(|_| AppError::Data)?,
+    )
+    .await?;
     let mime = metadata
         .get_str("content_type")
         .map_err(|_| AppError::Data)?
@@ -256,4 +276,38 @@ pub async fn read_image(
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).await?;
     Ok((mime, bytes))
+}
+
+pub async fn delete(
+    state: &AppState,
+    user: &str,
+    id: ObjectId,
+    expected: i64,
+    actor: &Actor,
+) -> Result<(), AppError> {
+    if expected < 1 {
+        return Err(AppError::BadRequest);
+    }
+    let next = expected.checked_add(1).ok_or(AppError::BadRequest)?;
+    let mut identity = scope(state, user);
+    identity.insert("_id", id);
+    let record = state
+        .collection("customer_notes")
+        .find_one(identity.clone())
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if record.contains_key("deleted_at") {
+        return if record.get_i64("version").ok() == Some(next) {
+            Ok(())
+        } else {
+            Err(AppError::RecordConflict)
+        };
+    }
+    identity.extend(doc! {"version":expected,"deleted_at":{"$exists":false}});
+    let now = DateTime::now();
+    let changed = state.collection("customer_notes").update_one(identity, doc! {"$set":{"version":next,"deleted_at":now,"deleted_by":&actor.name,"deleted_by_id":&actor.id,"updated_at":now,"updated_by":&actor.name,"updated_by_id":&actor.id},"$push":{"history":{"version":next,"operation":"DELETE","updated_at":now,"updated_by":&actor.name,"updated_by_id":&actor.id}}}).await?;
+    if changed.matched_count == 0 {
+        return Err(AppError::RecordConflict);
+    }
+    Ok(())
 }

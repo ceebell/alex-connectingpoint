@@ -190,6 +190,7 @@ pub fn router(state: AppState) -> Result<Router, AppError> {
             "/api/line/users/{user_id}/notes/{note}",
             get(customer_notes::detail)
                 .post(customer_notes::edit)
+                .delete(customer_notes::delete)
                 .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route(

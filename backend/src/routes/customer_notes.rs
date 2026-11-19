@@ -3,7 +3,7 @@ use crate::{
     error::AppError,
     models::{
         customer::valid_user_id,
-        customer_notes::{AliasInput, CreateInput, EditInput},
+        customer_notes::{AliasInput, CreateInput, DeleteInput, EditInput},
     },
 };
 use axum::{
@@ -120,4 +120,23 @@ pub async fn image(
         HeaderValue::from_static("nosniff"),
     );
     Ok(response)
+}
+
+pub async fn delete(
+    super::access::ScopedState(state): super::access::ScopedState,
+    Path((user_id, note)): Path<(String, String)>,
+    headers: HeaderMap,
+    input: Result<Json<DeleteInput>, JsonRejection>,
+) -> Result<Json<Value>, AppError> {
+    let Json(input) = input.map_err(|_| AppError::BadRequest)?;
+    input.validate()?;
+    customer_notes::delete(
+        &state,
+        user(&user_id)?,
+        id(&note)?,
+        input.expected_version,
+        &super::session::actor(&state, &headers),
+    )
+    .await?;
+    Ok(Json(json!({"deleted":true})))
 }

@@ -189,6 +189,22 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         .update_one(doc! {"_id":job_id}, doc! {"$setOnInsert":summary})
         .upsert(true)
         .await?;
+    let contact_context = if input.fields.is_none() {
+        Some(
+            crate::customer_contacts::load(state, inquiry.get_str("line_user_id").unwrap_or(""))
+                .await?,
+        )
+    } else {
+        None
+    };
+    let contacts = if let Some(context) = contact_context
+        .as_ref()
+        .filter(|context| context.has_priority())
+    {
+        Some(crate::customer_contacts::resolve(state, inquiry_id, context, &snapshot).await?)
+    } else {
+        None
+    };
     let mut result = if let Some(fields) = &input.fields {
         let text = serde_json::to_string(fields).map_err(|_| AppError::Data)?;
         sources.insert(format!("admin_edit:{job_id}"), text.clone());
@@ -225,6 +241,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             "reference_time_ms":reference.timestamp_millis(), "current_year":bangkok_year(reference)?,
             "business_timezone":"Asia/Bangkok", "input_scope":"admin_inputs_with_customer_chat",
             "customer_messages":customer_messages,
+            "customer_fields_resolved_by_server":contacts.as_ref().map(crate::customer_contacts::resolved_fields).unwrap_or_default(),
             "billing_rules":billing_settings.rules,
             "billing_settings_version":billing_settings.version,
             "size_messages":size_messages,
@@ -282,6 +299,9 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
             ));
         }
         result.drop_retired_evidence();
+        if let Some(contacts) = &contacts {
+            crate::customer_contacts::apply_to_draft(&mut result, contacts)?;
+        }
         crate::customer_extract::validate_draft_chat(
             &result,
             &customer_sources,
@@ -296,6 +316,20 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
         sources.extend(size_sources);
         result
     };
+    if let Some(context) = &contact_context {
+        sources.extend(
+            context
+                .note_sources
+                .iter()
+                .map(|(id, text)| (format!("customer_note:{id}"), text.clone())),
+        );
+        sources.extend(
+            context
+                .display_sources
+                .iter()
+                .map(|(id, text)| (format!("customer_display:{id}"), text.clone())),
+        );
+    }
     crate::models::shop_settings::validate_guidance_evidence(&result)?;
     validate_evidence(&result, &sources, &images)?;
     let catalog_lookup = if input.fields.is_none() {
@@ -403,6 +437,17 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     }
     let fresh_inquiry = drafts::inquiry(state, inquiry_id).await?;
     let fresh = drafts::snapshot(state, &fresh_inquiry).await?;
+    if let Some(context) = &contact_context
+        && crate::customer_contacts::load(
+            state,
+            fresh_inquiry.get_str("line_user_id").unwrap_or(""),
+        )
+        .await?
+        .hash
+            != context.hash
+    {
+        return Err(AppError::ContextChanged);
+    }
     if fresh.pending
         || fresh.hash != snapshot.hash
         || drafts::summary_revision(&fresh_inquiry) != drafts::summary_revision(&inquiry)
