@@ -34,6 +34,13 @@
 .shipping-customer-matches h4{font-size:15px;font-weight:500;color:var(--color-primary-ink)}
 .shipping-customer-matches .text-button{display:inline-flex;align-items:center;min-height:44px}
 .shipping-customer-matches .shipping-unconfirmed{color:var(--color-accent-ink)}
+.shipping-parcel-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.shipping-service{display:inline-flex;border:1px solid #bfdbfe;border-radius:20px;padding:2px 9px;background:#eff6ff;color:#1d4ed8;font-size:13px;line-height:1.6}
+.shipping-recipient-check.is-selected{border-color:#2563eb;box-shadow:inset 3px 0 #2563eb}
+.shipping-select-customer{margin-top:8px;min-height:44px;font-size:14px}
+.shipping-select-customer[aria-pressed=true]{background:#dbeafe;border-color:#2563eb;color:#1d4ed8}
+.shipping-order-search .shipping-parcel-fields{grid-template-columns:minmax(0,2fr) minmax(85px,1fr)}
+@media(max-width:360px){.shipping-order-search .shipping-parcel-fields{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:430px){.mobile-workspace-nav button{flex-direction:column;gap:2px;min-height:48px;padding:4px 2px}.mobile-workspace-nav svg{width:18px;height:18px}}
 @media(max-width:767px),(max-width:1024px) and (max-height:600px){
   .shipping-content{padding:0 0 12px}.shipping-shell .page-header h1{font-size:20px}.shipping-shell .page-header{flex-wrap:wrap}.shipping-shell .header-actions{width:100%}.shipping-shell .header-actions .button{min-height:42px;font-size:15px;width:100%}.shipping-description,.shipping-parcel-heading p,.shipping-workflow,.shipping-receipts button>span,.shipping-customer-option span>span{font-size:14px}.shipping-parcel{padding:14px;gap:14px}.shipping-parcel-heading h3{font-size:19px}.shipping-receipt-summary{padding:14px;align-items:flex-start;flex-direction:column;gap:10px}.shipping-receipt-summary>.button{font-size:14px;min-height:40px}.shipping-parcel-fields{grid-template-columns:minmax(0,1fr)}.shipping-parcel input:not([type=radio]),.shipping-parcel textarea{font-size:17px}.shipping-order-search{padding:10px}.shipping-customer-option strong{font-size:16px}.shipping-recipient-check{flex-wrap:wrap}.shipping-parcel-actions{display:grid;grid-template-columns:minmax(0,1fr)}.shipping-parcel-actions .button{width:100%;font-size:15px;min-height:44px}.shipping-parcel-actions .text-button{min-height:40px}.shipping-empty{margin:20px 0;padding:24px 16px}.shipping-receipts>button{flex-basis:215px}.shipping-status{font-size:13px}.shipping-shell .shipping-message-label textarea{font-size:17px}

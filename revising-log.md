@@ -3,6 +3,41 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-19 10:20 — ส่ง Tracking ให้แชทได้โดยไม่รอ Alex Order ID และย่อข้อมูลพัสดุ
+- **คำอธิบาย:** ปุ่มส่งเดิมถูกล็อกเมื่อผลค้นมีเพียงแชทที่ตรงกับชื่อ แต่ไม่มีออเดอร์ CONFIRMED พร้อม Alex Order ID แก้ให้แอดมินกดเลือกลูกค้าจากชื่อ/รูปแชทแล้วบันทึกและส่ง Tracking ได้ โดยไม่สร้างหรือยืนยันบิล Alex ส่วนโหมดเลือกออเดอร์ยังตรวจบิล/สาขาตามเดิม ย่อหน้าพัสดุตามภาพโดยย้าย Tracking/รหัสไปรษณีย์เข้าโซนเลือกลูกค้า แสดง EMS ข้างชื่อ และเอาช่องค่าขนส่ง/บริการกับข้อความรอ Alex Order ID ที่ขีดฆ่าออก
+- **โฟลเดอร์ `backend/src/models/`**
+  - `shipping.rs` — แก้: SaveInput รับ submission_id หรือ inquiry_id เพียงหนึ่งชนิด ตรวจ ObjectId/version/Tracking/ข้อความและข้อมูลพัสดุตามเดิม เพิ่ม unit test ของปลายทางที่ว่าง ซ้ำ ไม่ถูกต้อง และข้อความไม่ตรงเลขพัสดุ
+- **โฟลเดอร์ `backend/src/db/`**
+  - `shipping.rs` — แก้: เพิ่มโหมดบันทึกแชทจาก inquiry ภายใต้ร้าน/ช่อง LINE ดึง LINE user จาก backend ตรวจบทสนทนา 1:1 ก่อนบันทึก เก็บ metadata ออเดอร์เป็น null เมื่อไม่ได้เลือกออเดอร์ ใช้การตรวจผู้รับร่วมกันตอนอ่าน ส่ง และลบ batch; แถวที่ผูกออเดอร์ยังตรวจ CONFIRMED/สาขา/บิลกับ inquiry เดิม คง version lock, audit, retry key, tombstone และการกันส่งซ้ำ
+- **โฟลเดอร์ `backend/src/`**
+  - `tests_shipping.rs` — แก้: เพิ่ม MongoDB integration test ของบิล SUBMIT_UNKNOWN ที่ไม่มี Alex Order ID การส่งเข้าแชทที่เลือก การปฏิเสธข้ามร้าน/inquiry ไม่มีจริง/ผู้รับที่ถูกเปลี่ยน การล็อกหลังเริ่มส่ง retry key เดิมและไม่ส่งเพิ่มเมื่อสำเร็จ รวมลบ batch แบบแชทโดยคงประวัติ โดย mock LINE ไม่ส่งจริง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `shipping-workspace.tsx` — แก้: เพิ่มปุ่มเลือกลูกค้าคนนี้จากผลค้นบิล/โปรไฟล์/โน้ต ส่ง inquiry_id เมื่อเลือกแชทหรือ submission_id เมื่อเลือกออเดอร์ ล้างการเลือกเมื่อเปลี่ยนคำค้น แสดงสถานะเลือกให้ชัด ปุ่มส่งไม่รอ Alex Order ID; ย้าย Tracking/รหัสไปรษณีย์เข้าโซนเลือกลูกค้า แสดง EMS ข้างชื่อ เอาฟอร์มชื่อผู้รับ/ค่าขนส่ง/บริการซ้ำและคำเตือนที่ขีดฆ่าออก เก็บค่าจากใบเสร็จใน payload เดิม ชื่อไม่มีจาก OCR ใช้ชื่อผู้รับที่เลือกได้ เปลี่ยนปุ่มบันทึกเป็นบันทึก Tracking ไว้ก่อน ลิงก์แท็บใหม่และรูปในกรอบผู้รับตรงกับผู้รับปัจจุบันแม้เปลี่ยนคนจากรายการที่บันทึกแล้ว
+  - `shipping-workspace.css` — แก้: ป้าย EMS กรอบลูกค้าที่เลือกและปุ่มเป้ากด 44px จัด Tracking คู่รหัสไปรษณีย์ในโซนเดียวกัน จอไม่เกิน 360px เรียงลงให้เห็นเลข Tracking ครบ
+- **โฟลเดอร์ `frontend/src/lib/`**
+  - `shipping.ts` — แก้: Tracking รองรับ submission_id/alex_order_id เป็น null สำหรับการเลือกแชทโดยไม่ผูกบิล
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: วิธีเลือกลูกค้า/ส่งตรง API บันทึกแบบ inquiry_id หรือ submission_id ขอบเขตสิทธิ์และการส่งซ้ำ แก้คำอธิบายเดิมที่บังคับรอออเดอร์ทุกกรณี
+  - `requirements-v0.3.md` — แก้: เพิ่มสอง item เรื่องปุ่มส่งและหน้าจอตามภาพพร้อม Done เวลาจริง ผลทดสอบและ release คง requirement เดิมของผู้ใช้
+- **โฟลเดอร์ `dist/line-linux/`**
+  - `backend`, `backend.sha256`, `release.json`, `release.tag` — แก้: Linux backend build บน local tag `rel-20261118184728-5b86c66d9921`
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - `.next/`, `frontend-release.json`, `frontend.sha256`, `frontend.tag` — แก้: Linux frontend build บน local tag `front-20261118185114-83888a79fc2d`
+- **การตรวจสอบ:** backend cargo fmt --check, clippy -D warnings และ tests ผ่าน 90/90 (56 unit + 34 integration ที่เปิดใช้กับ MongoDB สำหรับทดสอบแยกบน 127.0.0.1:27018 และปิด process หลังทดสอบแล้ว); frontend lint/TypeScript/tests 66/66 และ Next.js production build ผ่าน; Chrome/WebKit รวม 40 กรณีจาก production assets ที่ 320/375/1440px ครอบคลุมบิลยังไม่ยืนยัน โปรไฟล์ โน้ต ชื่อซ้ำ การเลือกใหม่หลังเปลี่ยนคำค้น เปลี่ยนผู้รับจากรายการที่บันทึกแล้ว บันทึกล้มเหลว retry ข้อความเดิม โหมดออเดอร์เดิม และพัสดุคนที่สอง ตรวจรูปหน้าจอแล้ว ไม่มีหน้าจอล้น ไม่ส่ง LINE จริง หลักฐาน local อยู่ใน data/shipping-direct-chat-check/ และ data/shipping-message-check/; diff check ของ source/docs/requirements ผ่าน
+- **งานต่อของ Developer:** local build ทั้งสองส่วนพร้อมแล้ว Windows ใช้ rungit.bat "Allow tracking messages to selected chats and simplify parcel details"; Ubuntu ใช้ cd ~/alex-connectingpoint แล้ว bash ./deploy-all.sh main ให้ deploy ทั้ง backend/frontend ตามมาตรฐาน full-stack; ยังไม่ได้ commit/push/deploy
+
+## 2026-11-19 00:51 — เปิดแชทจากหน้าพัสดุในแท็บใหม่
+- **คำอธิบาย:** ให้แอดมินเปิดแชทเพื่อตรวจลูกค้าได้โดยคงหน้าพัสดุและข้อมูลที่กรอกค้างไว้ เปลี่ยนลิงก์เปิดแชทครบทั้ง 3 จุดเป็นลิงก์แท็บใหม่ของ browser
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `shipping-workspace.tsx` — แก้: เพิ่ม target="_blank", rel="noopener noreferrer" และ title ภาษาไทยให้ลิงก์แชทแนะนำ ผลค้นหาลูกค้า/โปรไฟล์/โน้ต และออเดอร์ที่เลือกหรือบันทึกแล้ว ใช้ inquiry_id เดิมของลูกค้ารายนั้น
+- **โฟลเดอร์ `docs/`, `prompts/`**
+  - `shipping-receipts.md` — แก้: อธิบายการเปิดแชทในแท็บใหม่และการคงข้อมูลบนหน้าพัสดุ
+  - `requirements-v0.3.md` — แก้: ใส่ Done พร้อมเวลาจริงในข้อเปิดแชทแท็บใหม่ ระบุผลทดสอบและ release คงรายการอื่นของผู้ใช้ไว้
+- **โฟลเดอร์ `dist/frontend-linux/`**
+  - `.next/`, `frontend-release.json`, `frontend.sha256`, `frontend.tag` — แก้: Linux frontend release สร้างบน local ด้วย build-frontend.bat tag `front-20261118175023-246b6342376a`
+- **การตรวจสอบ:** frontend lint และ Next.js production build รวม TypeScript ผ่านบน local Docker Desktop; Chrome/WebKit รวม 8 กรณีด้วย release assets และ API จำลอง ครอบคลุมแชทแนะนำ ผลค้นหาโน้ต ออเดอร์ที่เลือกใหม่ และออเดอร์ที่บันทึกแล้ว ทั้ง desktop/mobile เปิดแท็บใหม่ไป #chat/inquiry_id ถูกคน window.opener เป็น null หน้าพัสดุ URL เดิมและค่าฟอร์มที่ยังไม่บันทึกอยู่ครบ ไม่มี page error/คำขอหลุด fixture ไม่ส่ง LINE จริง หลักฐาน local อยู่ใน data/shipping-new-tab-check/; diff check ของ component/docs ผ่าน
+- **งานต่อของ Developer:** Windows ใช้ rungit.bat "Open shipping chat links in new browser tabs"; Ubuntu ใช้ cd ~/alex-connectingpoint แล้ว bash ./deploy-all.sh main; ยังไม่ได้ commit/push/deploy
+
 ## 2026-11-19 00:48 — ฟอนต์ไทยมีหัวและเพิ่มตัวอักษรทุกจออีก 1px
 - **คำอธิบาย:** เปลี่ยน Mitr เป็น Noto Sans Thai Looped ให้รูปทรงตัวไทยมีหัวใกล้ภาพ LINE OA โดยยังไม่ยืนยันว่าเป็นฟอนต์จริงของ LINE ตั้งน้ำหนักเนื้อหาหลักเป็น regular 400 และเพิ่มค่า font-size เดิม 327 จุดอีก 1px คงส่วนเพิ่มสำหรับมือถือเดิมไว้ จึงเพิ่มขึ้นอีก 1px ทั้งมือถือและเดสก์ท็อป โหลดฟอนต์ผ่าน next/font และให้บริการจากแอป
 - **โฟลเดอร์ `frontend/src/app/`**

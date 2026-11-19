@@ -133,12 +133,7 @@ async fn check_receipt_branches(state: &AppState, id: ObjectId) -> Result<(), Ap
         .try_collect()
         .await?;
     for row in &rows {
-        order(
-            state,
-            row.get_object_id("submission_id")
-                .map_err(|_| AppError::Data)?,
-        )
-        .await?;
+        tracking_inquiry(state, row).await?;
     }
     Ok(())
 }
@@ -170,6 +165,27 @@ fn check_link(record: &Document, bill: &Document, inquiry: &Document) -> Result<
         return Err(AppError::RecordConflict);
     }
     Ok(())
+}
+
+async fn tracking_inquiry(state: &AppState, record: &Document) -> Result<Document, AppError> {
+    let inquiry_id = record
+        .get_object_id("inquiry_id")
+        .map_err(|_| AppError::Data)?;
+    let inquiry = drafts::inquiry(state, inquiry_id).await?;
+    if let Some(value) = record
+        .get("submission_id")
+        .filter(|value| **value != Bson::Null)
+    {
+        let bill = order(state, value.as_object_id().ok_or(AppError::Data)?).await?;
+        check_link(record, &bill, &inquiry)?;
+    } else if record.get_str("line_user_id").map_err(|_| AppError::Data)?
+        != inquiry
+            .get_str("line_user_id")
+            .map_err(|_| AppError::Data)?
+    {
+        return Err(AppError::RecordConflict);
+    }
+    Ok(inquiry)
 }
 
 pub async fn upload(
@@ -308,13 +324,7 @@ pub async fn get(state: &AppState, id: ObjectId) -> Result<Value, AppError> {
     let mut visible = Vec::new();
     for row in rows {
         // Branch-restricted staff cannot read another branch's linked customer or message.
-        match order(
-            state,
-            row.get_object_id("submission_id")
-                .map_err(|_| AppError::Data)?,
-        )
-        .await
-        {
+        match tracking_inquiry(state, &row).await {
             Ok(_) => visible.push(safe(refresh_sent(state, &row).await?)),
             Err(AppError::NotFound | AppError::AlexScope) => (),
             Err(error) => return Err(error),
@@ -939,19 +949,60 @@ async fn save_row(
     {
         return Err(AppError::NotFound);
     }
-    let bill = order(
-        state,
-        ObjectId::parse_str(&input.submission_id).map_err(|_| AppError::BadRequest)?,
-    )
-    .await?;
-    let inquiry_id = bill
-        .get_object_id("inquiry_id")
-        .map_err(|_| AppError::Data)?;
+    let bill = match input.submission_id.as_ref() {
+        Some(id) => Some(
+            order(
+                state,
+                ObjectId::parse_str(id).map_err(|_| AppError::BadRequest)?,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let inquiry_id = match &bill {
+        Some(bill) => bill
+            .get_object_id("inquiry_id")
+            .map_err(|_| AppError::Data)?,
+        None => ObjectId::parse_str(input.inquiry_id.as_ref().ok_or(AppError::BadRequest)?)
+            .map_err(|_| AppError::BadRequest)?,
+    };
     let inquiry = drafts::inquiry(state, inquiry_id).await?;
-    if inquiry.get_str("line_user_id").ok() != bill.get_str("line_user_id").ok() {
+    if bill.as_ref().is_some_and(|bill| {
+        inquiry.get_str("line_user_id").ok() != bill.get_str("line_user_id").ok()
+    }) {
         return Err(AppError::RecordConflict);
     }
     outbound::recipient(state, &inquiry).await?;
+    let mut destination = doc! {
+        "submission_id": Bson::Null,
+        "inquiry_id": inquiry_id,
+        "line_user_id": inquiry.get_str("line_user_id").map_err(|_| AppError::Data)?,
+        "draft_id": Bson::Null,
+        "draft_version": Bson::Null,
+        "alex_order_id": Bson::Null,
+        "alex_order_number": Bson::Null,
+        "customer": {"name": input.recipient_name.trim(), "phone": "", "address": ""},
+    };
+    if let Some(bill) = &bill {
+        for key in [
+            "draft_id",
+            "draft_version",
+            "alex_order_id",
+            "alex_order_number",
+        ] {
+            destination.insert(key, bill.get(key).cloned().unwrap_or(Bson::Null));
+        }
+        destination.insert(
+            "submission_id",
+            bill.get_object_id("_id").map_err(|_| AppError::Data)?,
+        );
+        destination.insert(
+            "customer",
+            bill.get_document("customer")
+                .map_err(|_| AppError::Data)?
+                .clone(),
+        );
+    }
     let mut f = row_filter(state, receipt_id, row);
     let existing = state.collection(TRACKINGS).find_one(f.clone()).await?;
     let id = existing
@@ -967,8 +1018,9 @@ async fn save_row(
     }
     let version = input.expected_version + 1;
     let now = DateTime::now();
-    let set = doc! {"version":version,"status":"READY","submission_id":bill.get_object_id("_id").map_err(|_|AppError::Data)?,"inquiry_id":inquiry_id,"line_user_id":bill.get_str("line_user_id").map_err(|_|AppError::Data)?,"draft_id":bill.get("draft_id").cloned().unwrap_or(Bson::Null),"draft_version":bill.get("draft_version").cloned().unwrap_or(Bson::Null),"alex_order_id":bill.get_str("alex_order_id").map_err(|_|AppError::Data)?,"alex_order_number":bill.get_str("alex_order_number").ok(),"customer":bill.get_document("customer").map_err(|_|AppError::Data)?.clone(),"carrier":"THAILAND_POST","recipient_name":input.recipient_name.trim(),"tracking_number":shipping::tracking(&input.tracking_number),"postal_code":input.postal_code,"service":input.service,"shipping_fee_satang":input.shipping_fee_satang,"message":input.message.trim(),"delivery_request_id":delivery_key(id,version)?,"updated_by":&actor.name,"updated_by_id":&actor.id,"updated_at":now};
-    let audit = doc! {"version":version,"by":&actor.name,"at":now,"submission_id":bill.get_object_id("_id").map_err(|_|AppError::Data)?,"tracking_number":shipping::tracking(&input.tracking_number)};
+    let audit = doc! {"version":version,"by":&actor.name,"at":now,"submission_id":destination.get("submission_id").cloned().unwrap_or(Bson::Null),"inquiry_id":inquiry_id,"tracking_number":shipping::tracking(&input.tracking_number)};
+    let mut set = doc! {"version":version,"status":"READY","carrier":"THAILAND_POST","recipient_name":input.recipient_name.trim(),"tracking_number":shipping::tracking(&input.tracking_number),"postal_code":input.postal_code,"service":input.service,"shipping_fee_satang":input.shipping_fee_satang,"message":input.message.trim(),"delivery_request_id":delivery_key(id,version)?,"updated_by":&actor.name,"updated_by_id":&actor.id,"updated_at":now};
+    set.extend(destination);
     let result = if existing.is_some() {
         f.extend(doc! {"version":input.expected_version,"delivery_started_at":{"$exists":false}});
         state
@@ -1030,18 +1082,8 @@ async fn send_row(
         .find_one(scoped(state, id))
         .await?
         .ok_or(AppError::NotFound)?;
-    let bill = order(
-        state,
-        original
-            .get_object_id("submission_id")
-            .map_err(|_| AppError::Data)?,
-    )
-    .await?;
-    let inquiry_id = bill
-        .get_object_id("inquiry_id")
-        .map_err(|_| AppError::Data)?;
-    let inquiry = drafts::inquiry(state, inquiry_id).await?;
-    check_link(&original, &bill, &inquiry)?;
+    let inquiry = tracking_inquiry(state, &original).await?;
+    let inquiry_id = inquiry.get_object_id("_id").map_err(|_| AppError::Data)?;
     if original.get_i64("version").ok() != Some(version) {
         return Err(AppError::RecordConflict);
     }

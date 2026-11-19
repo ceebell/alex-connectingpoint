@@ -196,7 +196,8 @@ pub fn note_excerpt(query: &str, text: &str) -> Option<String> {
 #[serde(deny_unknown_fields)]
 pub struct SaveInput {
     pub expected_version: i64,
-    pub submission_id: String,
+    pub submission_id: Option<String>,
+    pub inquiry_id: Option<String>,
     pub recipient_name: String,
     pub tracking_number: String,
     pub postal_code: String,
@@ -208,7 +209,12 @@ impl SaveInput {
     pub fn validate(&self) -> Result<(), AppError> {
         if self.expected_version < 0
             || self.expected_version == i64::MAX
-            || mongodb::bson::oid::ObjectId::parse_str(&self.submission_id).is_err()
+            || self.submission_id.is_some() == self.inquiry_id.is_some()
+            || self
+                .submission_id
+                .as_ref()
+                .or(self.inquiry_id.as_ref())
+                .is_none_or(|id| mongodb::bson::oid::ObjectId::parse_str(id).is_err())
             || self.recipient_name.trim().is_empty()
             || !text(&self.recipient_name, 200)
             || !valid_tracking(&tracking(&self.tracking_number))
@@ -238,6 +244,31 @@ pub struct VersionInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tracking_requires_exactly_one_valid_order_or_chat_destination() {
+        let mut value = serde_json::json!({"expected_version":0,"recipient_name":"Recipient","tracking_number":"JD333458790TH","postal_code":"10150","service":"EMS","shipping_fee_satang":2400,"message":"Tracking JD333458790TH"});
+        let valid = |value: &serde_json::Value| {
+            serde_json::from_value::<SaveInput>(value.clone())
+                .unwrap()
+                .validate()
+                .is_ok()
+        };
+        assert!(!valid(&value));
+        value["inquiry_id"] = "111111111111111111111111".into();
+        assert!(valid(&value));
+        value["submission_id"] = "222222222222222222222222".into();
+        assert!(!valid(&value));
+        value.as_object_mut().unwrap().remove("inquiry_id");
+        assert!(valid(&value));
+        value["submission_id"] = "invalid".into();
+        assert!(!valid(&value));
+        value.as_object_mut().unwrap().remove("submission_id");
+        value["inquiry_id"] = "invalid".into();
+        assert!(!valid(&value));
+        value["inquiry_id"] = "111111111111111111111111".into();
+        value["message"] = "Missing tracking".into();
+        assert!(!valid(&value));
+    }
     #[test]
     fn tracking_keeps_the_printed_digits_and_names_keep_thai_combining_marks() {
         assert_eq!(tracking("JD 3334 5879 0 TH"), "JD333458790TH");

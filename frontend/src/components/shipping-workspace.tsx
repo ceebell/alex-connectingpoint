@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, errorText } from "@/lib/api";
 import { canManageTeam, type AdminSession } from "@/lib/team-api";
 import { formatDate, formatDateTime } from "@/lib/dates";
-import { feeSatang, normalizeTracking, prepareReceipt, suggestedChatOrder, trackingMessage, validTracking, type Parcel, type Receipt, type ReceiptResult, type ShippingCustomerMatch, type ShippingOrder, type ShippingSearchResult, type Tracking } from "@/lib/shipping";
+import { normalizeTracking, prepareReceipt, suggestedChatOrder, trackingMessage, validTracking, type Parcel, type Receipt, type ReceiptResult, type ShippingCustomerMatch, type ShippingOrder, type ShippingSearchResult, type Tracking } from "@/lib/shipping";
 import { navigateWorkspace } from "@/lib/workspace-navigation";
 import { CustomerAvatar } from "./chat-message";
 import WorkspaceNavigation, { WorkspaceIcon } from "./workspace-navigation";
@@ -21,11 +21,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: Parcel; receiptId: string; saved?: Tracking; onSaved: () => Promise<void>; batchBusy: boolean }) {
-  const [name, setName] = useState(saved?.recipient_name ?? parcel.recipient_name ?? "");
+  const name = saved?.recipient_name ?? parcel.recipient_name ?? "";
   const [number, setNumber] = useState(saved?.tracking_number ?? parcel.tracking_number ?? "");
-  const [fee, setFee] = useState(() => { const initial = saved ? saved.shipping_fee_satang : parcel.shipping_fee_satang; return initial == null ? "" : String(initial / 100); });
+  const fee = saved ? saved.shipping_fee_satang : parcel.shipping_fee_satang;
   const [postcode, setPostcode] = useState(saved?.postal_code ?? parcel.postal_code ?? "");
-  const [service, setService] = useState(saved?.service ?? parcel.service ?? "EMS");
+  const service = saved?.service ?? parcel.service ?? "EMS";
   const [message, setMessage] = useState(saved?.message ?? trackingMessage(number));
   const [editedMessage, setEditedMessage] = useState(!!saved);
   const [query, setQuery] = useState(saved?.chat_customer?.display_name ?? saved?.customer.name ?? parcel.recipient_name ?? "");
@@ -33,6 +33,8 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   const [customers, setCustomers] = useState<ShippingCustomerMatch[]>([]);
   const [customersMore, setCustomersMore] = useState(false);
   const [selected, setSelected] = useState(saved?.submission_id ?? "");
+  const [selectedInquiry, setSelectedInquiry] = useState(saved && !saved.submission_id ? saved.inquiry_id : "");
+  const [selectedCustomer, setSelectedCustomer] = useState<ShippingCustomerMatch | null>(null);
   const [searching, setSearching] = useState(true);
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +45,15 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   const chosen = orders.find(order => order.submission_id === selected);
   const suggested = !selected && !searching ? suggestedChatOrder(orders, more || customersMore, customers) : undefined;
   const visibleCustomers = customers.filter(customer => fromNote(customer.match_source) || !orders.some(order => order.line_user_id === customer.line_user_id));
-  const chatName = chosen?.chat_customer.display_name || saved?.chat_customer?.display_name;
+  const chatName = chosen?.chat_customer.display_name || selectedCustomer?.chat_customer.display_name || saved?.chat_customer?.display_name;
+  const recipientChat = chosen?.chat_customer ?? selectedCustomer?.chat_customer ?? saved?.chat_customer ?? { display_name: saved?.customer.name };
+  const recipientInquiry = chosen?.inquiry_id || selectedInquiry || saved?.inquiry_id;
+  const orderNumber = selected ? chosen?.alex_order_number || saved?.alex_order_number : null;
+  const recipientName = name.trim() || chosen?.customer.name || selectedCustomer?.matched_name || saved?.customer.name || "";
+  const hasRecipient = !!selected || !!selectedInquiry;
+  function chooseCustomer(customer: ShippingCustomerMatch) {
+    setSelected(""); setSelectedInquiry(customer.inquiry_id); setSelectedCustomer(customer); setDirty(true); setError("");
+  }
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -56,10 +66,9 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   }, [query]);
   const changeMessage = (tracking: string) => { if (!editedMessage) setMessage(trackingMessage(tracking)); };
   async function saveTracking(): Promise<Tracking | undefined> {
-    const amount = feeSatang(fee);
-    if (!selected || !name.trim() || !validTracking(number) || Number.isNaN(amount)) { setError("เลือกออเดอร์และตรวจเลข Tracking 13 ตัว พร้อมค่าขนส่งให้ถูกต้อง"); return; }
+    if (!hasRecipient || !recipientName || !validTracking(number)) { setError("เลือกลูกค้าที่จะส่งและตรวจเลข Tracking 13 ตัวให้ถูกต้อง"); return; }
     if (!message.trim() || !message.includes(normalizeTracking(number))) { setError("ข้อความที่จะส่งต้องมีเลข Tracking ที่ตรงกับช่องด้านบน"); return; }
-    const result = await request<{ tracking: Tracking }>(`${endpoint}/receipts/${receiptId}/rows/${parcel.row}`, { method: "POST", body: JSON.stringify({ expected_version: saved?.version ?? 0, submission_id: selected, recipient_name: name, tracking_number: normalizeTracking(number), postal_code: postcode, service, shipping_fee_satang: amount, message }) });
+    const result = await request<{ tracking: Tracking }>(`${endpoint}/receipts/${receiptId}/rows/${parcel.row}`, { method: "POST", body: JSON.stringify({ expected_version: saved?.version ?? 0, ...(selected ? { submission_id: selected } : { inquiry_id: selectedInquiry }), recipient_name: recipientName, tracking_number: normalizeTracking(number), postal_code: postcode, service, shipping_fee_satang: fee, message }) });
     return result.tracking;
   }
   async function save() {
@@ -90,32 +99,33 @@ function ParcelCard({ parcel, receiptId, saved, onSaved, batchBusy }: { parcel: 
   const unknown = saved?.status === "SEND_FAILED";
   const retryExpired = saved?.delivery_started_at && clock - new Date(saved.delivery_started_at).getTime() >= 23 * 3600000;
   return <article className="shipping-parcel" aria-label={`พัสดุรายการ ${parcel.row}`} aria-busy={busy}>
-    <header className="shipping-parcel-heading"><span className="shipping-row-number">{String(parcel.row).padStart(2, "0")}</span><div><h3>{chatName || name || "อ่านชื่อผู้รับไม่ได้"}</h3>{chatName && <p>ชื่อบนใบเสร็จ: {name || "อ่านชื่อผู้รับไม่ได้"}</p>}<p>{saved?.status === "SENT" ? "ส่งเลขพัสดุแล้ว" : saved ? "บันทึกเลขพัสดุแล้ว" : "ตรวจผู้รับและเลือกออเดอร์ก่อนบันทึก"}</p></div>{saved && <span className={`shipping-status shipping-status-${saved.status.toLowerCase()}`}>{saved.status === "SENT" ? "ส่งแล้ว" : pending ? "กำลังส่ง" : unknown ? "ยังไม่ยืนยัน" : "พร้อมส่ง"}</span>}</header>
-    {suggested && <div className="shipping-recipient-check shipping-chat-match"><CustomerAvatar customer={suggested.chat_customer} /><div><strong>ชื่อในแชทที่แนะนำ: {suggested.chat_customer.display_name}</strong><p>ชื่อบนใบเสร็จ: {name || "อ่านชื่อผู้รับไม่ได้"}</p><p>ตรวจลูกค้าและเลือกออเดอร์ด้านล่างก่อนบันทึก</p></div><a className="text-button" href={`#chat/${suggested.inquiry_id}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>}
-    <fieldset className="shipping-parcel-fields" disabled={busy || locked || batchBusy}>
-      <label>ชื่อผู้รับในใบเสร็จ<input autoComplete="off" maxLength={200} value={name} onChange={e => { setName(e.target.value); setDirty(true); }} /></label>
-      <label>เลข Tracking<input autoComplete="off" spellCheck={false} maxLength={30} value={number} className="shipping-tracking-number" onChange={e => { setNumber(e.target.value); changeMessage(e.target.value); setDirty(true); }} aria-invalid={!!number && !validTracking(number)} /></label>
-      <label>ค่าขนส่ง (บาท)<input autoComplete="off" inputMode="decimal" value={fee} onChange={e => { setFee(e.target.value); setDirty(true); }} placeholder="ไม่ทราบให้เว้นว่าง" /></label>
-      <label>บริการ<input autoComplete="off" value={service} maxLength={100} onChange={e => { setService(e.target.value); changeMessage(number); setDirty(true); }} /></label>
-      <label>รหัสไปรษณีย์<input autoComplete="off" inputMode="numeric" maxLength={5} value={postcode} onChange={e => { setPostcode(e.target.value); setDirty(true); }} /></label>
-    </fieldset>
-    {!locked && <section className="shipping-order-search" aria-label={`เลือกออเดอร์รายการ ${parcel.row}`}><label>ค้นหาชื่อในบิล โปรไฟล์ลูกค้า โน้ตในแชท หรือเลขออเดอร์<input autoComplete="off" value={query} disabled={busy || batchBusy} maxLength={200} onChange={e => { setQuery(e.target.value); setSearching(true); }} placeholder="ชื่อผู้รับ ชื่อในโน้ต หรือ Order Number" /></label>
-      {searching && <p role="status">กำลังค้นหาออเดอร์…</p>}
-      {!searching && !orders.length && <p className="shipping-description">{customers.length ? "พบข้อมูลที่อาจตรงกับผู้รับ แต่ยังไม่มีออเดอร์ยืนยันพร้อม Alex Order ID ในผลค้นหานี้" : "ไม่พบออเดอร์ที่ตรงกัน ลองชื่อผู้รับ ชื่อโปรไฟล์ลูกค้า ชื่อในโน้ต หรือเลขออเดอร์"}</p>}
-      {!searching && visibleCustomers.length > 0 && <section className="shipping-customer-matches" aria-label={`แชทที่ตรงกับชื่อผู้รับรายการ ${parcel.row}`}><h4>พบชื่อในข้อมูลลูกค้า</h4>{visibleCustomers.map(customer => <div key={customer.line_user_id} className="shipping-recipient-check"><CustomerAvatar customer={customer.chat_customer} /><div><strong>{customer.chat_customer.display_name || "ลูกค้าในแชท"}</strong><p>{matchSources[customer.match_source]}: {customer.matched_name}</p><p className="shipping-description">{fromNote(customer.match_source) ? "พบชื่อนี้ในโน้ตที่บันทึกไว้ โปรดเปิดแชทตรวจสอบก่อนเลือกออเดอร์" : customer.match_score === 100 ? "ชื่อตรงกัน" : "ชื่อใกล้เคียง โปรดตรวจสอบ"}</p>{customer.submission_status === "SUBMIT_UNKNOWN" && <p className="shipping-unconfirmed">บิลนี้ยังยืนยันผลจาก Alex ไม่ได้ กรุณาตรวจเลขออเดอร์ในแชทก่อนผูก Tracking</p>}</div><a className="text-button" href={`#chat/${customer.inquiry_id}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>)}</section>}
-      {customersMore && <p className="shipping-description">ยังมีแชทที่อาจตรงกันเพิ่มเติม กรุณาพิมพ์ชื่อเต็มเพื่อให้เจาะจงขึ้น</p>}
-      <div className="shipping-order-options" role="radiogroup" aria-label={`ออเดอร์ของผู้รับรายการ ${parcel.row}`}>{orders.map(order => <label key={order.submission_id} className={`shipping-customer-option ${selected === order.submission_id ? "is-selected" : ""}`}><input type="radio" name={`shipping-order-${parcel.row}`} checked={selected === order.submission_id} disabled={busy || batchBusy} onChange={() => { setSelected(order.submission_id); changeMessage(number); setDirty(true); }} /><CustomerAvatar customer={order.chat_customer} /><span><strong>{order.chat_customer.display_name || order.customer.name}</strong><span>ชื่อในบิล: {order.customer.name}</span><span>{order.alex_order_number || order.alex_order_id}{order.draft_version ? ` · ร่าง v${order.draft_version}` : ""}{order.pickup_date ? ` · รับชุด ${formatDate(order.pickup_date)}` : ""}</span><span>{order.match_score === 100 ? "ชื่อตรงกัน" : order.match_score >= 60 && order.match_score <= 100 ? "ชื่อใกล้เคียง โปรดตรวจสอบ" : "ผลการค้นหา"}</span></span></label>)}</div>
-      {orders.length > 1 && <p className="shipping-description">พบหลายออเดอร์ เลือกออเดอร์ที่จะใช้เลขพัสดุนี้ ระบบจะไม่เลือกจากชื่อเพียงอย่างเดียว</p>}{more && <p className="shipping-description">มีผลเพิ่มเติม พิมพ์ชื่อหรือเลขออเดอร์ให้เจาะจงขึ้น</p>}
-    </section>}
-    {(chosen || saved) && <div className="shipping-recipient-check"><CustomerAvatar customer={chosen?.chat_customer ?? saved?.chat_customer ?? { display_name: saved?.customer.name }} /><div><strong>ส่งให้: {chosen?.chat_customer.display_name || saved?.chat_customer?.display_name || saved?.customer.name || chosen?.customer.name}</strong><p>ชื่อในบิล: {chosen?.customer.name || saved?.customer.name}</p><p>Order Number: {chosen?.alex_order_number || saved?.alex_order_number || "ยังไม่ได้รับ"}</p><p className="shipping-description">Order ID: {chosen?.alex_order_id || saved?.alex_order_id}</p></div><a className="text-button" href={`#chat/${chosen?.inquiry_id || saved?.inquiry_id}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>}
+    <header className="shipping-parcel-heading"><span className="shipping-row-number">{String(parcel.row).padStart(2, "0")}</span><div><div className="shipping-parcel-title"><h3>{chatName || name || "ผู้รับพัสดุ"}</h3><span className="shipping-service">{/ems/i.test(service) ? "EMS" : service}</span></div>{chatName && name && <p>ชื่อบนใบเสร็จ: {name}</p>}</div>{saved && <span className={`shipping-status shipping-status-${saved.status.toLowerCase()}`}>{saved.status === "SENT" ? "ส่งแล้ว" : pending ? "กำลังส่ง" : unknown ? "ยังไม่ยืนยัน" : "พร้อมส่ง"}</span>}</header>
+    <section className="shipping-order-search" aria-label={`เลือกผู้รับรายการ ${parcel.row}`}>
+      <fieldset className="shipping-parcel-fields" disabled={busy || locked || batchBusy}>
+        <label>เลข Tracking<input autoComplete="off" spellCheck={false} maxLength={30} value={number} className="shipping-tracking-number" onChange={e => { setNumber(e.target.value); changeMessage(e.target.value); setDirty(true); }} aria-invalid={!!number && !validTracking(number)} /></label>
+        <label>รหัสไปรษณีย์<input autoComplete="off" inputMode="numeric" maxLength={5} value={postcode} onChange={e => { setPostcode(e.target.value); setDirty(true); }} /></label>
+      </fieldset>
+      {!!number && !validTracking(number) && <p className="shipping-description">ตรวจเลข Tracking ให้ครบ 13 ตัว เช่น JD333458790TH</p>}
+      {!locked && <>
+        <label>ค้นหาชื่อลูกค้า<input autoComplete="off" value={query} disabled={busy || batchBusy} maxLength={200} onChange={e => { setQuery(e.target.value); setSearching(true); setSelected(""); setSelectedInquiry(""); setSelectedCustomer(null); }} placeholder="ชื่อผู้รับ ชื่อในโน้ต หรือเลขออเดอร์" /></label>
+        {searching && <p role="status">กำลังค้นหาลูกค้า…</p>}
+        {!searching && !orders.length && !customers.length && <p className="shipping-description">ไม่พบลูกค้าที่ตรงกัน ลองค้นหาด้วยชื่อในแชทหรือโน้ต</p>}
+        {suggested && !hasRecipient && <div className="shipping-recipient-check shipping-chat-match"><CustomerAvatar customer={suggested.chat_customer} /><div><strong>{suggested.chat_customer.display_name}</strong><p>ชื่อในบิล: {suggested.customer.name}</p><button type="button" className="text-button" disabled={busy || batchBusy} onClick={() => { setSelected(suggested.submission_id); setSelectedInquiry(""); setSelectedCustomer(null); setDirty(true); }}>เลือกออเดอร์นี้</button></div><a className="text-button" href={`#chat/${suggested.inquiry_id}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>}
+        {!searching && visibleCustomers.length > 0 && <section className="shipping-customer-matches" aria-label={`แชทที่ตรงกับชื่อผู้รับรายการ ${parcel.row}`}><h4>เลือกลูกค้าที่จะส่ง Tracking</h4>{visibleCustomers.map(customer => <div key={customer.line_user_id} className={`shipping-recipient-check ${selectedInquiry === customer.inquiry_id ? "is-selected" : ""}`}><CustomerAvatar customer={customer.chat_customer} /><div><strong>{customer.chat_customer.display_name || "ลูกค้าในแชท"}</strong><p>{matchSources[customer.match_source]}: {customer.matched_name}</p><p className="shipping-description">{fromNote(customer.match_source) ? "พบชื่อในโน้ต โปรดตรวจผู้รับก่อนเลือก" : customer.match_score === 100 ? "ชื่อตรงกัน" : "ชื่อใกล้เคียง โปรดตรวจสอบ"}</p><button type="button" className="button secondary shipping-select-customer" aria-pressed={selectedInquiry === customer.inquiry_id} disabled={busy || batchBusy} onClick={() => chooseCustomer(customer)}>{selectedInquiry === customer.inquiry_id ? "เลือกลูกค้าคนนี้แล้ว" : "เลือกลูกค้าคนนี้"}</button></div><a className="text-button" href={`#chat/${customer.inquiry_id}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>)}</section>}
+        {customersMore && <p className="shipping-description">ยังมีลูกค้าที่อาจตรงกันเพิ่มเติม กรุณาพิมพ์ชื่อเต็ม</p>}
+        <div className="shipping-order-options" role="radiogroup" aria-label={`ออเดอร์ของผู้รับรายการ ${parcel.row}`}>{orders.map(order => <label key={order.submission_id} className={`shipping-customer-option ${selected === order.submission_id ? "is-selected" : ""}`}><input type="radio" name={`shipping-order-${parcel.row}`} checked={selected === order.submission_id} disabled={busy || batchBusy} onChange={() => { setSelected(order.submission_id); setSelectedInquiry(""); setSelectedCustomer(null); changeMessage(number); setDirty(true); }} /><CustomerAvatar customer={order.chat_customer} /><span><strong>{order.chat_customer.display_name || order.customer.name}</strong><span>ชื่อในบิล: {order.customer.name}</span><span>{order.alex_order_number || order.alex_order_id}{order.draft_version ? ` · ร่าง v${order.draft_version}` : ""}{order.pickup_date ? ` · รับชุด ${formatDate(order.pickup_date)}` : ""}</span><span>{order.match_score === 100 ? "ชื่อตรงกัน" : order.match_score >= 60 && order.match_score <= 100 ? "ชื่อใกล้เคียง โปรดตรวจสอบ" : "ผลการค้นหา"}</span></span></label>)}</div>
+        {orders.length > 1 && <p className="shipping-description">พบหลายออเดอร์ กรุณาเลือกออเดอร์ที่จะใช้เลขพัสดุนี้</p>}{more && <p className="shipping-description">มีผลเพิ่มเติม พิมพ์ชื่อหรือเลขออเดอร์ให้เจาะจงขึ้น</p>}
+      </>}
+    </section>
+    {hasRecipient && (chosen || saved) && <div className="shipping-recipient-check"><CustomerAvatar customer={recipientChat} /><div><strong>ส่งให้: {chatName || saved?.customer.name || chosen?.customer.name}</strong>{orderNumber && <p>เลขออเดอร์: {orderNumber}</p>}</div><a className="text-button" href={`#chat/${recipientInquiry}`} target="_blank" rel="noopener noreferrer" title="เปิดแชทในแท็บใหม่">เปิดแชท</a></div>}
     <label className="shipping-message-label">ข้อความที่จะส่งให้ลูกค้า<textarea autoComplete="off" rows={6} maxLength={5000} value={message} disabled={busy || locked || batchBusy} onChange={e => { setMessage(e.target.value); setEditedMessage(true); setDirty(true); }} /></label>
     <div className="shipping-parcel-actions">
-      {saved?.status !== "SENT" && <button type="button" className="button primary" disabled={busy || batchBusy || !selected || !name.trim() || !validTracking(number) || Number.isNaN(feeSatang(fee)) || (pending && !stale) || !!retryExpired} onClick={() => void send()}>{sending ? "กำลังส่งข้อความ…" : unknown ? "ลองส่งคำขอเดิม" : "ส่งข้อความให้ลูกค้าคนนี้"}</button>}
-      {!locked && <button type="button" className="button secondary" disabled={busy || batchBusy || !selected || !name.trim() || !validTracking(number) || Number.isNaN(feeSatang(fee))} onClick={() => void save()}>{busy && !sending ? "กำลังบันทึก…" : "บันทึก Tracking กับออเดอร์นี้"}</button>}
+      {saved?.status !== "SENT" && <button type="button" className="button primary" disabled={busy || batchBusy || !hasRecipient || !recipientName || !validTracking(number) || (pending && !stale) || !!retryExpired} onClick={() => void send()}>{sending ? "กำลังส่งข้อความ…" : unknown ? "ลองส่งคำขอเดิม" : "ส่งข้อความให้ลูกค้าคนนี้"}</button>}
+      {!locked && <button type="button" className="button secondary" disabled={busy || batchBusy || !hasRecipient || !recipientName || !validTracking(number)} onClick={() => void save()}>{busy && !sending ? "กำลังบันทึก…" : "บันทึก Tracking ไว้ก่อน"}</button>}
       {!locked && <button type="button" className="text-button" disabled={busy || batchBusy} onClick={() => { setMessage(trackingMessage(number)); setEditedMessage(false); setDirty(true); }}>ใช้ข้อความมาตรฐาน</button>}
       {saved && <button type="button" className="text-button" disabled={busy || batchBusy} onClick={() => void onSaved().catch(cause => setError(errorText(cause)))}>ตรวจผลล่าสุด</button>}
     </div>
-    {!saved && <p className="shipping-description">กดส่งเพื่อบันทึก Tracking และส่งข้อความให้ลูกค้าคนนี้ หรือบันทึกไว้ก่อนโดยยังไม่ส่งก็ได้</p>}
+    {!hasRecipient && !locked && <p className="shipping-description">เลือกลูกค้าหรือออเดอร์ด้านบนก่อนส่งข้อความ</p>}
     <details className="shipping-evidence"><summary>ข้อความที่อ่านจากใบเสร็จ</summary><p>{parcel.raw_text}</p></details>
     {saved?.status === "SENT" && <p className="shipping-sent" role="status">ส่ง Tracking {saved.tracking_number} ให้ลูกค้าแล้ว{saved.sent_at ? ` · ${formatDateTime(saved.sent_at)}` : ""}{saved.sent_by ? ` · ${saved.sent_by}` : ""}</p>}
     {pending && <p role="status" className="shipping-description">กำลังติดตามผลคำขอเดิม หากการเชื่อมต่อขาดช่วง ให้กดตรวจผลล่าสุด</p>}
@@ -167,16 +177,16 @@ export default function ShippingWorkspace({ session, onLogout }: { session: Admi
     finally { setBusy(false); }
   }
   return <div className="app-shell team-shell shipping-shell"><WorkspaceSidebar username={session.username} login={session.login} activePanel="inquiries" shippingActive onNavigate={() => navigateWorkspace("chats")} onHome={() => navigateWorkspace("home")} onManageTeam={canManageTeam(session) ? () => navigateWorkspace("team") : undefined} onLogout={onLogout} /><main className="main-content">
-    <header className="page-header"><div><p className="eyebrow">Arisa Rental</p><h1>พัสดุและ Tracking</h1><p className="shipping-description">อ่านใบเสร็จ จับคู่ออเดอร์ แล้วตรวจผู้รับก่อนส่ง</p></div><div className="header-actions"><button className="button primary" disabled={busy || !session.hermes_configured} onClick={() => file.current?.click()}><WorkspaceIcon name="shipping" />{busy ? "กำลังอัปโหลด…" : "อัปโหลดใบเสร็จ"}</button><input ref={file} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden aria-label="อัปโหลดรูปใบเสร็จขนส่ง" disabled={busy} onChange={event => void upload(event.target.files?.[0])} /></div></header>
+    <header className="page-header"><div><p className="eyebrow">Arisa Rental</p><h1>พัสดุและ Tracking</h1><p className="shipping-description">อ่านใบเสร็จ แล้วเลือกลูกค้าเพื่อส่ง Tracking</p></div><div className="header-actions"><button className="button primary" disabled={busy || !session.hermes_configured} onClick={() => file.current?.click()}><WorkspaceIcon name="shipping" />{busy ? "กำลังอัปโหลด…" : "อัปโหลดใบเสร็จ"}</button><input ref={file} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden aria-label="อัปโหลดรูปใบเสร็จขนส่ง" disabled={busy} onChange={event => void upload(event.target.files?.[0])} /></div></header>
     <div className="shipping-content">{notice && <p className="notice" role="status">{notice}</p>}{!session.hermes_configured && <p className="notice warning">ยังไม่ได้ตั้งค่า AI อ่านรูป กรุณาติดต่อผู้ดูแลระบบ</p>}{error && <div className="notice warning" role="alert">{error}{hasPendingUpload && <button type="button" className="text-button" disabled={busy} onClick={() => void upload()}>ติดตามอัปโหลดด้วยคำขอเดิม</button>}</div>}
-      <div className="shipping-workflow" aria-label="ขั้นตอนพัสดุ"><span>1. อัปโหลดใบเสร็จ</span><span>2. ตรวจชื่อและเลือกออเดอร์</span><span>3. บันทึกและส่ง Tracking</span></div>
+      <div className="shipping-workflow" aria-label="ขั้นตอนพัสดุ"><span>1. อัปโหลดใบเสร็จ</span><span>2. ตรวจชื่อและเลือกลูกค้า</span><span>3. บันทึกและส่ง Tracking</span></div>
       <nav className="shipping-receipts" aria-label="ใบเสร็จที่อัปโหลด">{receipts.map(receipt => <button type="button" key={receipt._id} aria-current={selected === receipt._id ? "page" : undefined} disabled={busy} onClick={() => { setSelected(receipt._id); setError(""); }}><strong>{receipt.name}</strong><span>{statuses[receipt.status]} · {formatDateTime(receipt.created_at)}</span></button>)}{next && <button type="button" disabled={busy} onClick={() => void more()}>โหลดใบเสร็จเก่า</button>}</nav>
       {loading && <p role="status">กำลังโหลดใบเสร็จ…</p>}{!loading && !receipts.length && <section className="shipping-empty"><WorkspaceIcon name="shipping" /><h2>ส่งเลขพัสดุให้ลูกค้าได้จากใบเสร็จเดียว</h2><p>อัปโหลดภาพไปรษณีย์ไทยที่เห็นชื่อผู้รับ เลข Tracking และค่าขนส่งครบ ระบบจะแยกพัสดุแต่ละรายให้ตรวจสอบ</p><button type="button" className="button primary" disabled={busy || !session.hermes_configured} onClick={() => file.current?.click()}>เลือกรูปใบเสร็จ</button></section>}
       {result && result.receipt._id === selected && <section className="shipping-review" aria-label="ตรวจใบเสร็จขนส่ง"><div className="shipping-receipt-summary"><div><h2>{result.receipt.extraction?.receipt_number ? `ใบเสร็จ ${result.receipt.extraction.receipt_number}` : result.receipt.name}</h2><p className="shipping-description">{result.receipt.extraction?.receipt_date && `${formatDate(result.receipt.extraction.receipt_date)} · `}อัปโหลดโดย {result.receipt.created_by}</p>{result.receipt.extraction && <p>{result.receipt.extraction.parcels.length} พัสดุ · รวมทั้งใบเสร็จ {money(result.receipt.extraction.total_satang)}</p>}</div><div className="shipping-batch-actions">{result.receipt.image_url && <a className="button secondary" href={result.receipt.image_url} target="_blank" rel="noreferrer">ดูรูปใบเสร็จต้นฉบับ</a>}<button type="button" className="button secondary shipping-delete-batch" disabled={busy} onClick={() => void deleteBatch()}>ลบทั้ง batch</button></div></div>
         {["QUEUED", "READING"].includes(result.receipt.status) && <p className="shipping-reading" role="status"><span className="bill-feedback-spinner" aria-hidden="true" />{statuses[result.receipt.status]} เก็บภาพแล้ว สามารถกลับมาติดตามในเมนูนี้ได้</p>}
         {result.receipt.status === "FAILED" && <div className="notice warning" role="alert"><p>อ่านใบเสร็จไม่สำเร็จ ({result.receipt.error_code}) ภาพยังอยู่ ลองอ่านอีกครั้งหรืออัปโหลดภาพที่ชัดขึ้น</p><button className="button secondary" type="button" disabled={busy} onClick={() => void extract()}>อ่านรูปนี้อีกครั้ง</button></div>}
         {result.receipt.total_mismatch && <p className="notice warning">ยอดค่าขนส่งรายพัสดุไม่ตรงยอดรวมบนใบเสร็จ โปรดตรวจค่าบริการเพิ่มเติมจากภาพต้นฉบับ</p>}
-        {result.receipt.status === "READY" && <><p className="shipping-description">ตรวจข้อมูลที่ AI อ่านทุกครั้ง ค่าขนส่งนี้เก็บเป็นข้อมูลอ้างอิง ไม่ปรับยอดบิลใน Alex</p>{result.receipt.extraction?.parcels.map(parcel => { const saved = result.trackings.find(t => t.row === parcel.row); return <ParcelCard key={`${result.receipt._id}-${parcel.row}-${saved?.version ?? 0}`} parcel={parcel} receiptId={result.receipt._id} saved={saved} onSaved={reload} batchBusy={busy} />; })}</>}
+        {result.receipt.status === "READY" && <><p className="shipping-description">ตรวจผู้รับและเลข Tracking จากใบเสร็จก่อนส่งข้อความ</p>{result.receipt.extraction?.parcels.map(parcel => { const saved = result.trackings.find(t => t.row === parcel.row); return <ParcelCard key={`${result.receipt._id}-${parcel.row}-${saved?.version ?? 0}`} parcel={parcel} receiptId={result.receipt._id} saved={saved} onSaved={reload} batchBusy={busy} />; })}</>}
       </section>}
     </div><WorkspaceNavigation activePage="shipping" manageTeam={canManageTeam(session)} /></main></div>;
 }

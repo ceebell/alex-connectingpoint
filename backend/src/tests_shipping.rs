@@ -1082,3 +1082,143 @@ async fn deleted_batches_hide_every_row_block_old_actions_and_preserve_delivery_
     );
     state.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
+async fn tracking_can_send_to_an_explicit_chat_without_confirming_an_alex_bill() {
+    let mock = ShippingMock::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/v2/bot/message/push", axum::routing::post(push))
+        .with_state(mock.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut cfg = config();
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    cfg.line_api_base = format!("http://{address}");
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let (bill, inquiry) = seed_order(&state, "Recipient", "direct-chat-user", "AR-UNKNOWN").await;
+    state.collection("alex_submissions").update_one(doc! {"_id":bill}, doc! {"$set":{"status":"SUBMIT_UNKNOWN"},"$unset":{"alex_order_id":"","alex_order_number":""}}).await.unwrap();
+    let rid = ObjectId::new();
+    let now = DateTime::now();
+    let mut receipt = state.scope();
+    receipt.extend(doc! {"_id":rid,"status":"READY","name":"test.png","extraction":mongodb::bson::to_document(&extraction()).unwrap(),"created_at":now,"updated_at":now});
+    state
+        .collection("shipping_receipts")
+        .insert_one(receipt)
+        .await
+        .unwrap();
+    let base = "/api/admin/shipping";
+    let row = format!("{base}/receipts/{rid}/rows/1");
+    let mut input = json!({"expected_version":0,"inquiry_id":inquiry.to_hex(),"recipient_name":"Recipient","tracking_number":"JD333458790TH","postal_code":"10150","service":"EMS","shipping_fee_satang":2400,"message":"Tracking JD333458790TH"});
+    let mut other_cfg = config();
+    other_cfg.mongodb_uri = state.config.mongodb_uri.clone();
+    other_cfg.mongodb_db = state.config.mongodb_db.clone();
+    other_cfg.shop_id = "another-shop".into();
+    let other = AppState::connect(other_cfg).await.unwrap();
+    assert_eq!(
+        request(&other, &row, "POST", input.clone(), true).await.0,
+        StatusCode::NOT_FOUND
+    );
+    input["inquiry_id"] = ObjectId::new().to_hex().into();
+    assert_eq!(
+        request(&state, &row, "POST", input.clone(), true).await.0,
+        StatusCode::NOT_FOUND
+    );
+    input["inquiry_id"] = inquiry.to_hex().into();
+    let saved = request(&state, &row, "POST", input.clone(), true).await;
+    assert_eq!(saved.0, StatusCode::OK, "{:?}", saved.1);
+    assert!(saved.1["tracking"]["submission_id"].is_null());
+    assert!(saved.1["tracking"]["alex_order_id"].is_null());
+    assert_eq!(saved.1["tracking"]["line_user_id"], "direct-chat-user");
+    assert!(mock.pushes.lock().await.is_empty());
+    let tracking =
+        ObjectId::parse_str(saved.1["tracking"]["_id"]["$oid"].as_str().unwrap()).unwrap();
+    let send = format!("{base}/trackings/{tracking}/send");
+    let reloaded = shipping::get(&state, rid).await.unwrap();
+    assert_eq!(
+        reloaded["trackings"][0]["chat_customer"]["display_name"],
+        "LINE direct-chat-user"
+    );
+    assert_eq!(
+        request(&other, &send, "POST", json!({"expected_version":1}), true)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    // Stored recipient identity must still match the selected chat at delivery time.
+    state
+        .collection("shipping_trackings")
+        .update_one(
+            doc! {"_id":tracking},
+            doc! {"$set":{"line_user_id":"wrong-user"}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&state, &send, "POST", json!({"expected_version":1}), true)
+            .await
+            .1["error"]["code"],
+        "RECORD_CONFLICT"
+    );
+    assert!(mock.pushes.lock().await.is_empty());
+    state
+        .collection("shipping_trackings")
+        .update_one(
+            doc! {"_id":tracking},
+            doc! {"$set":{"line_user_id":"direct-chat-user"}},
+        )
+        .await
+        .unwrap();
+    let first = request(&state, &send, "POST", json!({"expected_version":1}), true).await;
+    assert_eq!(first.1["tracking"]["status"], "SEND_FAILED");
+    input["expected_version"] = 1.into();
+    assert_eq!(
+        request(&state, &row, "POST", input, true).await.1["error"]["code"],
+        "RECORD_CONFLICT"
+    );
+    let retried = request(&state, &send, "POST", json!({"expected_version":1}), true).await;
+    assert_eq!(retried.1["tracking"]["status"], "SENT");
+    assert_eq!(
+        request(&state, &send, "POST", json!({"expected_version":1}), true)
+            .await
+            .1["tracking"]["status"],
+        "SENT"
+    );
+    let pushes = mock.pushes.lock().await.clone();
+    assert_eq!(pushes.len(), 2);
+    assert_eq!(pushes[0].0, pushes[1].0);
+    assert_eq!(pushes[0].1["to"], "direct-chat-user");
+    assert_eq!(pushes[0].1["messages"][0]["text"], "Tracking JD333458790TH");
+    assert_eq!(
+        state
+            .collection("alex_submissions")
+            .find_one(doc! {"_id":bill})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_str("status")
+            .unwrap(),
+        "SUBMIT_UNKNOWN"
+    );
+    let actor = crate::models::customer::Actor {
+        id: "test".into(),
+        name: "Admin".into(),
+    };
+    shipping::delete(&state, rid, &actor).await.unwrap();
+    assert!(matches!(
+        shipping::get(&state, rid).await,
+        Err(crate::error::AppError::NotFound)
+    ));
+    assert_eq!(
+        state
+            .collection("shipping_trackings")
+            .count_documents(doc! {"_id":tracking})
+            .await
+            .unwrap(),
+        1
+    );
+    state.db.drop().await.unwrap();
+    server.abort();
+}
