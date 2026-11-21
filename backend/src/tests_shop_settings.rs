@@ -19,6 +19,20 @@ fn shipping_markers_use_catalog_identity_not_price_or_generic_suggestions() {
     assert!(rules.shipping_item("other", "ค่าขนส่ง Flash"));
     assert!(!rules.shipping_item("dress", "Dress 40"));
     assert!(!rules.shipping_item("dress", "Shipping Dress"));
+    let without_shipping_rule = crate::models::shop_settings::BillingRules::default();
+    for name in ["ส่ง : flash", "ส่ง:Flash", " ส่ง  :  FLASH "] {
+        assert!(
+            without_shipping_rule.shipping_item("0053MNANANA", name),
+            "{name}"
+        );
+    }
+    for name in ["ส่งเดรส Flash", "ส่งเสริม Dress", "Flash Dress", "Dress 40"]
+    {
+        assert!(
+            !without_shipping_rule.shipping_item("dress", name),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -233,16 +247,154 @@ struct Catalog(Arc<AtomicUsize>);
 async fn catalog(State(mock): State<Catalog>, Json(body): Json<Value>) -> Json<Value> {
     if body["keyword"] == "DRESS" {
         return Json(
-            json!({"itemList":[{"productItemId":"dress","code":"DRESS","name":"Dress","color":null,"size":null,"rentalPrice":if mock.0.load(Ordering::SeqCst)==4 {650} else {550},"bail":300}]}),
+            json!({"itemList":[{"productItemId":"dress","code":"DRESS","name":"Dress","color":null,"size":null,"rentalPrice":match mock.0.load(Ordering::SeqCst) {4=>650,5=>600,_=>550},"bail":300}]}),
         );
     }
     assert_eq!(body["keyword"], "0053MNANANA");
     assert_eq!(body["branchId"], "branch-a");
     let mode = mock.0.load(Ordering::SeqCst);
-    let product = |id| json!({"productItemId":id,"code":"0053MNANANA","name":"ค่าขนส่ง","color":null,"size":null,"rentalPrice":if mode==2{41}else{40},"bail":if mode==3{10}else{0}});
+    let product = |id| json!({"productItemId":id,"code":"0053MNANANA","name":if mode==5 {"ส่ง : flash"} else {"ค่าขนส่ง"},"color":null,"size":null,"rentalPrice":if mode==2{41}else{40},"bail":if mode==3{10}else{0}});
     Json(
         json!({"itemList":if mode==1{vec![product("fee-a"),product("fee-b")]}else{vec![product("fee-a")]}}),
     )
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB"]
+async fn flash_shipping_is_not_a_discount_base_and_is_billed_exactly_once() {
+    let sent = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+    let captured = sent.clone();
+    let app = Router::new()
+        .route("/api/user/login", post(|| async { Json(json!({"token":"test","shopInfoId":"alex-shop","userBranch":[{"branchId":"branch-a","branchName":"A"}]})) }))
+        .route("/api/v2/GetProductItems", post(catalog))
+        .route("/api/orderdetail/checkq", post(|| async { Json(json!([{"result":1}])) }))
+        .route("/api/v2/AddRentalOrder", post(move |Json(body): Json<Value>| {
+            let captured = captured.clone();
+            async move {
+                captured.lock().await.push(body);
+                Json(json!({"success":true,"orderId":"flash-order-1","orderNumber":"AR-FLASH-1"}))
+            }
+        }))
+        .with_state(Catalog(Arc::new(AtomicUsize::new(5))));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut cfg = config();
+    cfg.mongodb_uri = std::env::var("TEST_MONGODB_URI").unwrap_or(cfg.mongodb_uri);
+    let mut alex = super::product_tests::catalog_config(&format!("http://{address}"));
+    alex.order_number_pointer = Some("/orderNumber".into());
+    cfg.alex = Some(alex);
+    cfg.burst_ms = 0;
+    let state = AppState::connect(cfg).await.unwrap();
+    crate::db::indexes::ensure(&state).await.unwrap();
+    let event = serde_json::from_value(json!({"type":"message","webhookEventId":"flash-discount","timestamp":1,"source":{"type":"user","userId":"Uflash"},"message":{"id":"flash-discount","type":"text","text":"Test customer"}})).unwrap();
+    events::persist(&state, &event).await.unwrap();
+    worker::process(&state, &events::claim(&state).await.unwrap().unwrap())
+        .await
+        .unwrap();
+    let id = all(&state, "inquiries").await[0]
+        .get_object_id("_id")
+        .unwrap();
+    shop_settings::save(
+        &owner(&state),
+        SaveInput {
+            instruction_text: SUMMARY_RULE.into(),
+            expected_version: 0,
+        },
+    )
+    .await
+    .unwrap();
+    for (product_id, code, name, rental, deposit) in [
+        ("dress", "DRESS", "Dress", 60000_i64, 30000_i64),
+        ("fee-a", "0053MNANANA", "ส่ง : flash", 4000_i64, 0_i64),
+    ] {
+        let mut record = state.scope();
+        record.extend(doc! {"_id":ObjectId::new(),"inquiry_id":id,"branch_id":"branch-a","product_item_id":product_id,"quantity":1_i64,"revision":1_i64,"is_shipping":false,
+            "candidate":{"product_item_id":product_id,"code":code,"name":name,"color":mongodb::bson::Bson::Null,"size":mongodb::bson::Bson::Null,"rental_fee_satang":rental,"deposit_satang":deposit},"created_at":DateTime::now(),"updated_at":DateTime::now()});
+        state
+            .collection("cart_items")
+            .insert_one(record)
+            .await
+            .unwrap();
+    }
+    let fields = serde_json::from_value(json!({"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","rental":{"pickup_date":"2026-11-28","return_date":"2026-11-30","fulfillment_method":"delivery","delivery_provider":"Flash"},"amounts":{"rental_fee_satang":55000,"deposit_satang":30000,"shipping_fee_satang":4000}})).unwrap();
+    super::product_tests::manual(&state, id, 0, fields).await;
+    let cart = crate::db::cart::items(&state, id).await.unwrap();
+    let shipping = cart
+        .iter()
+        .find(|item| item.get_str("product_item_id").unwrap() == "fee-a")
+        .unwrap();
+    assert!(shipping.get_bool("is_shipping").unwrap());
+    assert!(shipping.get_bool("shipping_detected").unwrap());
+    assert!(
+        crate::db::cart::snapshot(&cart)
+            .iter()
+            .find(|item| item.get_str("product_item_id").unwrap() == "fee-a")
+            .unwrap()
+            .get_bool("is_shipping")
+            .unwrap()
+    );
+    let checkout = crate::db::checkout::list(&state, id).await.unwrap();
+    let group = &checkout["groups"][0];
+    assert_eq!(group["lines"].as_array().unwrap().len(), 2);
+    assert_eq!(group["rental_discount_satang"], 5000);
+    assert_eq!(group["deposit_discount_satang"], 0);
+    assert_eq!(group["quoted_shipping_fee_satang"], 0);
+    let form = json!({"source_hash":checkout["source_hash"],"group_key":group["key"],"customer_name":"Nim","customer_phone":"0812345678","customer_address":"99 Bangkok","receiving_method":"Flash","shipping_fee_satang":4000});
+    // Explicit final edits still win, including zero, without adding the automatic discount.
+    for (discount, net) in [(0, 64000), (2500, 61500)] {
+        let mut edited = form.clone();
+        edited["rental_discount_satang"] = json!(discount);
+        edited["deposit_discount_satang"] = json!(0);
+        let review =
+            crate::db::checkout::review(&state, id, serde_json::from_value(edited).unwrap())
+                .await
+                .unwrap();
+        assert_eq!(review["rental_discount_satang"], discount);
+        assert_eq!(review["rental_fee_satang"], net);
+        assert_eq!(review["shipping_fee_satang"], 0);
+    }
+    let review = crate::db::checkout::review(&state, id, serde_json::from_value(form).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(review["rental_discount_satang"], 5000);
+    assert_eq!(review["rental_fee_satang"], 59000);
+    assert_eq!(review["deposit_satang"], 30000);
+    assert_eq!(review["shipping_fee_satang"], 0);
+    assert_eq!(
+        review["rental_fee_satang"].as_i64().unwrap() + review["deposit_satang"].as_i64().unwrap(),
+        89000
+    );
+    let result = crate::db::checkout::submit(
+        &state,
+        id,
+        serde_json::from_value(json!({"review_id":review["review_id"],"confirmed":true})).unwrap(),
+        &crate::models::customer::Actor {
+            id: "test-admin".into(),
+            name: "Test admin".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["status"], "CONFIRMED", "{result}");
+    assert_eq!(result["alex_order_id"], "flash-order-1");
+    assert_eq!(result["alex_order_number"], "AR-FLASH-1");
+    let payloads = sent.lock().await;
+    assert_eq!(payloads.len(), 1);
+    let payload = &payloads[0];
+    assert_eq!(payload["orderDetail"]["rentalDiscount"], "50.00");
+    assert_eq!(payload["orderDetail"]["bailDiscount"], "0.00");
+    let lines = payload["orderItems"].as_array().unwrap();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|item| item["productItemId"] == "fee-a")
+            .count(),
+        1
+    );
+    state.db.drop().await.unwrap();
+    server.abort();
 }
 
 #[tokio::test]

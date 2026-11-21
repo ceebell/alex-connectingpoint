@@ -99,7 +99,7 @@ export type Candidate = { product_item_id: string; code: string; name: string; c
 export type CodeName = { code: string; name: string };
 export const findCode = (written: string | null | undefined, list: CodeName[]) => { const wanted = written?.trim().toLowerCase(); return wanted ? list.find(value => value.name.toLowerCase() === wanted || value.code.toLowerCase() === wanted)?.code ?? "" : ""; };
 export const codeLabel = (code: string | null | undefined, list: CodeName[]) => { if (!code) return "ไม่ระบุ"; const found = list.find(value => value.code === code); return found ? `${found.name} (${code})` : code; };
-export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string; is_shipping?: boolean };
+export type CartItem = { _id: string; product_item_id: string; branch_id: string; candidate: Candidate; quantity: number; revision: number; added_by: string; created_at: string; is_shipping?: boolean; shipping_detected?: boolean };
 export type Availability = { state: string; checked_at: string; items: { item_index: number; product_item_id: string; code: string; quantity: number; state: string }[] };
 export type Fields = { intent: string | null; customer_name: string | null; customer_phone: string | null; customer_address?: string | null; branch: string | null; items: DraftItem[]; rental: Rental; amounts: Amounts; notes: string | null };
 export type Evidence = { field: string; source_type: string; source_ref: string; quote: string };

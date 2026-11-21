@@ -34,10 +34,11 @@ pub async fn items(state: &AppState, inquiry_id: ObjectId) -> Result<Vec<Documen
             record.get_str("branch_id").map_err(|_| AppError::Data)?,
         )?;
         let product = candidate(record)?;
-        let shipping = record
-            .get_bool("is_shipping")
-            .unwrap_or_else(|_| policy.rules.shipping_item(&product.code, &product.name));
+        let detected = policy.rules.shipping_item(&product.code, &product.name);
+        // Reclassify older snapshots too: a catalog shipping SKU cannot become discountable rent.
+        let shipping = detected || record.get_bool("is_shipping").unwrap_or(false);
         record.insert("is_shipping", shipping);
+        record.insert("shipping_detected", detected);
     }
     Ok(records)
 }

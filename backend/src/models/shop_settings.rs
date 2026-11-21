@@ -26,6 +26,7 @@ pub struct CatalogSearch {
 
 impl BillingRules {
     pub fn shipping_item(&self, code: &str, name: &str) -> bool {
+        let compact_name: String = name.chars().filter(|c| !c.is_whitespace()).collect();
         self.shipping_product
             .as_ref()
             .is_some_and(|rule| rule.product_code.eq_ignore_ascii_case(code))
@@ -39,6 +40,7 @@ impl BillingRules {
             ]
             .iter()
             .any(|prefix| name.trim().to_lowercase().starts_with(prefix))
+            || compact_name.starts_with("ส่ง:")
     }
 }
 

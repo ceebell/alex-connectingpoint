@@ -33,7 +33,7 @@ function CartCard({ item, index, queue, colorName, disabled, onQuantity, onRemov
     <div className="match-main">
       <div className="match-title"><strong>{candidate.name}</strong><span>({candidate.code})</span></div>
       <div className="match-bottom"><dl className="match-price"><dt>ราคา:</dt><dd>{price(candidate.rental_fee_satang)}</dd><dt>ค่าประกัน:</dt><dd>{price(candidate.deposit_satang)}</dd></dl>{badge && <span className={`queue-badge ${badge[1]}`}>{badge[0]}</span>}</div>
-      <label className="checkbox-row small"><input type="checkbox" aria-label={`รายการค่าส่ง ${candidate.name}`} checked={!!item.is_shipping} disabled={disabled} onChange={e => onShipping(e.target.checked)} />รายการค่าส่ง · ไม่คิดส่วนลด</label>
+      <label className="checkbox-row small" title={item.shipping_detected ? "ระบบระบุค่าส่งจากรหัสหรือชื่อสินค้า จึงไม่นำไปคำนวณส่วนลดค่าเช่า" : undefined}><input type="checkbox" aria-label={`รายการค่าส่ง ${candidate.name}`} checked={!!item.is_shipping} disabled={disabled || item.shipping_detected} onChange={e => onShipping(e.target.checked)} />รายการค่าส่ง · ไม่คิดส่วนลด</label>
     </div>
     <div className="quantity-stepper" role="group" aria-label={`จำนวน ${candidate.name}`}>
       <button type="button" aria-label="ลดจำนวน" disabled={disabled || item.quantity <= 1} onClick={() => step(item.quantity - 1)}>−</button>
