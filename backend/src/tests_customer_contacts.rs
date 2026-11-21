@@ -27,12 +27,47 @@ fn tier(source: Option<&Value>, kind: &str, name: &str, phone: &str) -> Value {
     json!({"fields":{"display_name":name,"phone":phone,"address":null},"evidence":[{"field":"display_name","source_type":kind,"source_ref":reference,"quote":text},{"field":"phone","source_type":kind,"source_ref":reference,"quote":text}],"conflicts":[],"questions":[]})
 }
 
+fn omit(result: &mut Value, field: &str) {
+    result["fields"][field] = Value::Null;
+    result["evidence"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|e| e["field"] != field);
+}
+
+fn chat_tier(messages: &Value, mode: usize) -> Value {
+    let message = messages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["text"].as_str().unwrap().contains("K.Chat"));
+    let mut chat = tier(message, "line_event", "K.Chat", "0833333333");
+    if let Some(message) = message {
+        chat["fields"]["address"] = json!("99 Road 10110");
+        chat["evidence"].as_array_mut().unwrap().push(json!({"field":"address","source_type":"line_event","source_ref":message["event_ref"],"quote":message["text"]}));
+    }
+    if [1, 3, 8].contains(&mode) {
+        omit(&mut chat, "phone");
+    }
+    if [2, 3, 4, 8].contains(&mode) {
+        omit(&mut chat, "display_name");
+    }
+    if mode == 4 {
+        chat["conflicts"] = json!([{"field":"display_name","message":"Conflicting names in chat"}]);
+    }
+    chat
+}
+
 async fn hermes(State(mock): State<Mock>, Json(body): Json<Value>) -> Json<Value> {
     assert_eq!(body["tool_choice"], "none");
     mock.calls.lock().await.push(body.clone());
     let data: Value =
         serde_json::from_str(body["messages"][1]["content"][0]["text"].as_str().unwrap()).unwrap();
     let mode = mock.mode.load(Ordering::SeqCst);
+    for forbidden in ["K.Display", "K.OA", "K.Alias", "SECRET_OTHER_CONTACT"] {
+        assert!(!data.to_string().contains(forbidden));
+    }
+    assert!(data.get("display").is_none());
     let result = if body["messages"][0]["content"]
         .as_str()
         .unwrap()
@@ -48,49 +83,10 @@ async fn hermes(State(mock): State<Mock>, Json(body): Json<Value>) -> Json<Value
             .unwrap()
             .iter()
             .find(|r| r["text"].as_str().unwrap().contains("NOTE_CONTACT"));
-        let display = data["display"].as_array().unwrap().first();
-        let message = data["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|r| r["text"].as_str().unwrap().contains("K.Chat"));
         let mut notes = tier(note, "customer_note", "K.Note", "081-111-1111");
-        let (name, phone) =
-            if display.is_some_and(|r| r["text"].as_str().unwrap().contains("K.Alias")) {
-                ("K.Alias", "0844444444")
-            } else if display.is_some_and(|r| r["text"].as_str().unwrap().contains("K.OA")) {
-                ("K.OA", "0855555555")
-            } else {
-                ("K.Display", "0822222222")
-            };
-        let mut display = tier(display, "customer_display", name, phone);
-        let mut chat = tier(message, "line_event", "K.Chat", "0833333333");
-        if let Some(message) = message {
-            chat["fields"]["address"] = json!("99 Road 10110");
-            chat["evidence"].as_array_mut().unwrap().push(json!({"field":"address","source_type":"line_event","source_ref":message["event_ref"],"quote":message["text"]}));
-        }
-        if mode == 1 {
-            notes["fields"]["phone"] = Value::Null;
-            notes["evidence"]
-                .as_array_mut()
-                .unwrap()
-                .retain(|e| e["field"] != "phone");
-        }
-        if mode == 2 {
+        let chat = chat_tier(&data["messages"], mode);
+        if mode == 8 {
             notes = empty();
-        }
-        if mode == 3 {
-            notes = empty();
-            display = empty();
-        }
-        if mode == 4 {
-            notes["fields"]["display_name"] = Value::Null;
-            notes["conflicts"] =
-                json!([{"field":"display_name","message":"Conflicting names in notes"}]);
-            notes["evidence"]
-                .as_array_mut()
-                .unwrap()
-                .retain(|e| e["field"] != "display_name");
         }
         if mode == 5 {
             notes["fields"]["phone"] = json!("0999999999");
@@ -98,7 +94,26 @@ async fn hermes(State(mock): State<Mock>, Json(body): Json<Value>) -> Json<Value
         if mode == 6 {
             notes["evidence"][0]["source_ref"] = json!("other-customer-note");
         }
-        json!({"notes":notes,"display":display,"chat":chat})
+        if mode == 10 {
+            notes["evidence"][0]["source_type"] = json!("customer_display");
+            notes["evidence"][0]["source_ref"] = json!("current-display");
+        }
+        let mut result = json!({"notes":notes,"chat":chat});
+        if mode == 9 {
+            result["display"] = tier(
+                Some(&json!({"source_ref":"current-display","text":"K.Display 0822222222"})),
+                "customer_display",
+                "K.Display",
+                "0822222222",
+            );
+        }
+        result
+    } else if body["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .starts_with("Extract the customer's")
+    {
+        chat_tier(&data["messages"], mode)
     } else {
         assert_eq!(
             data["customer_fields_resolved_by_server"],
@@ -359,7 +374,7 @@ async fn customer_notes_delete_is_scoped_versioned_idempotent_and_hides_private_
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --include-ignored"]
-async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverified_sources() {
+async fn customer_contacts_prioritize_chat_then_notes_and_exclude_all_display_names() {
     let mock = Mock::default();
     let (state, server, id) = setup(&mock).await;
     let (record, _) = note(
@@ -372,10 +387,10 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
     note(&state, "Uother", "SECRET_OTHER_CONTACT", false).await;
     let path = format!("/api/inquiries/{id}/customer-extract");
     for (mode, name, phone) in [
-        (0, "K.Note", "0811111111"),
-        (1, "K.Note", "0822222222"),
-        (2, "K.Display", "0822222222"),
-        (3, "K.Chat", "0833333333"),
+        (0, "K.Chat", "0833333333"),
+        (1, "K.Chat", "0811111111"),
+        (2, "K.Note", "0833333333"),
+        (3, "K.Note", "0811111111"),
     ] {
         mock.mode.store(mode, Ordering::SeqCst);
         let (status, result) = request(&state, &path, "POST", json!({}), true).await;
@@ -383,18 +398,47 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
         assert_eq!(result["fields"]["display_name"], name);
         assert_eq!(result["fields"]["phone"], phone);
         assert_eq!(result["fields"]["address"], "99 Road 10110");
+        for (field, from_note) in [
+            ("display_name", mode == 2 || mode == 3),
+            ("phone", mode == 1 || mode == 3),
+        ] {
+            let proof = result["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["field"] == field)
+                .unwrap();
+            assert_eq!(
+                proof["source_type"],
+                if from_note {
+                    "customer_note"
+                } else {
+                    "line_event"
+                }
+            );
+        }
     }
     mock.mode.store(4, Ordering::SeqCst);
     let (_, result) = request(&state, &path, "POST", json!({}), true).await;
     assert!(result["fields"]["display_name"].is_null());
     assert_eq!(result["conflicts"][0]["field"], "display_name");
-    for mode in [5, 6] {
+    for mode in [5, 6, 10] {
         mock.mode.store(mode, Ordering::SeqCst);
         assert_eq!(
             request(&state, &path, "POST", json!({}), true).await.0,
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
+    mock.mode.store(9, Ordering::SeqCst);
+    assert_ne!(
+        request(&state, &path, "POST", json!({}), true).await.0,
+        StatusCode::OK
+    );
+    mock.mode.store(8, Ordering::SeqCst);
+    let (status, missing) = request(&state, &path, "POST", json!({}), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(missing["fields"]["display_name"].is_null());
+    assert!(missing["fields"]["phone"].is_null());
     mock.mode.store(0, Ordering::SeqCst);
     let note_id = record.get_object_id("_id").unwrap();
     customer_notes::delete(
@@ -410,7 +454,7 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
     .await
     .unwrap();
     let (_, result) = request(&state, &path, "POST", json!({}), true).await;
-    assert_eq!(result["fields"]["display_name"], "K.Display");
+    assert_eq!(result["fields"]["display_name"], "K.Chat");
     assert!(
         result["evidence"]
             .as_array()
@@ -418,6 +462,8 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
             .iter()
             .all(|e| e["source_type"] != "customer_note")
     );
+    let contacts_before_profile_changes =
+        customer_contacts::load(&state, "Ucurrent").await.unwrap();
     state
         .collection("line_users")
         .update_one(
@@ -428,7 +474,7 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
         .unwrap();
     assert_eq!(
         request(&state, &path, "POST", json!({}), true).await.1["fields"]["display_name"],
-        "K.OA"
+        "K.Chat"
     );
     crate::db::customers::save_alias(
         &state,
@@ -446,16 +492,26 @@ async fn customer_contacts_prioritize_notes_display_then_chat_and_reject_unverif
     .unwrap();
     assert_eq!(
         request(&state, &path, "POST", json!({}), true).await.1["fields"]["display_name"],
-        "K.Alias"
+        "K.Chat"
     );
+    assert_eq!(
+        customer_contacts::load(&state, "Ucurrent")
+            .await
+            .unwrap()
+            .hash,
+        contacts_before_profile_changes.hash
+    );
+    mock.mode.store(8, Ordering::SeqCst);
+    let (_, missing) = request(&state, &path, "POST", json!({}), true).await;
+    assert!(missing["fields"]["display_name"].is_null());
+    assert!(missing["fields"]["phone"].is_null());
     state.db.drop().await.unwrap();
     server.abort();
 }
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB; run cargo test -- --include-ignored"]
-async fn customer_contact_changes_during_extraction_fail_and_ai_drafts_use_verified_note_contacts()
-{
+async fn customer_contact_changes_during_extraction_fail_and_ai_drafts_use_chat_then_notes() {
     let mock = Mock::default();
     let (state, server, id) = setup(&mock).await;
     let (record, _) = note(
@@ -487,7 +543,7 @@ async fn customer_contact_changes_during_extraction_fail_and_ai_drafts_use_verif
         pending.await.unwrap(),
         Err(AppError::ContextChanged)
     ));
-    mock.mode.store(0, Ordering::SeqCst);
+    mock.mode.store(1, Ordering::SeqCst);
     note(
         &state,
         "Ucurrent",
@@ -511,7 +567,7 @@ async fn customer_contact_changes_during_extraction_fail_and_ai_drafts_use_verif
     let draft = drafts::active(&state, &inquiry).await.unwrap().unwrap();
     let result = draft.get_document("result").unwrap();
     let fields = result.get_document("fields").unwrap();
-    assert_eq!(fields.get_str("customer_name").unwrap(), "K.Note");
+    assert_eq!(fields.get_str("customer_name").unwrap(), "K.Chat");
     assert_eq!(fields.get_str("customer_phone").unwrap(), "0811111111");
     assert!(
         result.get_array("evidence").unwrap().iter().any(|e| e

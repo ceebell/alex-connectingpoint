@@ -199,7 +199,7 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
     };
     let contacts = if let Some(context) = contact_context
         .as_ref()
-        .filter(|context| context.has_priority())
+        .filter(|context| context.has_notes())
     {
         Some(crate::customer_contacts::resolve(state, inquiry_id, context, &snapshot).await?)
     } else {
@@ -322,12 +322,6 @@ pub async fn process(state: &AppState, job: &Document) -> Result<(), AppError> {
                 .note_sources
                 .iter()
                 .map(|(id, text)| (format!("customer_note:{id}"), text.clone())),
-        );
-        sources.extend(
-            context
-                .display_sources
-                .iter()
-                .map(|(id, text)| (format!("customer_display:{id}"), text.clone())),
         );
     }
     crate::models::shop_settings::validate_guidance_evidence(&result)?;

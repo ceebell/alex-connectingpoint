@@ -315,12 +315,12 @@ pub async fn extract(state: &AppState, id: ObjectId) -> Result<Value, AppError> 
     }
     let (messages, sources) = chat_sources(&snapshot, user)?;
     let contacts = crate::customer_contacts::load(state, user).await?;
-    if messages.is_empty() && !contacts.has_priority() {
+    if messages.is_empty() && !contacts.has_notes() {
         return Ok(
             json!({"fields":Fields::default(),"evidence":[],"conflicts":[],"questions":["ยังไม่พบข้อมูลลูกค้าในข้อความของเรื่องนี้"],"context_hash":snapshot.hash}),
         );
     }
-    let result = if contacts.has_priority() {
+    let result = if contacts.has_notes() {
         crate::customer_contacts::resolve(state, id, &contacts, &snapshot).await?
     } else {
         let result: Extraction=serde_json::from_value(ask_hermes_json(state,ObjectId::new(),id,PROMPT,
