@@ -1,8 +1,8 @@
 "use client";
-/* eslint-disable @next/next/no-img-element -- Note photos use authenticated same-origin URLs or local upload previews. */
 import { ReactNode, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError, CustomerNote, errorText, NoteImage, NoteRevision } from "@/lib/api";
 import { formatDateTime } from "@/lib/dates";
+import ImagePreview from "./image-preview";
 
 type PendingImage = { key: string; name: string; image_base64: string; url: string };
 type FormImage = NoteImage | PendingImage;
@@ -30,7 +30,7 @@ async function encode(file: File): Promise<PendingImage> {
 }
 
 function NoteImages({ images }: { images: NoteImage[] }) {
-  return !!images.length && <div className="note-images">{images.map(image => <a key={image.id} href={image.url} target="_blank" rel="noreferrer"><img src={image.url} alt={image.name} loading="lazy" /></a>)}</div>;
+  return !!images.length && <div className="note-images">{images.map(image => <ImagePreview key={image.id} src={image.url} alt={image.name} />)}</div>;
 }
 
 function History({ noteId, endpoint, initial, onUnauthorized }: { noteId: string; endpoint: string; initial?: NoteRevision[]; onUnauthorized: () => void }) {
@@ -66,7 +66,7 @@ function Editor({ text, images, busy, onText, onImages, onError, onBusy, childre
   return <>
     <label className="sr-only" htmlFor={textId}>ข้อความโน้ต</label>
     <textarea autoComplete="off" id={textId} rows={3} maxLength={5000} placeholder="เขียนโน้ตเกี่ยวกับลูกค้า…" disabled={busy} value={text} onChange={event => onText(event.target.value)} />
-    {!!images.length && <div className="note-images note-image-drafts">{images.map(image => <div key={pending(image) ? image.key : image.id}><img src={image.url} alt={image.name} /><button type="button" className="note-remove-image" aria-label={`นำรูป ${image.name} ออกจากโน้ต`} disabled={busy} onClick={() => onImages(images.filter(value => value !== image))}>×</button></div>)}</div>}
+    {!!images.length && <div className="note-images note-image-drafts">{images.map(image => <div key={pending(image) ? image.key : image.id}><ImagePreview src={image.url} alt={image.name} /><button type="button" className="note-remove-image" aria-label={`นำรูป ${image.name} ออกจากโน้ต`} disabled={busy} onClick={() => onImages(images.filter(value => value !== image))}>×</button></div>)}</div>}
     <div className="note-editor-actions"><button type="button" className="text-button" disabled={busy || images.length >= 5} onClick={() => file.current?.click()}><span aria-hidden="true">＋</span> แนบรูป</button><input ref={file} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden aria-label="แนบรูปในโน้ต" disabled={busy} onChange={event => void attach(event.target.files)} />{children}</div>
   </>;
 }

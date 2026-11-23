@@ -3,6 +3,48 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-24 02:54 — เปิดรูปใน modal บนหน้าเดิม
+- **คำอธิบาย:** เปลี่ยนการคลิกรูปจากเปิดแท็บใหม่เป็นดูภาพขยายใน modal ร่วม ใช้กับรูปแชทรับ/ส่ง รูปที่เตรียมส่ง รูป Note ที่บันทึกและยังไม่บันทึก และปุ่มดูใบเสร็จ ปิดด้วยปุ่มปิด พื้นหลัง หรือ Esc พร้อมคงข้อความร่าง/รูปเดิมและคืนโฟกัส
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `image-preview.tsx` — เพิ่ม: ปุ่มเปิดรูปและ native dialog ผ่าน portal แสดงภาพตามสัดส่วน สถานะโหลด/ข้อผิดพลาด/ลองใหม่ วนโฟกัส Tab/Shift+Tab และคืนโฟกัส ป้องกัน event จาก modal ไปปิด composer และปิดเมื่อส่วนต้นทางถูกถอดออก
+  - `image-preview.css` — เพิ่ม: รูปแบบ modal และพื้นหลัง ปุ่มปิด 44px focus ring และขนาดภาพตามพื้นที่จอ
+  - `chat-message.tsx` — แก้: รูปที่รับมาและรูปที่ส่งออกใช้ modal โดยเลือกต้นฉบับขาออกจาก URL media ภายในที่ถูกต้อง คง checkbox แนบรูปให้ AI
+  - `reply-composer.tsx` — แก้: เปิดดูรูปที่เตรียมส่งได้โดยไม่ส่งข้อความหรือทิ้งรูปเดิมเมื่อปิด
+  - `customer-notes.tsx` — แก้: รูป Note และรูปที่ยังไม่บันทึกเปิดใน modal พร้อมนำ eslint-disable สำหรับ img ที่ไม่ใช้แล้วออก
+  - `shipping-workspace.tsx` — แก้: ปุ่มดูรูปใบเสร็จต้นฉบับเปิด modal บนหน้าเดิม
+- **โฟลเดอร์ `frontend/src/app/`**
+  - `layout.tsx` — แก้: โหลด CSS ตัวดูภาพร่วม
+- **โฟลเดอร์ `docs/` และ `prompts/`**
+  - `docs/step-2-admin.md` — แก้: วิธีเปิด/ปิดรูป การลองโหลดใหม่ และบริบทที่ใช้ modal
+  - `docs/customer-notes.md` — แก้: วิธีดูรูป Note โดยเก็บร่างที่ยังไม่บันทึก
+  - `prompts/requirements-v0.3.md` — แก้: เพิ่ม requirement และใส่ Done หลังทดสอบ
+- **โฟลเดอร์ `dist/`**
+  - `frontend-linux/` — แก้: Linux frontend standalone จาก local `front-20261123195114-c5e1a5d6dfbd`
+- **ตรวจสอบ:** frontend tests 77/77, lint/TypeScript และ npm run build ผ่านใน build-frontend.bat บน local; Chrome/WebKit 12 กรณี (modal 6 + วางรูปเดิม 6) ที่ 1440/375/320px ผ่าน รวมต้นฉบับแชทขาออก รูปก่อนส่ง Note ที่บันทึก/ยังไม่บันทึก ใบเสร็จ ปุ่มปิด/พื้นหลัง/Esc/Enter/Tab โฟกัส ตำแหน่งเลื่อน โหลดผิดพลาด/ลองใหม่ และเปลี่ยนหน้าขณะเปิด modal ไม่มี popup/แท็บใหม่หรือ page error ไม่กดส่งข้อความ/บันทึก Note จริง; checksum release 2,101 ไฟล์ตรง manifest และ diff --check เฉพาะไฟล์งานนี้ผ่าน หลักฐาน data/image-modal-check/, data/paste-image-check/ และ data/image-modal-tests.log ไม่ commit/push/deploy
+
+## 2026-11-24 02:43 — แสดงอีโมจิและสติกเกอร์ในแชทและตัวอย่างก่อนส่ง
+- **คำอธิบาย:** เพิ่มรูป Unicode/LINE emoji ในประวัติแชทและแถบตัวอย่างเหนือช่องพิมพ์ พร้อมเปลี่ยนการเลือกสติกเกอร์จากส่งทันทีเป็นตรวจตัวอย่างแล้วกดส่งตามที่ผู้ใช้ยืนยันว่าต้องการทั้งสองส่วน คง textarea และการวางรูปเดิม โดยไม่เพิ่มคลังอีโมจิที่ซื้อจากบัญชีส่วนตัว
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `chat-emoji-image.tsx` — เพิ่ม: รูปอีโมจิ inline ขนาดคงที่ พร้อมข้อความทดแทนเมื่อโหลดไม่ได้และเครดิต Twemoji
+  - `chat-sticker.tsx` — เพิ่ม: ตัวแสดงสติกเกอร์ร่วมสำหรับประวัติแชทและตัวอย่าง ตรวจ sticker ID และแสดงข้อความทดแทนเมื่อรูปไม่พร้อม
+  - `chat-message.tsx` — แก้: ส่ง metadata อีโมจิให้ข้อความและใช้ตัวแสดงสติกเกอร์ร่วม
+  - `chat-linked-content.tsx` — แก้: แทรกรูป LINE emoji ตามช่วงข้อความและแสดง Unicode emoji โดยคงลิงก์ แผนที่ บรรทัดใหม่ และการยืนยันลิงก์เดิม
+  - `chat-linked-content.css` — แก้: ขนาด/การจัดแนวรูปอีโมจิในบรรทัด ไม่ใช้รูปแบบภาพแนบเต็มข้อความ
+  - `reply-composer.tsx` — แก้: ตัวอย่างอีโมจิจากข้อความร่าง สติกเกอร์พร้อมเปลี่ยน/ยกเลิก/ส่ง ซ่อนและเปิดคืนตัวอย่าง โฟกัสปุ่มส่ง และ retry ด้วย request ID เดิม
+  - `reply-composer.css` — แก้: รูปแบบตัวอย่างอีโมจิ/สติกเกอร์ ข้อความรองสี slate และจำกัดช่องพิมพ์เมื่อมีตัวอย่างบนมือถือเพื่อไม่ล้นพื้นที่คีย์บอร์ด
+- **โฟลเดอร์ `frontend/src/lib/`**
+  - `emojis.ts` — แก้: แยกช่วง LINE emoji ตาม UTF-16 ตรวจชนิดข้อมูล/ขอบเขต/ช่วงซ้อน/คู่ surrogate และรหัส CDN พร้อมแยก grapheme สำหรับ Unicode emoji ธง สีผิว keycap และ ZWJ
+  - `api.ts` — แก้: รองรับ metadata LINE emoji ในข้อความที่อ่านจาก API
+- **โฟลเดอร์ `frontend/tests/`**
+  - `emojis.test.mjs` — แก้: เพิ่ม regression ตำแหน่ง UTF-16 ข้อความเดิม metadata ผิดรูปแบบ รหัส URL ที่ไม่ปลอดภัย ช่วงซ้อน surrogate และ Unicode emoji หลาย code point
+- **โฟลเดอร์ `docs/` และ `prompts/`**
+  - `docs/step-2-admin.md` — แก้: การเลือกสติกเกอร์ก่อนส่ง การแสดง Unicode/LINE emoji และข้อความทดแทน
+  - `docs/chat-emoji-picker.md` — แก้: ตัวอย่างก่อนส่ง ไฟล์แสดงรูปและขอบเขต LINE emoji ที่รับมาพร้อม metadata
+  - `prompts/requirements-v0.3.md` — แก้: เพิ่ม requirement ทั้งสองส่วนและใส่ Done หลังตรวจ
+- **โฟลเดอร์ `dist/`**
+  - `frontend-linux/` — แก้: Linux frontend standalone จาก local `front-20261123194136-ffd0c92a3bee`
+- **ตรวจสอบ:** frontend tests 77/77, lint/TypeScript และ npm run build ผ่านใน build-frontend.bat บน local; Chrome/WebKit 20 กรณี (รูป/ตัวอย่างใหม่ 6, แผงอีโมจิเดิม 8, วางรูปเดิม 6) ที่ 1440/1024/375/320px ผ่าน รวมลิงก์ Unicode, LINE emoji, รูปโหลดไม่ได้, metadata ผิดรูปแบบ, สติกเกอร์ลูกค้า/แอดมิน, เปลี่ยน/ยกเลิก/ซ่อนและเปิดคืนตัวอย่าง, โฟกัส, retry และพื้นที่คีย์บอร์ด 360px กับข้อความหลายบรรทัด ไม่มี page error/แนวนอนล้น ตรวจ checksum 2,101 ไฟล์ตรง manifest และ diff --check ผ่าน; หลักฐาน data/chat-media-check/, data/emoji-picker-check/, data/paste-image-check/ และ data/chat-media-tests.log ไม่ส่งข้อความจริง ไม่ commit/push/deploy
+
 ## 2026-11-23 15:09 — วางรูปจาก Clipboard ในช่องตอบแชท
 - **คำอธิบาย:** เพิ่มการวางรูปด้วย Ctrl+V หรือคลิกขวา → Paste ผ่าน paste event ของช่องตอบแชท เตรียมและแสดงตัวอย่างก่อนกดส่งตามขั้นตอนเดิม คงข้อความร่างและการวางข้อความปกติ รองรับครั้งละ 1 รูป ไม่ต้องขอสิทธิ์อ่าน Clipboard เพิ่ม
 - **โฟลเดอร์ `frontend/src/components/`**

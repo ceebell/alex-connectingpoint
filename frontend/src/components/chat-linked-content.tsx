@@ -1,7 +1,9 @@
 "use client";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { chatAddressTarget, chatTextParts, sharedChatLocation, type ChatLinkTarget, type SharedLocation } from "@/lib/chat-links";
+import { chatAddressTarget, chatTextParts, sharedChatLocation, type ChatLinkTarget, type ChatTextPart, type SharedLocation } from "@/lib/chat-links";
+import { lineEmojiParts, unicodeEmojiParts, type EmojiTextPart, type LineEmoji } from "@/lib/emojis";
+import ChatEmojiImage from "./chat-emoji-image";
 
 function MapPin() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>;
@@ -42,10 +44,11 @@ function ExternalLinkDialog({ target, opener, onClose }: { target: ChatLinkTarge
   </dialog>, document.body);
 }
 
-export default function ChatLinkedContent({ text = "", location }: { text?: string; location?: SharedLocation }) {
+export default function ChatLinkedContent({ text = "", location, emojis }: { text?: string; location?: SharedLocation; emojis?: LineEmoji[] }) {
   const [pending, setPending] = useState<{ source: string; target: ChatLinkTarget; opener: HTMLButtonElement } | null>(null);
   const close = useCallback(() => setPending(null), []);
-  const parts = useMemo(() => chatTextParts(text), [text]);
+  const parts = useMemo(() => lineEmojiParts(text, emojis).flatMap<ChatTextPart & EmojiTextPart>(part => part.emojiUrl ? [part]
+    : chatTextParts(part.text).flatMap<ChatTextPart & EmojiTextPart>(linked => linked.target ? [linked] : unicodeEmojiParts(linked.text))), [text, emojis]);
   const address = useMemo(() => chatAddressTarget(text), [text]);
   const pin = location ? sharedChatLocation(location) : null;
   const source = location ? JSON.stringify(location) : text;
@@ -58,7 +61,7 @@ export default function ChatLinkedContent({ text = "", location }: { text?: stri
       {pin.coordinates && <p className="chat-location-coordinates" dir="ltr">{pin.coordinates}</p>}
       {pin.target ? <button type="button" className="chat-map-action" aria-haspopup="dialog" onClick={event => pin.target && open(pin.target, event.currentTarget)}>เปิดใน Google Maps</button> : <p className="muted">ไม่มีพิกัดหรือที่อยู่สำหรับเปิดแผนที่</p>}
     </div> : <>
-      <p>{parts.map((part, index) => part.target ? <button key={index} type="button" className="chat-inline-link" aria-haspopup="dialog" onClick={event => part.target && open(part.target, event.currentTarget)}>{part.text}</button> : part.text)}</p>
+      <p>{parts.map((part, index) => part.emojiUrl ? <ChatEmojiImage key={`${index}:${part.emojiUrl}`} src={part.emojiUrl} label={part.text} /> : part.target ? <button key={index} type="button" className="chat-inline-link" aria-haspopup="dialog" onClick={event => part.target && open(part.target, event.currentTarget)}>{part.text}</button> : part.text)}</p>
       {address && <button type="button" className="chat-map-action" aria-haspopup="dialog" onClick={event => open(address, event.currentTarget)}><MapPin />ค้นหาที่อยู่ใน Google Maps</button>}
     </>}
     {pending?.source === source && <ExternalLinkDialog target={pending.target} opener={pending.opener} onClose={close} />}

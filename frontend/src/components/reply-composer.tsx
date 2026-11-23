@@ -1,13 +1,16 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Sticker CDN and uploaded previews are plain images. */
-import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import dynamic from "next/dynamic";
 import { api, ApiError, errorText, LineEvent } from "@/lib/api";
 import { stickerIds, stickerPackages, stickerUrl } from "@/lib/stickers";
 import { matchingQuickReplies, slashQuery, type QuickReply } from "@/lib/quick-replies";
 import { clipboardImages, prepareReplyImage } from "@/lib/reply-images";
 import QuickRepliesDialog from "./quick-replies-dialog";
-import { insertEmojiText } from "@/lib/emojis";
+import { insertEmojiText, unicodeEmojiParts } from "@/lib/emojis";
+import ChatEmojiImage from "./chat-emoji-image";
+import ChatSticker from "./chat-sticker";
+import ImagePreview from "./image-preview";
 
 const ChatEmojiPicker = dynamic(() => import("./chat-emoji-picker"), { ssr: false, loading: () => <p role="status">กำลังโหลดอีโมจิ…</p> });
 
@@ -28,6 +31,8 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const [error, setError] = useState("");
   const [failed, setFailed] = useState<Failed | null>(null);
   const [stickersOpen, setStickersOpen] = useState(false);
+  const [stickerPreviewOpen, setStickerPreviewOpen] = useState(false);
+  const [sticker, setSticker] = useState<{ id: string; packageId: string; requestId: string } | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
@@ -45,17 +50,26 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const formRef = useRef<HTMLFormElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const stickerSendRef = useRef<HTMLButtonElement>(null);
   const selection = useRef({ start: 0, end: 0 });
   const pointerInside = useRef(false);
   const imagePreparing = useRef(false);
   const working = busy || preparing;
-  const attachmentsOpen = toolsOpen || stickersOpen || imageOpen || emojiOpen;
+  const attachmentsOpen = toolsOpen || stickersOpen || stickerPreviewOpen || imageOpen || emojiOpen;
+  const emojiPreview = useMemo(() => unicodeEmojiParts(text), [text]);
+  const hasEmojiPreview = emojiPreview.some(part => part.emojiUrl);
   const active = focused || attachmentsOpen;
   const query = slashQuery(text);
   const quickMatches = matchingQuickReplies(quickItems, query ?? "", "text").slice(0, 8);
   const quickVisible = focused && query !== null && !quickDismissed && !working && !quickLibrary;
   const quickIndex = Math.max(0, Math.min(quickActive, quickMatches.length - 1));
   const quickListId = `quick-replies-${inquiryId}`;
+
+  useEffect(() => {
+    if (!stickerPreviewOpen) return;
+    const frame = requestAnimationFrame(() => stickerSendRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [stickerPreviewOpen, sticker?.id]);
 
   useLayoutEffect(() => {
     if (!emojiOpen) return;
@@ -125,7 +139,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   function openQuickLibrary() { collapse(); setQuickLibrary(true); void loadQuickReplies(); }
   function chooseQuickText(item: QuickReply) {
     setText(item.text); setTextId(null); setError(""); setFailed(null); setQuickLibrary(false); setQuickDismissed(true); setQuickActive(0);
-    setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setFocused(true);
+    setToolsOpen(false); setStickersOpen(false); setStickerPreviewOpen(false); setImageOpen(false); setFocused(true);
     setEmojiOpen(false); selection.current = { start: item.text.length, end: item.text.length };
     requestAnimationFrame(() => textRef.current?.focus({ preventScroll: true }));
   }
@@ -145,7 +159,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   // Dismiss only the presentation: unsent text and a prepared photo remain available.
   function collapse() {
     textRef.current?.blur();
-    setFocused(false); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setEmojiOpen(false);
+    setFocused(false); setToolsOpen(false); setStickersOpen(false); setStickerPreviewOpen(false); setImageOpen(false); setEmojiOpen(false);
   }
   useEffect(() => {
     if (!active) return;
@@ -213,11 +227,18 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     if (await deliver(requestId, { text }, "ข้อความ")) { setText(""); setTextId(null); }
   }
 
-  async function sendSticker(stickerId: string) {
-    if (working) return;
-    setStickersOpen(false);
-    setToolsOpen(false);
-    await deliver(crypto.randomUUID(), { sticker: { package_id: pack.id, sticker_id: stickerId } }, "สติกเกอร์");
+  function chooseSticker(stickerId: string) {
+    if (working || !canReply) return;
+    collapse();
+    setSticker({ id: stickerId, packageId: pack.id, requestId: crypto.randomUUID() });
+    setStickerPreviewOpen(true); setError(""); setFailed(null);
+  }
+
+  async function sendSticker() {
+    if (!sticker || working || !canReply) return;
+    if (await deliver(sticker.requestId, { sticker: { package_id: sticker.packageId, sticker_id: sticker.id } }, "สติกเกอร์")) {
+      setSticker(null); setStickerPreviewOpen(false);
+    }
   }
 
   async function sendImage() {
@@ -230,7 +251,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     if (!file || working || imagePreparing.current || !canReply) return;
     if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type) || file.size > 40 * 1024 * 1024) { setError("รองรับไฟล์ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 40 MB"); return; }
     imagePreparing.current = true;
-    setPreparing(true); setImageOpen(true); setError(""); setFailed(null); setStickersOpen(false); setToolsOpen(false); setEmojiOpen(false); setQuickDismissed(true);
+    setPreparing(true); setImageOpen(true); setError(""); setFailed(null); setStickersOpen(false); setStickerPreviewOpen(false); setToolsOpen(false); setEmojiOpen(false); setQuickDismissed(true);
     try {
       const prepared = await prepareReplyImage(file);
       const result = await api<{ media: { _id: string; preview_url: string } }>(`/api/inquiries/${inquiryId}/media`, { method: "POST", body: JSON.stringify(prepared) });
@@ -253,16 +274,18 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
 
   return <form ref={formRef} className="reply-box" data-active={active} data-emoji-open={emojiOpen} autoComplete="off" onPointerDownCapture={() => { pointerInside.current = true; }} onPointerUpCapture={() => { window.requestAnimationFrame(() => { pointerInside.current = false; }); }} onPointerCancelCapture={() => { pointerInside.current = false; }} onBlur={event => { if (!pointerInside.current && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) setFocused(false); }} onSubmit={e => { e.preventDefault(); void sendText(); }}>
     {error && <div className="notice warning" role="alert">{error}{failed && <button type="button" className="text-button retry" disabled={working} onClick={() => void deliver(failed.requestId, failed.body, failed.label)}>ส่ง{failed.label}อีกครั้ง</button>}</div>}
+    {hasEmojiPreview && !emojiOpen && <div className="reply-text-preview" role="region" aria-label="ตัวอย่างข้อความก่อนส่ง"><span className="muted small">ตัวอย่างข้อความ</span><p>{emojiPreview.map((part, index) => part.emojiUrl ? <ChatEmojiImage key={`${index}:${part.emojiUrl}`} src={part.emojiUrl} label={part.text} /> : part.text)}</p></div>}
     {attachmentsOpen && !emojiOpen && <div className="reply-attachments" id={`reply-attachments-${inquiryId}`}>
     {imageOpen && preparing && <p className="muted small" role="status">กำลังเตรียมรูป…</p>}
-    {imageOpen && !preparing && image && <div className="image-draft"><img src={image.preview} alt="ตัวอย่างรูปที่จะส่ง" /><div><strong>รูปพร้อมส่ง</strong><p className="muted small">ตรวจรูปก่อนส่ง ลูกค้าจะเห็นทันที</p></div><button type="button" className="text-button" disabled={working} onClick={() => { collapse(); fileRef.current?.click(); }}>เปลี่ยนรูป</button><button type="button" className="text-button" disabled={working} onClick={() => { setImage(null); setImageOpen(false); }}>ยกเลิก</button><button type="button" className="button primary" disabled={working} onClick={() => void sendImage()}>ส่งรูป</button></div>}
+    {imageOpen && !preparing && image && <div className="image-draft"><ImagePreview src={image.preview} alt="ตัวอย่างรูปที่จะส่ง" /><div><strong>รูปพร้อมส่ง</strong><p className="muted small">ตรวจรูปก่อนส่ง ลูกค้าจะเห็นทันที</p></div><button type="button" className="text-button" disabled={working} onClick={() => { collapse(); fileRef.current?.click(); }}>เปลี่ยนรูป</button><button type="button" className="text-button" disabled={working} onClick={() => { setImage(null); setImageOpen(false); }}>ยกเลิก</button><button type="button" className="button primary" disabled={working} onClick={() => void sendImage()}>ส่งรูป</button></div>}
+    {stickerPreviewOpen && sticker && <div className="image-draft sticker-draft"><ChatSticker key={sticker.id} id={sticker.id} /><div><strong>สติกเกอร์พร้อมส่ง</strong><p className="muted small">ตรวจสติกเกอร์ก่อนส่ง</p></div><button type="button" className="text-button" disabled={working} onClick={() => { setStickerPreviewOpen(false); setStickersOpen(true); }}>เปลี่ยนสติกเกอร์</button><button type="button" className="text-button" disabled={working} onClick={() => { setSticker(null); setStickerPreviewOpen(false); }}>ยกเลิกสติกเกอร์</button><button ref={stickerSendRef} type="button" className="button primary" disabled={working || !canReply} onClick={() => void sendSticker()}>ส่งสติกเกอร์</button></div>}
     {stickersOpen && <div className="sticker-panel" role="group" aria-label="เลือกสติกเกอร์">
       <div className="sticker-tabs" role="tablist" aria-label="ชุดสติกเกอร์">{stickerPackages.map(item => <button key={item.id} type="button" role="tab" aria-selected={item.id === pack.id} title={item.title} aria-label={item.title} onClick={() => setPack(item)}><img src={stickerUrl(item.first)} alt="" loading="lazy" referrerPolicy="no-referrer" /></button>)}</div>
-      <p className="muted small sticker-title">{pack.title} · กดเพื่อส่งทันที</p>
-      <div className="sticker-grid">{stickerIds(pack).map(id => <button key={id} type="button" disabled={working} aria-label={`ส่งสติกเกอร์ ${id}`} onClick={() => void sendSticker(id)}><img src={stickerUrl(id)} alt="" loading="lazy" referrerPolicy="no-referrer" /></button>)}</div>
+      <p className="muted small sticker-title">{pack.title} · เลือกเพื่อดูตัวอย่างก่อนส่ง</p>
+      <div className="sticker-grid">{stickerIds(pack).map(id => <button key={id} type="button" disabled={working} aria-label={`เลือกสติกเกอร์ ${id}`} onClick={() => chooseSticker(id)}><img src={stickerUrl(id)} alt="" loading="lazy" referrerPolicy="no-referrer" /></button>)}</div>
     </div>}
     {toolsOpen && <div className="reply-tools" role="group" aria-label="เครื่องมือแนบข้อความ">
-        <button type="button" className="tool-button" aria-label="สติกเกอร์" disabled={!canReply || working} onClick={() => { collapse(); setStickersOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 3 4 3 4-3 4-3M8 9h.01M16 9h.01" /></svg><span>สติกเกอร์</span></button>
+        <button type="button" className="tool-button" aria-label="สติกเกอร์" disabled={!canReply || working} onClick={() => { collapse(); if (sticker) setStickerPreviewOpen(true); else setStickersOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 3 4 3 4-3 4-3M8 9h.01M16 9h.01" /></svg><span>{sticker ? "สติกเกอร์ที่เลือก" : "สติกเกอร์"}</span></button>
         <button type="button" className="tool-button" aria-label="แนบรูป" disabled={!canReply || working} onClick={chooseImage}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m21 15-5-5L5 21" /></svg><span>{image ? "รูปที่เลือก" : "รูปภาพ"}</span></button>
         <button type="button" className="tool-button" aria-label="คลังข้อความตอบกลับ" disabled={!canReply || working} onClick={openQuickLibrary}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16v15H9l-5 4Z" /><path d="M8 7h8M8 11h6" /></svg><span>ข้อความด่วน / การ์ด</span></button>
     </div>}
@@ -276,7 +299,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
       <button type="button" className="reply-add" aria-label={attachmentsOpen ? "ปิดเครื่องมือแนบข้อความ" : "เปิดเครื่องมือแนบข้อความ"} aria-expanded={attachmentsOpen} aria-controls={emojiOpen ? `reply-emoji-${inquiryId}` : `reply-attachments-${inquiryId}`} disabled={!canReply || working} onClick={toggleTools}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16" /></svg></button>
       <button ref={emojiButtonRef} type="button" className="reply-emoji-button" aria-label="เลือกอีโมจิ" aria-expanded={emojiOpen} aria-controls={`reply-emoji-${inquiryId}`} aria-haspopup="dialog" disabled={!canReply || working} onPointerDown={event => event.preventDefault()} onClick={toggleEmoji}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14c1 4 7 4 8 0M8 9h.01M16 9h.01" /></svg></button>
       <label className="sr-only" htmlFor="reply-text">ข้อความตอบลูกค้า</label>
-      <textarea ref={textRef} id="reply-text" name="chat-message" role="combobox" aria-autocomplete="list" aria-expanded={quickVisible} aria-controls={quickVisible ? quickListId : undefined} aria-activedescendant={quickVisible && quickMatches.length ? `${quickListId}-${quickIndex}` : undefined} autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… หรือ / ข้อความด่วน" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onPaste={pasteImage} onSelect={rememberSelection} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setEmojiOpen(false); if (query !== null) void loadQuickReplies(); }} onChange={e => { rememberSelection(); if (e.target.value.startsWith("/") && !text.startsWith("/")) void loadQuickReplies(); setText(e.target.value); setTextId(null); setQuickDismissed(false); setQuickActive(0); setError(""); setFailed(null); }} onKeyDown={e => {
+      <textarea ref={textRef} id="reply-text" name="chat-message" role="combobox" aria-autocomplete="list" aria-expanded={quickVisible} aria-controls={quickVisible ? quickListId : undefined} aria-activedescendant={quickVisible && quickMatches.length ? `${quickListId}-${quickIndex}` : undefined} autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… หรือ / ข้อความด่วน" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onPaste={pasteImage} onSelect={rememberSelection} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setStickerPreviewOpen(false); setImageOpen(false); setEmojiOpen(false); if (query !== null) void loadQuickReplies(); }} onChange={e => { rememberSelection(); if (e.target.value.startsWith("/") && !text.startsWith("/")) void loadQuickReplies(); setText(e.target.value); setTextId(null); setQuickDismissed(false); setQuickActive(0); setError(""); setFailed(null); }} onKeyDown={e => {
         if (e.nativeEvent.isComposing) return;
         if (quickVisible && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(e.key)) {
           e.preventDefault(); e.stopPropagation();

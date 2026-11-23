@@ -1,3 +1,5 @@
+import type { LineEmoji } from "./emojis";
+
 export class ApiError extends Error {
   constructor(public code: string, public status: number) { super(code); }
 }
@@ -80,7 +82,7 @@ export type CustomerAlias = { custom_name: string | null; version: number; updat
 export type NoteImage = { id: string; name: string; url: string };
 export type NoteRevision = { version: number; text: string; images: NoteImage[]; updated_by: string; updated_by_id: string; updated_at: string };
 export type CustomerNote = { _id: string; version: number; text: string; images: NoteImage[]; created_by: string; created_by_id: string; created_at: string; updated_by: string; updated_by_id: string; updated_at: string; history?: NoteRevision[] };
-export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string; title?: string; address?: string; latitude?: number; longitude?: number }; postback?: { data: string } } };
+export type LineEvent = { _id: string; event_at: string; event_id?: string; status: string; sender_role?: "customer" | "admin"; direction?: "inbound" | "outbound"; sender_name?: string; source?: string; delivery_status?: string; withdrawn?: boolean; media_id?: string; media_status?: string; payload?: { type: string; message?: { type: string; text?: string; emojis?: LineEmoji[]; stickerId?: string; packageId?: string; keywords?: string[]; preview_url?: string; original_url?: string; title?: string; address?: string; latitude?: number; longitude?: number }; postback?: { data: string } } };
 // delivery_provider holds one of RECEIVING_METHODS when fulfillment is delivery.
 export type Rental = { pickup_date: string | null; return_date: string | null; fulfillment_method: string | null; delivery_provider?: string | null };
 // Alex's own receiving-method choices; the shop ships by Flash unless told otherwise.
