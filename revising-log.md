@@ -3,6 +3,40 @@
 บันทึกการแก้ไขโค้ดทุกครั้ง — entry ใหม่อยู่บนสุด · รูปแบบและกฎดู `AGENTS.md` ข้อ 10
 
 <!-- entries -->
+## 2026-11-23 15:09 — วางรูปจาก Clipboard ในช่องตอบแชท
+- **คำอธิบาย:** เพิ่มการวางรูปด้วย Ctrl+V หรือคลิกขวา → Paste ผ่าน paste event ของช่องตอบแชท เตรียมและแสดงตัวอย่างก่อนกดส่งตามขั้นตอนเดิม คงข้อความร่างและการวางข้อความปกติ รองรับครั้งละ 1 รูป ไม่ต้องขอสิทธิ์อ่าน Clipboard เพิ่ม
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `reply-composer.tsx` — แก้: รับรูปที่วางแทนการแทรก URL/HTML ที่ติดมา ใช้ตัวเตรียมรูปเดิม ปิดแผง emoji/ข้อความด่วนเมื่อเตรียมรูป กันอัปโหลดซ้ำและการแนบขณะกำลังส่ง/ไม่มีสิทธิ์ตอบ พร้อมแสดงรูปเดิมเมื่ออัปโหลดรูปใหม่ผิดพลาด
+- **โฟลเดอร์ `frontend/src/lib/`**
+  - `reply-images.ts` — แก้: เพิ่มตัวอ่านไฟล์รูปจาก Clipboard files พร้อม fallback items โดยไม่คืนไฟล์ซ้ำหรือแปลงข้อความ/HTML เป็นรูป
+- **โฟลเดอร์ `frontend/tests/`**
+  - `reply-images.test.mjs` — เพิ่ม: ทดสอบ files/items, ข้อมูลรูปคู่กับ HTML, ข้อความ/ไฟล์อื่น, หลายรูป และการส่งชนิดรูปที่ไม่รองรับไปตรวจ validation
+- **โฟลเดอร์ `docs/` และ `prompts/`**
+  - `docs/step-2-admin.md` — แก้: วิธีวางรูป ตรวจตัวอย่างก่อนส่ง ขีดจำกัดไฟล์และการวางทีละรูป
+  - `prompts/requirements-v0.3.md` — แก้: เพิ่ม requirement และใส่ Done พร้อมผลทดสอบ
+- **โฟลเดอร์ `dist/`**
+  - `frontend-linux/` — แก้: Linux frontend standalone จาก local `front-20261123080546-5ffcce1a4958` รวมการแก้ emoji ก่อนหน้า
+- **ตรวจสอบ:** frontend tests 73/73, lint/TypeScript และ npm run build ผ่านใน build-frontend.bat บน local; Chrome/WebKit ที่ 1440/375/320px รวม 6 กรณีผ่าน โดย Chrome desktop ใช้ Ctrl+V จริงสำหรับรูป/ข้อความ และเส้นทางเมนู Paste ใช้ ClipboardEvent จำลอง ตรวจตัวอย่าง ยกเลิก ส่ง/retry ด้วย request ID เดิม ข้อความร่าง วางซ้ำระหว่างเตรียมไฟล์ หลายรูป ชนิด/ขนาดไม่รองรับ อัปโหลดผิดพลาดพร้อมเก็บรูปเดิม แนบไฟล์ปกติ เปลี่ยนลูกค้าระหว่างอัปโหลด และแชทที่ตอบไม่ได้; checksum release 2,101 ไฟล์ตรง manifest และ diff --check เฉพาะไฟล์งานนี้ผ่าน หลักฐาน data/paste-image-check/ และ data/paste-image-tests.log ไม่ส่งข้อความจริง ไม่ commit/push/deploy
+
+## 2026-11-23 14:57 — แก้อีโมจิเด้งกลับด้านบนเมื่อแชทอัปเดต
+- **คำอธิบาย:** ตัวโหลดข้อมูลอีโมจิภาษาไทยถูกสร้างใหม่ทุก render ทำให้แผงล้างรายการเป็น loading state ชั่วคราวเมื่อแชทอัปเดตหรือเลือกอีโมจิ ความสูงรายการยุบและ scrollTop กลับเป็น 0 แก้ให้ใช้ตัวโหลดระดับ module ตัวเดิม โดยคงการโหลดเมื่อเปิดแผง
+- **โฟลเดอร์ `frontend/src/components/`**
+  - `chat-emoji-picker.tsx` — แก้: ย้ายตัวโหลดข้อมูลภาษาไทยออกจาก render เพื่อคงรายการและตำแหน่งเลื่อนระหว่างการอัปเดตแชท
+- **โฟลเดอร์ `frontend/tests/`**
+  - `emoji-picker-render.test.mjs` — เพิ่ม: regression การ render ซ้ำจากแชท/การเลือกอีโมจิ ตรวจตัวโหลดข้อมูลเดิม ข้อมูลที่โหลดได้ และ callback ล่าสุด
+- **โฟลเดอร์ `docs/` และ `prompts/`**
+  - `docs/chat-emoji-picker.md` — แก้: อธิบายสาเหตุ พฤติกรรมที่แก้ และผลตรวจ regression
+  - `prompts/requirements-v0.3.md` — แก้: เพิ่มบั๊กในรายการอีโมจิเดิมและอัปเดต Done หลังทดสอบ
+- **โฟลเดอร์ `dist/`**
+  - `frontend-linux/` — แก้: Linux frontend standalone จาก local `front-20261123075423-2ddd589f70c6`
+- **ตรวจสอบ:** Browser รุ่นเดิมยืนยัน scrollTop 2200 → 0 เมื่อ refresh แชท รุ่นแก้คง 2200 ทั้ง Chrome/WebKit ที่ 1440/375/320px รวม 6 กรณี พร้อมตรวจเลือกอีโมจิ ค้นหา หมวด คีย์บอร์ด Esc และไม่มีการส่งข้อความจริง; frontend tests 70/70, lint/TypeScript และ npm run build ผ่านใน build-frontend.bat บน local; checksum release 2,101 ไฟล์ตรง manifest และ git diff --check เฉพาะไฟล์งานนี้ผ่าน โดยไม่แก้ trailing whitespace ที่มีอยู่ก่อนใน requirements-v0.2.md; หลักฐาน browser อยู่ใน data/emoji-scroll-fix/ ไม่ commit/push/deploy
+
+## 2026-11-22 15:37 — วางรายการงานเชื่อมต่อ Instagram
+- **คำอธิบาย:** ตรวจโครงสร้าง LINE เดิมและเอกสาร Meta ล่าสุด แล้วจัดทำรายการงานสำหรับ Instagram โดยเสนอรับ–ตอบ DM เป็นเฟสแรก แยกงานต่อยอด AI/Alex และคอมเมนต์/โพสต์ ยังไม่ได้พัฒนาหรือเชื่อมบัญชีจริง
+- **โฟลเดอร์ `prompts/`**
+  - `instagram-requirements.md` — เพิ่ม: รายการ Not started ครอบคลุมบัญชี/Meta App, Unified Login และทางเลือก Instagram Login, permissions/App Review ตามประเภทบัญชีที่รองรับ, token, webhook, identity หลายช่องทาง, Inbox, กฎ messaging window, regression และ local release/deploy พร้อมลิงก์เอกสารอ้างอิง
+- **ตรวจสอบ:** ตรวจว่าไม่มี requirement Instagram เดิมซ้ำใน prompts และ docs, ตรวจรายการ Not started ครบ 10 ข้อ และ git diff --check ผ่านก่อนบันทึก log; แก้เฉพาะเอกสารจึงไม่มีการรัน build/test โปรแกรม ไม่ commit/push/deploy
+
 ## 2026-11-22 01:54 — แยกสินค้า ส่ง : flash ออกจากฐานส่วนลดและคิดค่าส่งครั้งเดียว
 - **คำอธิบาย:** พบว่าการระบุสินค้าค่าส่งยังไม่รองรับชื่อ `ส่ง : flash` จึงอาจรวม 40 บาทในฐานค่าเช่า แก้ให้ตรวจชื่อที่มีช่องว่างรอบ `:` ได้ และให้ข้อมูลตะกร้าที่เคยมีป้าย false ใช้ชนิดสินค้าจากรหัส/ชื่อที่ตรวจพบ ป้องกันการเอาสินค้าค่าส่งกลับไปเป็นฐานส่วนลด ค่าเช่า Alex 600 บาท เทียบสรุป 550 บาทจึงได้ส่วนลด 50 บาท ค่าประกัน 300 บาทไม่ลด และเมื่อรวมค่าส่ง 40 บาทยอดสุทธิเป็น 890 บาท ค่าส่งอยู่ใน orderItems ครั้งเดียว โดยคงส่วนลดที่แอดมินแก้เองเป็น final
 - **โฟลเดอร์ `backend/src/models/`**

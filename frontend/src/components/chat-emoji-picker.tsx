@@ -3,6 +3,9 @@
 import EmojiPicker from "emoji-picker-react";
 import { emojiImageUrl } from "@/lib/emojis";
 
+// Keep the loader identity stable so chat refreshes do not reset the emoji grid.
+const loadThaiEmojis = () => import("emoji-picker-react/data/emojis-th");
+
 const labels = {
   searchPlaceholder: "ค้นหาอีโมจิ เช่น ยิ้ม หัวใจ ขอบคุณ",
   searchLabel: "ค้นหาอีโมจิ",
@@ -29,7 +32,7 @@ export default function ChatEmojiPicker({ onSelect }: { onSelect: (emoji: string
     aria-label="รายการอีโมจิ"
     lang="th"
     data-artwork="Twemoji 17.0.3, Twitter and contributors, CC-BY-4.0; /emoji-notices.txt"
-    emojiData={() => import("emoji-picker-react/data/emojis-th")}
+    emojiData={loadThaiEmojis}
     labels={labels}
     emojiStyle="twitter"
     getEmojiUrl={emojiImageUrl}

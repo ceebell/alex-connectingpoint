@@ -1,5 +1,15 @@
 // Encode uploads once for normal replies and reusable image cards.
 export type ReplyImageInput = { original: string; preview: string };
+
+export function clipboardImages(clipboard: Pick<DataTransfer, "files" | "items">): File[] {
+  const files = Array.from(clipboard.files).filter(file => file.type.startsWith("image/"));
+  if (files.length) return files;
+  return Array.from(clipboard.items)
+    .filter(item => item.kind === "file")
+    .map(item => item.getAsFile())
+    .filter((file): file is File => file !== null && file.type.startsWith("image/"));
+}
+
 async function encode(bitmap: ImageBitmap, maxEdge: number, quality: number): Promise<Blob> {
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");

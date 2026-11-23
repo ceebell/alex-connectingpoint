@@ -1,11 +1,11 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Sticker CDN and uploaded previews are plain images. */
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent } from "react";
 import dynamic from "next/dynamic";
 import { api, ApiError, errorText, LineEvent } from "@/lib/api";
 import { stickerIds, stickerPackages, stickerUrl } from "@/lib/stickers";
 import { matchingQuickReplies, slashQuery, type QuickReply } from "@/lib/quick-replies";
-import { prepareReplyImage } from "@/lib/reply-images";
+import { clipboardImages, prepareReplyImage } from "@/lib/reply-images";
 import QuickRepliesDialog from "./quick-replies-dialog";
 import { insertEmojiText } from "@/lib/emojis";
 
@@ -47,6 +47,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const selection = useRef({ start: 0, end: 0 });
   const pointerInside = useRef(false);
+  const imagePreparing = useRef(false);
   const working = busy || preparing;
   const attachmentsOpen = toolsOpen || stickersOpen || imageOpen || emojiOpen;
   const active = focused || attachmentsOpen;
@@ -226,9 +227,10 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
 
   async function pickImage(file: File | undefined) {
     if (fileRef.current) fileRef.current.value = "";
-    if (!file) return;
+    if (!file || working || imagePreparing.current || !canReply) return;
     if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type) || file.size > 40 * 1024 * 1024) { setError("รองรับไฟล์ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 40 MB"); return; }
-    setPreparing(true); setImageOpen(true); setError(""); setFailed(null); setStickersOpen(false); setToolsOpen(false);
+    imagePreparing.current = true;
+    setPreparing(true); setImageOpen(true); setError(""); setFailed(null); setStickersOpen(false); setToolsOpen(false); setEmojiOpen(false); setQuickDismissed(true);
     try {
       const prepared = await prepareReplyImage(file);
       const result = await api<{ media: { _id: string; preview_url: string } }>(`/api/inquiries/${inquiryId}/media`, { method: "POST", body: JSON.stringify(prepared) });
@@ -236,8 +238,17 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) onUnauthorized();
       else setError(cause instanceof ApiError ? errorText(cause) : "เตรียมรูปไม่สำเร็จ กรุณาเลือกรูปอื่น");
-      setImageOpen(false);
-    } finally { setPreparing(false); }
+      setImageOpen(!!image);
+    } finally { imagePreparing.current = false; setPreparing(false); }
+  }
+
+  function pasteImage(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = clipboardImages(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    if (working || imagePreparing.current || !canReply) return;
+    if (files.length > 1) { setError("วางรูปได้ครั้งละ 1 รูป กรุณาคัดลอกแล้ววางทีละรูป"); return; }
+    void pickImage(files[0]);
   }
 
   return <form ref={formRef} className="reply-box" data-active={active} data-emoji-open={emojiOpen} autoComplete="off" onPointerDownCapture={() => { pointerInside.current = true; }} onPointerUpCapture={() => { window.requestAnimationFrame(() => { pointerInside.current = false; }); }} onPointerCancelCapture={() => { pointerInside.current = false; }} onBlur={event => { if (!pointerInside.current && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) setFocused(false); }} onSubmit={e => { e.preventDefault(); void sendText(); }}>
@@ -265,7 +276,7 @@ export default function ReplyComposer({ inquiryId, canReply, onSent, onUnauthori
       <button type="button" className="reply-add" aria-label={attachmentsOpen ? "ปิดเครื่องมือแนบข้อความ" : "เปิดเครื่องมือแนบข้อความ"} aria-expanded={attachmentsOpen} aria-controls={emojiOpen ? `reply-emoji-${inquiryId}` : `reply-attachments-${inquiryId}`} disabled={!canReply || working} onClick={toggleTools}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16" /></svg></button>
       <button ref={emojiButtonRef} type="button" className="reply-emoji-button" aria-label="เลือกอีโมจิ" aria-expanded={emojiOpen} aria-controls={`reply-emoji-${inquiryId}`} aria-haspopup="dialog" disabled={!canReply || working} onPointerDown={event => event.preventDefault()} onClick={toggleEmoji}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8 14c1 4 7 4 8 0M8 9h.01M16 9h.01" /></svg></button>
       <label className="sr-only" htmlFor="reply-text">ข้อความตอบลูกค้า</label>
-      <textarea ref={textRef} id="reply-text" name="chat-message" role="combobox" aria-autocomplete="list" aria-expanded={quickVisible} aria-controls={quickVisible ? quickListId : undefined} aria-activedescendant={quickVisible && quickMatches.length ? `${quickListId}-${quickIndex}` : undefined} autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… หรือ / ข้อความด่วน" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onSelect={rememberSelection} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setEmojiOpen(false); if (query !== null) void loadQuickReplies(); }} onChange={e => { rememberSelection(); if (e.target.value.startsWith("/") && !text.startsWith("/")) void loadQuickReplies(); setText(e.target.value); setTextId(null); setQuickDismissed(false); setQuickActive(0); setError(""); setFailed(null); }} onKeyDown={e => {
+      <textarea ref={textRef} id="reply-text" name="chat-message" role="combobox" aria-autocomplete="list" aria-expanded={quickVisible} aria-controls={quickVisible ? quickListId : undefined} aria-activedescendant={quickVisible && quickMatches.length ? `${quickListId}-${quickIndex}` : undefined} autoComplete="off" inputMode="text" rows={1} maxLength={5000} value={text} disabled={busy || !canReply} placeholder={canReply ? "พิมพ์ตอบลูกค้า… หรือ / ข้อความด่วน" : "เรื่องนี้ไม่มี LINE user ID จึงตอบจาก Alex ไม่ได้"} onPaste={pasteImage} onSelect={rememberSelection} onFocus={() => { setFocused(true); setToolsOpen(false); setStickersOpen(false); setImageOpen(false); setEmojiOpen(false); if (query !== null) void loadQuickReplies(); }} onChange={e => { rememberSelection(); if (e.target.value.startsWith("/") && !text.startsWith("/")) void loadQuickReplies(); setText(e.target.value); setTextId(null); setQuickDismissed(false); setQuickActive(0); setError(""); setFailed(null); }} onKeyDown={e => {
         if (e.nativeEvent.isComposing) return;
         if (quickVisible && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(e.key)) {
           e.preventDefault(); e.stopPropagation();

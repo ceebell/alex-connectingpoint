@@ -207,6 +207,7 @@ Session เป็น HttpOnly cookie อายุ 8 ชั่วโมง ผู
 
 - ปุ่ม 😊 ใต้แชทเปิดแผงสติกเกอร์ กดแล้วส่งทันที มีเฉพาะ 15 ชุด (456 ตัว) ที่ Messaging API อนุญาตให้ส่ง ตาม [รายการของ LINE](https://developers.line.biz/en/docs/messaging-api/sticker-list/) สติกเกอร์อื่นที่ OA Manager มีส่งผ่าน API ไม่ได้ backend ตรวจ package/sticker ID ก่อนส่งทุกครั้ง
 - ปุ่ม 🖼️ แนบรูป: browser ย่อรูปเป็น JPEG ด้านยาวไม่เกิน 2048px (ไม่เกิน 10 MB) และ preview 240px (ไม่เกิน 1 MB) ตามข้อกำหนด LINE → อัปโหลดเก็บใน GridFS (`outbound_media`) → แสดงตัวอย่างให้กด **ส่งรูป** อีกครั้งก่อนถึงลูกค้า
+- วางรูปจาก Clipboard ในช่องตอบแชทได้ด้วย **Ctrl+V** หรือ **คลิกขวา → Paste** (บน Mac ใช้ Cmd+V) ระบบเตรียมรูปและแสดงตัวอย่างในขั้นตอนเดียวกับการแนบไฟล์ โดยยังไม่ส่งจนกด **ส่งรูป** ข้อความร่างยังอยู่ รองรับ JPG/PNG/WEBP/GIF ไม่เกิน 40 MB ครั้งละ 1 รูป หากวางหลายรูปจะแจ้งให้วางทีละรูป การวางข้อความล้วนยังทำงานตามปกติ และไม่ดึงรูปจาก URL หรือ HTML ที่คัดลอกมา
 - LINE ดึงรูปจาก `https://<PUBLIC_BASE_URL>/api/line/outbound-media/<token>/original|preview` โดยไม่ต้องล็อกอิน token สุ่มยาว 64 ตัวอักษร เดาไม่ได้ เก็บไว้ตาม `LINE_MEDIA_RETENTION_DAYS` (ค่าเริ่มต้น 30 วัน) ถ้าไม่ตั้ง `PUBLIC_BASE_URL` ระบบใช้ origin ของ `LINE_LOGIN_REDIRECT_URI` (https://hermes.salepie.online) path นี้อยู่ใน `/api/line/*` ที่ Caddy ส่งไป Alex อยู่แล้ว
 - ส่งไม่สำเร็จจะมีปุ่ม "ส่งสติกเกอร์/รูปอีกครั้ง" ซึ่งใช้ request ID เดิม ลูกค้าไม่ได้รับซ้ำ ทุกข้อความนับโควตา Push ของ OA
 
